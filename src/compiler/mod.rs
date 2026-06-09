@@ -1,0 +1,776 @@
+//! 代码生成器 (Compiler)
+//!
+//! 将 AST 编译为 COUNPRE64 指令序列
+//! Phase 4: console.log → UART, 数组, 取模, 优化
+
+use crate::parser::{Program, Statement, Expr, BinOp, Function};
+use crate::backend::Instruction;
+
+/// 将 AST 编译为 COUNPRE64 指令列表
+pub fn compile(program: &Program) -> Result<Vec<Instruction>, String> {
+    let mut compiler = Compiler::new();
+    compiler.compile_program(program)?;
+    Ok(compiler.instructions)
+}
+
+/// 函数信息
+struct FunctionInfo {
+    name: String,
+    param_count: usize,
+    addr: usize,  // 函数入口地址（字节）
+}
+
+/// 寄存器约定 (COUNPRE64 ABI)
+const REG_ZERO: u8 = 0;   // 硬连线零
+const REG_RA: u8 = 1;     // 返回地址
+const REG_SP: u8 = 2;     // 栈指针
+const REG_A0: u8 = 3;     // 参数 a0
+const REG_A1: u8 = 4;     // 参数 a1
+const REG_A2: u8 = 5;     // 参数 a2
+const REG_A3: u8 = 6;     // 参数 a3
+const REG_A4: u8 = 7;     // 参数 a4
+const REG_RV: u8 = 8;     // 返回值
+const REG_T0: u8 = 9;     // 临时寄存器起始
+const REG_FP: u8 = 15;    // 帧指针
+
+/// UART TX 数据寄存器地址 (内存映射)
+const UART_TX_ADDR: i16 = 0x100;  // 对齐 FPGA memory_ctrl 中 UART 映射
+
+/// 堆起始地址 (用于数组分配)
+const HEAP_BASE: i16 = 0x200;
+
+/// 编译器状态
+struct Compiler {
+    instructions: Vec<Instruction>,
+    variables: Vec<(String, u8)>,
+    next_reg: u8,
+    functions: Vec<FunctionInfo>,
+    in_function: bool,
+    /// Phase 4: 堆分配指针（编译期静态分配）
+    heap_offset: i16,
+}
+
+/// 条件求值结果
+struct CondResult {
+    reg: u8,
+    zero_means_true: bool,
+}
+
+impl Compiler {
+    fn new() -> Self {
+        Self {
+            instructions: Vec::new(),
+            variables: Vec::new(),
+            next_reg: REG_T0,
+            functions: Vec::new(),
+            in_function: false,
+            heap_offset: HEAP_BASE,
+        }
+    }
+
+    fn alloc_reg(&mut self, name: &str) -> Result<u8, String> {
+        if let Some(reg) = self.get_var_reg(name) {
+            return Ok(reg);
+        }
+        if self.next_reg > 14 {
+            return Err("寄存器耗尽（最多6个局部变量）".to_string());
+        }
+        let reg = self.next_reg;
+        self.next_reg += 1;
+        self.variables.push((name.to_string(), reg));
+        Ok(reg)
+    }
+
+    fn alloc_temp(&mut self) -> Result<u8, String> {
+        if self.next_reg > 14 {
+            return Err("寄存器耗尽".to_string());
+        }
+        let reg = self.next_reg;
+        self.next_reg += 1;
+        Ok(reg)
+    }
+
+    fn get_var_reg(&self, name: &str) -> Option<u8> {
+        self.variables.iter().find(|(n, _)| n == name).map(|(_, r)| *r)
+    }
+
+    fn get_function(&self, name: &str) -> Option<&FunctionInfo> {
+        self.functions.iter().find(|f| f.name == name)
+    }
+
+    /// 分配堆空间（编译期）
+    fn alloc_heap(&mut self, size: i16) -> i16 {
+        let addr = self.heap_offset;
+        self.heap_offset += size * 8; // 每元素 8 字节 (64-bit)
+        addr
+    }
+
+    // =========================================================================
+    // 指令发射
+    // =========================================================================
+
+    fn emit_nop(&mut self) {
+        self.instructions.push(Instruction::RR {
+            opcode: 0x0, func: 0x0, rs1: 0, rs2: 0, rd: 0,
+        });
+    }
+
+    fn emit_bez(&mut self, rs: u8, byte_offset: i16) {
+        self.instructions.push(Instruction::RI {
+            opcode: 0xD, rs, rd: 0, imm: byte_offset,
+        });
+    }
+
+    fn emit_jump(&mut self, byte_offset: i16) {
+        self.instructions.push(Instruction::RI {
+            opcode: 0xE, rs: 0, rd: REG_RA, imm: byte_offset,
+        });
+    }
+
+    fn emit_ret(&mut self) {
+        self.instructions.push(Instruction::RR {
+            opcode: 0xF, func: 0x1, rs1: REG_RA, rs2: 0, rd: 0,
+        });
+    }
+
+    fn emit_addi(&mut self, rd: u8, rs: u8, imm: i16) {
+        self.instructions.push(Instruction::RI {
+            opcode: 0x8, rs, rd, imm,
+        });
+    }
+
+    fn emit_store(&mut self, rs: u8, base: u8, offset: i16) {
+        self.instructions.push(Instruction::RI {
+            opcode: 0xC, rs: base, rd: rs, imm: offset,
+        });
+    }
+
+    fn emit_load(&mut self, rd: u8, base: u8, offset: i16) {
+        self.instructions.push(Instruction::RI {
+            opcode: 0xB, rs: base, rd, imm: offset,
+        });
+    }
+
+    fn patch_offset(&mut self, instr_idx: usize, byte_offset: i16) {
+        match &mut self.instructions[instr_idx] {
+            Instruction::RI { imm, .. } => { *imm = byte_offset; }
+            _ => panic!("只能修补 RI 型指令的 offset"),
+        }
+    }
+
+    fn current_addr(&self) -> usize {
+        self.instructions.len() * 4
+    }
+
+    fn calc_offset(&self, from_idx: usize, to_idx: usize) -> i16 {
+        let from_addr = from_idx as i32 * 4;
+        let to_addr = to_idx as i32 * 4;
+        (to_addr - from_addr) as i16
+    }
+
+    // =========================================================================
+    // 程序编译
+    // =========================================================================
+
+    fn compile_program(&mut self, program: &Program) -> Result<(), String> {
+        // 第一遍：扫描函数定义
+        for func in &program.functions {
+            self.functions.push(FunctionInfo {
+                name: func.name.clone(),
+                param_count: func.params.len(),
+                addr: 0,
+            });
+        }
+
+        // 跳转到 main（跳过函数定义）
+        let jump_to_main_idx = self.instructions.len();
+        if !program.functions.is_empty() {
+            self.emit_jump(0); // placeholder
+        }
+
+        // 编译函数体
+        for func in &program.functions {
+            let func_addr = self.current_addr();
+            if let Some(info) = self.functions.iter_mut().find(|f| f.name == func.name) {
+                info.addr = func_addr;
+            }
+            self.compile_function(func)?;
+        }
+
+        // Patch 入口跳转
+        if !program.functions.is_empty() {
+            let main_addr = self.current_addr();
+            let offset = self.calc_offset(jump_to_main_idx, main_addr / 4);
+            self.patch_offset(jump_to_main_idx, offset);
+        }
+
+        // 编译主程序
+        for stmt in &program.statements {
+            self.compile_statement(stmt)?;
+        }
+
+        // 程序结束：halt (JUMP 0)
+        let halt_idx = self.instructions.len();
+        self.emit_jump(0);
+        let halt_offset = self.calc_offset(halt_idx, halt_idx);
+        self.patch_offset(halt_idx, halt_offset);
+
+        Ok(())
+    }
+
+    fn compile_function(&mut self, func: &Function) -> Result<(), String> {
+        self.in_function = true;
+        self.variables.clear();
+        self.next_reg = REG_T0;
+
+        // Prologue
+        self.emit_addi(REG_SP, REG_SP, -16);
+        self.emit_store(REG_RA, REG_SP, 12);
+        self.emit_store(REG_FP, REG_SP, 8);
+        self.emit_addi(REG_FP, REG_SP, 12);
+
+        // 参数映射
+        for (i, param) in func.params.iter().enumerate() {
+            let reg = REG_A0 + i as u8;
+            if reg > REG_A4 {
+                return Err(format!("函数 '{}' 参数过多（最多5个）", func.name));
+            }
+            self.variables.push((param.clone(), reg));
+        }
+
+        // 函数体
+        for stmt in &func.body {
+            self.compile_statement(stmt)?;
+        }
+
+        // Epilogue
+        self.emit_load(REG_RA, REG_FP, 0);
+        self.emit_load(REG_FP, REG_FP, -4);
+        self.emit_addi(REG_SP, REG_FP, 4);
+        self.emit_ret();
+
+        self.in_function = false;
+        Ok(())
+    }
+
+    fn compile_statement(&mut self, stmt: &Statement) -> Result<(), String> {
+        match stmt {
+            Statement::Let { name, value } => {
+                let rd = self.alloc_reg(name)?;
+                self.compile_expr_into(value, rd)?;
+                Ok(())
+            }
+            Statement::Assign { name, value } => {
+                let rd = self.get_var_reg(name)
+                    .ok_or_else(|| format!("未定义变量 '{}'", name))?;
+                self.compile_expr_into(value, rd)?;
+                Ok(())
+            }
+            Statement::IndexAssign { name, index, value } => {
+                self.compile_index_assign(name, index, value)
+            }
+            Statement::Return(expr) => {
+                self.compile_expr_into(expr, REG_RV)?;
+                Ok(())
+            }
+            Statement::Expr(expr) => {
+                let tmp = self.alloc_temp()?;
+                self.compile_expr_into(expr, tmp)?;
+                Ok(())
+            }
+            Statement::If { condition, then_body, else_body } => {
+                self.compile_if(condition, then_body, else_body.as_deref())
+            }
+            Statement::While { condition, body } => {
+                self.compile_while(condition, body)
+            }
+            Statement::ConsoleLog(args) => {
+                self.compile_console_log(args)
+            }
+        }
+    }
+
+    // =========================================================================
+    // Phase 4: console.log → UART 输出
+    // =========================================================================
+
+    fn compile_console_log(&mut self, args: &[Expr]) -> Result<(), String> {
+        for arg in args {
+            match arg {
+                Expr::StringLit(s) => {
+                    // 字符串：逐字符 STORE 到 UART TX
+                    for byte in s.bytes() {
+                        // ADDI tmp, x0, char
+                        let tmp = REG_T0; // 复用 t0 做 UART 输出
+                        self.emit_addi(tmp, REG_ZERO, byte as i16);
+                        self.emit_nop(); // 等 pipeline
+                        // STORE tmp, UART_TX_ADDR(x0)
+                        self.emit_store(tmp, REG_ZERO, UART_TX_ADDR);
+                    }
+                    // 换行符
+                    self.emit_addi(REG_T0, REG_ZERO, 0x0A); // '\n'
+                    self.emit_nop();
+                    self.emit_store(REG_T0, REG_ZERO, UART_TX_ADDR);
+                }
+                Expr::Number(n) => {
+                    // 数字直接输出到 UART
+                    self.emit_addi(REG_T0, REG_ZERO, *n as i16);
+                    self.emit_nop();
+                    self.emit_store(REG_T0, REG_ZERO, UART_TX_ADDR);
+                }
+                _ => {
+                    // 通用表达式：计算后输出
+                    self.compile_expr_into(arg, REG_T0)?;
+                    self.emit_nop();
+                    self.emit_store(REG_T0, REG_ZERO, UART_TX_ADDR);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // =========================================================================
+    // Phase 4: 数组支持
+    // =========================================================================
+
+    fn compile_index_assign(&mut self, name: &str, index: &Expr, value: &Expr) -> Result<(), String> {
+        // 获取数组基址寄存器
+        let base_reg = self.get_var_reg(name)
+            .ok_or_else(|| format!("未定义数组 '{}'", name))?;
+
+        // 计算 index
+        let idx_reg = self.alloc_temp()?;
+        self.compile_expr_into(index, idx_reg)?;
+
+        // 计算值
+        let val_reg = self.alloc_temp()?;
+        self.compile_expr_into(value, val_reg)?;
+
+        // index * 8 (每元素 8 字节) → 左移 3 位
+        let shift_reg = self.alloc_temp()?;
+        self.emit_addi(shift_reg, REG_ZERO, 3);
+        self.emit_nop();
+        self.instructions.push(Instruction::RR {
+            opcode: 0x5, func: 0x0, rs1: idx_reg, rs2: shift_reg, rd: idx_reg,
+        });
+
+        // ADD base + offset
+        self.emit_nop();
+        self.instructions.push(Instruction::RR {
+            opcode: 0x0, func: 0x0, rs1: base_reg, rs2: idx_reg, rd: idx_reg,
+        });
+
+        // STORE value, 0(addr)
+        self.emit_nop();
+        self.emit_store(val_reg, idx_reg, 0);
+
+        Ok(())
+    }
+
+    fn compile_array_literal(&mut self, elements: &[Expr], rd: u8) -> Result<(), String> {
+        // 静态分配堆空间
+        let base_addr = self.alloc_heap(elements.len() as i16);
+
+        // 将基址加载到 rd
+        self.emit_addi(rd, REG_ZERO, base_addr);
+
+        // 初始化各元素
+        for (i, elem) in elements.iter().enumerate() {
+            let tmp = REG_T0; // 复用 t0
+            self.compile_expr_into(elem, tmp)?;
+            let offset = (i as i16) * 8;
+            self.emit_nop();
+            self.emit_store(tmp, rd, offset);
+        }
+
+        Ok(())
+    }
+
+    fn compile_array_index(&mut self, array: &Expr, index: &Expr, rd: u8) -> Result<(), String> {
+        // 计算数组基址
+        let base_reg = self.alloc_temp()?;
+        self.compile_expr_into(array, base_reg)?;
+
+        // 计算 index
+        let idx_reg = self.alloc_temp()?;
+        self.compile_expr_into(index, idx_reg)?;
+
+        // index * 8
+        let shift_reg = self.alloc_temp()?;
+        self.emit_addi(shift_reg, REG_ZERO, 3);
+        self.emit_nop();
+        self.instructions.push(Instruction::RR {
+            opcode: 0x5, func: 0x0, rs1: idx_reg, rs2: shift_reg, rd: idx_reg,
+        });
+
+        // base + offset
+        self.emit_nop();
+        self.instructions.push(Instruction::RR {
+            opcode: 0x0, func: 0x0, rs1: base_reg, rs2: idx_reg, rd: idx_reg,
+        });
+
+        // LOAD rd, 0(addr)
+        self.emit_nop();
+        self.emit_load(rd, idx_reg, 0);
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // 函数调用
+    // =========================================================================
+
+    fn compile_call(&mut self, name: &str, args: &[Expr], rd: u8) -> Result<(), String> {
+        let func_info = self.get_function(name)
+            .ok_or_else(|| format!("未定义函数 '{}'", name))?;
+        let func_addr = func_info.addr;
+        let param_count = func_info.param_count;
+
+        if args.len() != param_count {
+            return Err(format!("函数 '{}' 期望 {} 个参数，得到 {} 个", name, param_count, args.len()));
+        }
+
+        for (i, arg) in args.iter().enumerate() {
+            let arg_reg = REG_A0 + i as u8;
+            self.compile_expr_into(arg, arg_reg)?;
+        }
+
+        if !args.is_empty() {
+            self.emit_nop();
+        }
+
+        let current_pc = self.current_addr();
+        let offset = (func_addr as i32 - current_pc as i32) as i16;
+        self.emit_jump(offset);
+
+        if rd != REG_RV {
+            self.emit_addi(rd, REG_RV, 0);
+        }
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // 条件分支
+    // =========================================================================
+
+    fn compile_if(&mut self, condition: &Expr, then_body: &[Statement], else_body: Option<&[Statement]>) -> Result<(), String> {
+        let cond = self.compile_condition(condition)?;
+        self.emit_nop();
+
+        if cond.zero_means_true {
+            self.emit_bez(cond.reg, 8);
+            let jump_to_else_idx = self.instructions.len();
+            self.emit_jump(0);
+
+            for stmt in then_body {
+                self.compile_statement(stmt)?;
+            }
+
+            if let Some(else_stmts) = else_body {
+                let jump_to_end_idx = self.instructions.len();
+                self.emit_jump(0);
+
+                let else_start_idx = self.instructions.len();
+                let offset = self.calc_offset(jump_to_else_idx, else_start_idx);
+                self.patch_offset(jump_to_else_idx, offset);
+
+                for stmt in else_stmts {
+                    self.compile_statement(stmt)?;
+                }
+
+                let end_idx = self.instructions.len();
+                let offset = self.calc_offset(jump_to_end_idx, end_idx);
+                self.patch_offset(jump_to_end_idx, offset);
+            } else {
+                let end_idx = self.instructions.len();
+                let offset = self.calc_offset(jump_to_else_idx, end_idx);
+                self.patch_offset(jump_to_else_idx, offset);
+            }
+        } else {
+            let bez_idx = self.instructions.len();
+            self.emit_bez(cond.reg, 0);
+
+            for stmt in then_body {
+                self.compile_statement(stmt)?;
+            }
+
+            if let Some(else_stmts) = else_body {
+                let jump_to_end_idx = self.instructions.len();
+                self.emit_jump(0);
+
+                let else_start_idx = self.instructions.len();
+                let offset = self.calc_offset(bez_idx, else_start_idx);
+                self.patch_offset(bez_idx, offset);
+
+                for stmt in else_stmts {
+                    self.compile_statement(stmt)?;
+                }
+
+                let end_idx = self.instructions.len();
+                let offset = self.calc_offset(jump_to_end_idx, end_idx);
+                self.patch_offset(jump_to_end_idx, offset);
+            } else {
+                let end_idx = self.instructions.len();
+                let offset = self.calc_offset(bez_idx, end_idx);
+                self.patch_offset(bez_idx, offset);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn compile_while(&mut self, condition: &Expr, body: &[Statement]) -> Result<(), String> {
+        let loop_start_idx = self.instructions.len();
+
+        let cond = self.compile_condition(condition)?;
+        self.emit_nop();
+
+        if cond.zero_means_true {
+            self.emit_bez(cond.reg, 8);
+            let jump_exit_idx = self.instructions.len();
+            self.emit_jump(0);
+
+            for stmt in body {
+                self.compile_statement(stmt)?;
+            }
+
+            let jump_back_idx = self.instructions.len();
+            let back_offset = self.calc_offset(jump_back_idx, loop_start_idx);
+            self.emit_jump(back_offset);
+
+            let end_idx = self.instructions.len();
+            let exit_offset = self.calc_offset(jump_exit_idx, end_idx);
+            self.patch_offset(jump_exit_idx, exit_offset);
+        } else {
+            let bez_exit_idx = self.instructions.len();
+            self.emit_bez(cond.reg, 0);
+
+            for stmt in body {
+                self.compile_statement(stmt)?;
+            }
+
+            let jump_back_idx = self.instructions.len();
+            let back_offset = self.calc_offset(jump_back_idx, loop_start_idx);
+            self.emit_jump(back_offset);
+
+            let end_idx = self.instructions.len();
+            let exit_offset = self.calc_offset(bez_exit_idx, end_idx);
+            self.patch_offset(bez_exit_idx, exit_offset);
+        }
+
+        Ok(())
+    }
+
+    fn compile_condition(&mut self, expr: &Expr) -> Result<CondResult, String> {
+        match expr {
+            Expr::BinOp { op: op @ (BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt), left, right } => {
+                let (actual_left, actual_right, actual_op) = match op {
+                    BinOp::Gt => (right.as_ref(), left.as_ref(), BinOp::Lt),
+                    _ => (left.as_ref(), right.as_ref(), *op),
+                };
+
+                let left_reg = self.alloc_temp()?;
+                self.compile_expr_into(actual_left, left_reg)?;
+                let right_reg = self.alloc_temp()?;
+                self.compile_expr_into(actual_right, right_reg)?;
+
+                self.emit_nop();
+
+                self.instructions.push(Instruction::RR {
+                    opcode: 0x1, func: 0x0,
+                    rs1: left_reg, rs2: right_reg, rd: left_reg,
+                });
+
+                match actual_op {
+                    BinOp::Eq => Ok(CondResult { reg: left_reg, zero_means_true: true }),
+                    BinOp::NotEq => Ok(CondResult { reg: left_reg, zero_means_true: false }),
+                    BinOp::Lt => {
+                        let shift_reg = self.alloc_temp()?;
+                        self.emit_addi(shift_reg, REG_ZERO, 63);
+                        self.emit_nop();
+                        self.instructions.push(Instruction::RR {
+                            opcode: 0x6, func: 0x0,
+                            rs1: left_reg, rs2: shift_reg, rd: left_reg,
+                        });
+                        Ok(CondResult { reg: left_reg, zero_means_true: false })
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            _ => {
+                let reg = self.alloc_temp()?;
+                self.compile_expr_into(expr, reg)?;
+                Ok(CondResult { reg, zero_means_true: false })
+            }
+        }
+    }
+
+    // =========================================================================
+    // 表达式编译
+    // =========================================================================
+
+    fn compile_expr_into(&mut self, expr: &Expr, rd: u8) -> Result<(), String> {
+        match expr {
+            Expr::Number(n) => {
+                let imm = *n as i16;
+                self.emit_addi(rd, REG_ZERO, imm);
+                Ok(())
+            }
+            Expr::StringLit(_s) => {
+                // 字符串作为表达式 → 返回首字符 ASCII 值
+                // (完整字符串处理需要堆，这里简化)
+                let first_byte = _s.bytes().next().unwrap_or(0);
+                self.emit_addi(rd, REG_ZERO, first_byte as i16);
+                Ok(())
+            }
+            Expr::Ident(name) => {
+                let src = self.get_var_reg(name)
+                    .ok_or_else(|| format!("未定义变量 '{}'", name))?;
+                if src != rd {
+                    self.emit_addi(rd, src, 0);
+                }
+                Ok(())
+            }
+            Expr::Call { name, args } => {
+                self.compile_call(name, args, rd)
+            }
+            Expr::Array(elements) => {
+                self.compile_array_literal(elements, rd)
+            }
+            Expr::Index { array, index } => {
+                self.compile_array_index(array, index, rd)
+            }
+            Expr::BinOp { op, left, right } => {
+                self.compile_expr_into(left, rd)?;
+                let tmp = self.alloc_temp()?;
+                self.compile_expr_into(right, tmp)?;
+                self.emit_nop();
+                let (opcode, func) = match op {
+                    BinOp::Add => (0x0, 0x0),
+                    BinOp::Sub => (0x1, 0x0),
+                    BinOp::Mul => (0x7, 0x8),
+                    BinOp::Div => (0x7, 0xC),
+                    BinOp::Mod => (0x7, 0xE),  // REM
+                    BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt => (0x1, 0x0),
+                    BinOp::And | BinOp::Or => (0x2, 0x0), // 简化：AND
+                };
+                self.instructions.push(Instruction::RR {
+                    opcode, func,
+                    rs1: rd, rs2: tmp, rd,
+                });
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::tokenize;
+    use crate::parser::parse;
+
+    #[test]
+    fn test_compile_let() {
+        let tokens = tokenize("let a = 10;").unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        assert!(!instrs.is_empty());
+    }
+
+    #[test]
+    fn test_compile_add() {
+        let tokens = tokenize("let a = 10; let b = 20; let c = a + b;").unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        assert!(instrs.len() >= 3);
+    }
+
+    #[test]
+    fn test_compile_function() {
+        let source = "function add(a, b) { return a + b; }";
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        let has_ret = instrs.iter().any(|i| matches!(i, Instruction::RR { opcode: 0xF, func: 0x1, .. }));
+        assert!(has_ret, "应包含 RET 指令");
+    }
+
+    #[test]
+    fn test_compile_call() {
+        let source = "function add(a, b) { return a + b; } let x = add(3, 4);";
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        let has_jump = instrs.iter().any(|i| matches!(i, Instruction::RI { opcode: 0xE, .. }));
+        assert!(has_jump, "应包含 JUMP 指令");
+    }
+
+    #[test]
+    fn test_compile_console_log_number() {
+        let source = "console.log(42);";
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        // 应包含 STORE 到 UART 地址
+        let has_store = instrs.iter().any(|i| matches!(i, Instruction::RI { opcode: 0xC, .. }));
+        assert!(has_store, "console.log 应生成 STORE 指令");
+    }
+
+    #[test]
+    fn test_compile_console_log_string() {
+        let source = r#"console.log("Hi");"#;
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        // "Hi\n" = 3 个字符, 每个字符 ADDI+NOP+STORE = 3 条
+        // 总共 3*3 + halt = 10 条
+        let store_count = instrs.iter().filter(|i| matches!(i, Instruction::RI { opcode: 0xC, .. })).count();
+        assert_eq!(store_count, 3, "Hi + \\n = 3 个 STORE");
+    }
+
+    #[test]
+    fn test_compile_array() {
+        let source = "let arr = [10, 20, 30];";
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        // 应包含多个 STORE（初始化数组元素）
+        let store_count = instrs.iter().filter(|i| matches!(i, Instruction::RI { opcode: 0xC, .. })).count();
+        assert!(store_count >= 3, "数组初始化应有 3 个 STORE");
+    }
+
+    #[test]
+    fn test_compile_if_eq() {
+        let source = "let a = 10; let b = 10; let c = 0; if (a == b) { c = 1; }";
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        let has_branch = instrs.iter().any(|i| matches!(i, Instruction::RI { opcode: 0xD, .. }));
+        assert!(has_branch, "应包含 BEZ 指令");
+    }
+
+    #[test]
+    fn test_compile_while() {
+        let source = "let i = 0; while (i != 10) { i = i + 1; }";
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        let has_backward_jump = instrs.iter().any(|i| {
+            matches!(i, Instruction::RI { opcode: 0xE, imm, .. } if *imm < 0)
+        });
+        assert!(has_backward_jump, "while 应包含向回跳转");
+    }
+
+    #[test]
+    fn test_compile_modulo() {
+        let source = "let a = 10; let b = 3; let c = a % b;";
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        // 应包含 REM 指令 (opcode=7, func=E)
+        let has_rem = instrs.iter().any(|i| matches!(i, Instruction::RR { opcode: 0x7, func: 0xE, .. }));
+        assert!(has_rem, "% 应生成 REM 指令");
+    }
+}

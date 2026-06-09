@@ -1,0 +1,17 @@
+[package]
+name = "snarjs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Zhujun"]
+description = "SNARjs: JavaScript to COUNPRE64 Cross-Compiler"
+
+[dependencies]
+
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+debug = true
