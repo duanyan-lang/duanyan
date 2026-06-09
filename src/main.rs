@@ -14,6 +14,7 @@ mod compiler;
 mod backend;
 mod optimizer;
 mod strip;
+mod engine;
 
 const BANNER: &str = r#"
    ____  _   _    _    ____  
@@ -43,6 +44,7 @@ fn main() {
         "scan"    => cmd_scan(&args[2..]),
         "lock"    => cmd_lock(&args[2..]),
         "bite"    => cmd_bite(&args[2..]),
+        "run"     => cmd_run(&args[2..]),
         "prey"    => cmd_prey(&args[2..]),
         // 兼容旧命令
         "compile" => cmd_build(&args[2..]),
@@ -325,6 +327,57 @@ fn cmd_bite(args: &[String]) {
     println!("\n🦷 共咬穿 {} 条指令", instructions.len());
 }
 
+
+// =============================================================================
+// snar run - 执行（原生执行引擎）
+// =============================================================================
+fn cmd_run(args: &[String]) {
+    if args.is_empty() {
+        eprintln!("⚡ snar run: 请指定执行目标");
+        eprintln!("用法: snar run <input.js|.ts> [-O]");
+        process::exit(1);
+    }
+
+    let input_file = &args[0];
+    let do_optimize = args.iter().any(|a| a == "-O" || a == "--optimize");
+
+    let raw_source = match fs::read_to_string(input_file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("❌ 无法读取 '{}': {}", input_file, e);
+            process::exit(1);
+        }
+    };
+
+    let source = if input_file.ends_with(".ts") {
+        println!("🔪 剥离类型...");
+        strip::strip_types(&raw_source)
+    } else {
+        raw_source
+    };
+
+    println!("⚡ 执行引擎启动: {}\n", input_file);
+
+    let instructions = compile_pipeline(&source, do_optimize);
+    let machine_code: Vec<u32> = instructions.iter().map(|i| i.encode()).collect();
+
+    let mut exec = engine::Engine::new(machine_code);
+    match exec.run() {
+        Ok((output, cycles)) => {
+            // 确保输出末尾有换行
+            if !output.ends_with('\n') {
+                println!();
+            }
+            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            println!("  ⚡ 执行完成: {} 条指令, {} cycles", instructions.len(), cycles);
+        }
+        Err(e) => {
+            eprintln!("❌ 执行错误: {}", e);
+            process::exit(1);
+        }
+    }
+}
+
 // =============================================================================
 // snar prey - 猎物列表
 // =============================================================================
@@ -420,6 +473,7 @@ fn print_usage() {
     println!("🪤 猎术手册:");
     println!();
     println!("  snar build <file>   🔨 锻造武器 (编译为 .hex)");
+    println!("  snar run   <file>   ⚡ 原生执行 (直接运行输出)");
     println!("  snar hunt  <file>   🪤 设阱捕获 (编译+部署)");
     println!("  snar track <file>   🔍 追踪指令 (查看汇编)");
     println!("  snar scan  <file>   👁️  侦查目标 (代码分析)");
@@ -436,6 +490,7 @@ fn print_usage() {
     println!();
     println!("示例:");
     println!("  snar build hello.ts -O --asm");
+    println!("  snar run   helloworld.js");
     println!("  snar hunt  fibonacci.js");
     println!("  snar scan  complex.ts");
     println!("  snar track loop.js");

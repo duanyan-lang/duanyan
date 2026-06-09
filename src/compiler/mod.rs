@@ -313,16 +313,32 @@ impl Compiler {
                     self.emit_store(REG_T0, REG_ZERO, UART_TX_ADDR);
                 }
                 Expr::Number(n) => {
-                    // 数字直接输出到 UART
-                    self.emit_addi(REG_T0, REG_ZERO, *n as i16);
+                    // 编译期数字：转为字符串后逐字符输出到 UART
+                    let s = n.to_string();
+                    for byte in s.bytes() {
+                        self.emit_addi(REG_T0, REG_ZERO, byte as i16);
+                        self.emit_nop();
+                        self.emit_store(REG_T0, REG_ZERO, UART_TX_ADDR);
+                    }
+                    // 换行
+                    self.emit_addi(REG_T0, REG_ZERO, 0x0A);
                     self.emit_nop();
                     self.emit_store(REG_T0, REG_ZERO, UART_TX_ADDR);
                 }
                 _ => {
-                    // 通用表达式：计算后输出
+                    // 通用表达式：先发数字标记 0xFF，再计算并输出结果
+                    // 使用 T1 (x10) 发送标记，避免覆盖表达式结果
+                    self.emit_addi(REG_T0 + 1, REG_ZERO, -1_i16); // marker on T1
+                    self.emit_nop();
+                    self.emit_store(REG_T0 + 1, REG_ZERO, UART_TX_ADDR);
+                    // 计算表达式结果到 REG_T0
                     self.compile_expr_into(arg, REG_T0)?;
                     self.emit_nop();
                     self.emit_store(REG_T0, REG_ZERO, UART_TX_ADDR);
+                    // 换行
+                    self.emit_addi(REG_T0 + 1, REG_ZERO, 0x0A);
+                    self.emit_nop();
+                    self.emit_store(REG_T0 + 1, REG_ZERO, UART_TX_ADDR);
                 }
             }
         }
