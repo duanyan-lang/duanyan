@@ -29,6 +29,30 @@ pub struct Engine {
     pending_num: bool,  // 上一条 UART 输出是数字标记 0xFF
 }
 
+/// 运行时错误类型
+#[derive(Debug)]
+pub enum RuntimeError {
+    IllegalInstruction { pc: usize, word: u32 },
+    MemoryOutOfRange { addr: i64 },
+    InfiniteLoop { pc: usize, cycles: u64 },
+    StackOverflow { sp: i64 },
+}
+
+impl std::fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IllegalInstruction { pc, word } =>
+                write!(f, "非法指令 @ PC={}: 0x{:08X}", pc, word),
+            Self::MemoryOutOfRange { addr } =>
+                write!(f, "内存越界: 地址 0x{:X}", addr),
+            Self::InfiniteLoop { pc, cycles } =>
+                write!(f, "疑似死循环 @ PC={} ({} cycles)", pc, cycles),
+            Self::StackOverflow { sp } =>
+                write!(f, "栈溢出: SP=0x{:X}", sp),
+        }
+    }
+}
+
 impl Engine {
     pub fn new(instructions: Vec<u32>) -> Self {
         Engine {
@@ -220,6 +244,63 @@ impl Engine {
             self.regs[rd] = val;
         }
     }
+
+    // ===== 调试接口 =====
+    pub fn pc(&self) -> usize { self.pc }
+    pub fn regs(&self) -> &[i64; 16] { &self.regs }
+    pub fn reg(&self, idx: usize) -> i64 { self.regs[idx] }
+    pub fn cycles(&self) -> u64 { self.cycles }
+    pub fn halted(&self) -> bool { self.halted }
+    pub fn output(&self) -> &str { &self.output }
+    pub fn instruction_count(&self) -> usize { self.instructions.len() }
+    pub fn get_instruction(&self, idx: usize) -> Option<u32> {
+        self.instructions.get(idx).copied()
+    }
+    pub fn mem_get(&self, addr: i64) -> i64 {
+        *self.memory.get(&addr).unwrap_or(&0)
+    }
+    pub fn mem_set(&mut self, addr: i64, val: i64) {
+        self.memory.insert(addr, val);
+    }
+
+    /// 单步执行一条指令，返回是否 halt
+    pub fn step_once(&mut self) -> Result<bool, RuntimeError> {
+        if self.halted || self.pc >= self.instructions.len() {
+            return Ok(true);
+        }
+        self.step();
+        self.cycles += 1;
+        Ok(self.halted)
+    }
+
+    /// 运行到 halt 或断点
+    pub fn run_to_breakpoint(&mut self, breakpoints: &std::collections::HashSet<usize>) -> RunStop {
+        loop {
+            if self.halted || self.pc >= self.instructions.len() {
+                return RunStop::Halted;
+            }
+            if breakpoints.contains(&self.pc) && self.cycles > 0 {
+                return RunStop::Breakpoint(self.pc);
+            }
+            if self.cycles >= MAX_CYCLES {
+                return RunStop::Error(RuntimeError::InfiniteLoop {
+                    pc: self.pc,
+                    cycles: self.cycles,
+                });
+            }
+            self.step();
+            self.cycles += 1;
+        }
+    }
+}
+
+
+/// 运行停止原因
+#[derive(Debug)]
+pub enum RunStop {
+    Halted,
+    Breakpoint(usize),
+    Error(RuntimeError),
 }
 
 /// 12-bit 符号扩展

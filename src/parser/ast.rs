@@ -1,11 +1,25 @@
 //! AST 节点定义
-//! Phase 4: 支持数组、字符串、console.log
+//! Phase 6: 添加源码行号跟踪
 
 /// 程序（顶层）
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub statements: Vec<Statement>,
-    pub functions: Vec<Function>,
+    pub statements: Vec<SourceStatement>,
+    pub functions: Vec<SourceFunction>,
+}
+
+/// 带源码行号的语句
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceStatement {
+    pub stmt: Statement,
+    pub line: usize,
+}
+
+/// 带源码行号的函数
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceFunction {
+    pub func: Function,
+    pub line: usize,
 }
 
 /// 函数定义
@@ -13,7 +27,7 @@ pub struct Program {
 pub struct Function {
     pub name: String,
     pub params: Vec<String>,
-    pub body: Vec<Statement>,
+    pub body: Vec<SourceStatement>,
 }
 
 /// 语句
@@ -23,22 +37,22 @@ pub enum Statement {
     Let { name: String, value: Expr },
     /// name = value;
     Assign { name: String, value: Expr },
-    /// name[index] = value;  (Phase 4)
+    /// name[index] = value;
     IndexAssign { name: String, index: Expr, value: Expr },
     /// return expr;
     Return(Expr),
     /// if (cond) { ... } else { ... }
     If {
         condition: Expr,
-        then_body: Vec<Statement>,
-        else_body: Option<Vec<Statement>>,
+        then_body: Vec<SourceStatement>,
+        else_body: Option<Vec<SourceStatement>>,
     },
     /// while (cond) { ... }
     While {
         condition: Expr,
-        body: Vec<Statement>,
+        body: Vec<SourceStatement>,
     },
-    /// console.log(args...)  (Phase 4)
+    /// console.log(args...)
     ConsoleLog(Vec<Expr>),
     /// 表达式语句
     Expr(Expr),
@@ -47,44 +61,19 @@ pub enum Statement {
 /// 表达式
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    /// 整数字面量
     Number(i64),
-    /// 字符串字面量 (Phase 4)
     StringLit(String),
-    /// 标识符（变量名）
     Ident(String),
-    /// 二元运算
-    BinOp {
-        op: BinOp,
-        left: Box<Expr>,
-        right: Box<Expr>,
-    },
-    /// 函数调用
-    Call {
-        name: String,
-        args: Vec<Expr>,
-    },
-    /// 数组字面量 (Phase 4)
+    BinOp { op: BinOp, left: Box<Expr>, right: Box<Expr> },
+    Call { name: String, args: Vec<Expr> },
     Array(Vec<Expr>),
-    /// 数组索引 (Phase 4)
-    Index {
-        array: Box<Expr>,
-        index: Box<Expr>,
-    },
+    Index { array: Box<Expr>, index: Box<Expr> },
 }
 
 /// 二元运算符
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
-    Add,    // +
-    Sub,    // -
-    Mul,    // *
-    Div,    // /
-    Mod,    // %  Phase 4
-    Eq,     // ==
-    NotEq,  // !=
-    Lt,     // <
-    Gt,     // >
-    And,    // && Phase 4
-    Or,     // || Phase 4
+    Add, Sub, Mul, Div, Mod,
+    Eq, NotEq, Lt, Gt,
+    And, Or,
 }

@@ -3,7 +3,7 @@
 //! 将 AST 编译为 COUNPRE64 指令序列
 //! Phase 4: console.log → UART, 数组, 取模, 优化
 
-use crate::parser::{Program, Statement, Expr, BinOp, Function};
+use crate::parser::{SourceStatement, Program, Statement, Expr, BinOp, Function};
 use crate::backend::Instruction;
 
 /// 将 AST 编译为 COUNPRE64 指令列表
@@ -11,6 +11,23 @@ pub fn compile(program: &Program) -> Result<Vec<Instruction>, String> {
     let mut compiler = Compiler::new();
     compiler.compile_program(program)?;
     Ok(compiler.instructions)
+}
+
+/// 编译结果（含源码映射）
+pub struct CompileResult {
+    pub instructions: Vec<Instruction>,
+    pub source_map: Vec<usize>,
+}
+
+/// 编译并返回源码映射
+pub fn compile_with_sourcemap(program: &Program) -> Result<CompileResult, String> {
+    let mut compiler = Compiler::new();
+    compiler.compile_program(program)?;
+    let source_map = compiler.source_map.clone();
+    Ok(CompileResult {
+        instructions: compiler.instructions,
+        source_map,
+    })
 }
 
 /// 函数信息
@@ -46,8 +63,10 @@ struct Compiler {
     next_reg: u8,
     functions: Vec<FunctionInfo>,
     in_function: bool,
-    /// Phase 4: 堆分配指针（编译期静态分配）
     heap_offset: i16,
+    /// Phase 6: 源码映射 (instruction index → JS line)
+    source_map: Vec<usize>,
+    current_line: usize,
 }
 
 /// 条件求值结果
@@ -65,6 +84,8 @@ impl Compiler {
             functions: Vec::new(),
             in_function: false,
             heap_offset: HEAP_BASE,
+            source_map: Vec::new(),
+            current_line: 0,
         }
     }
 
@@ -98,6 +119,17 @@ impl Compiler {
         self.functions.iter().find(|f| f.name == name)
     }
 
+    /// 设置当前源码行号
+    fn set_line(&mut self, line: usize) {
+        self.current_line = line;
+    }
+
+    /// 发射指令并记录源码映射
+    fn push_instr(&mut self, instr: Instruction) {
+        self.instructions.push(instr);
+        self.source_map.push(self.current_line);
+    }
+
     /// 分配堆空间（编译期）
     fn alloc_heap(&mut self, size: i16) -> i16 {
         let addr = self.heap_offset;
@@ -110,43 +142,43 @@ impl Compiler {
     // =========================================================================
 
     fn emit_nop(&mut self) {
-        self.instructions.push(Instruction::RR {
+        self.push_instr(Instruction::RR {
             opcode: 0x0, func: 0x0, rs1: 0, rs2: 0, rd: 0,
         });
     }
 
     fn emit_bez(&mut self, rs: u8, byte_offset: i16) {
-        self.instructions.push(Instruction::RI {
+        self.push_instr(Instruction::RI {
             opcode: 0xD, rs, rd: 0, imm: byte_offset,
         });
     }
 
     fn emit_jump(&mut self, byte_offset: i16) {
-        self.instructions.push(Instruction::RI {
+        self.push_instr(Instruction::RI {
             opcode: 0xE, rs: 0, rd: REG_RA, imm: byte_offset,
         });
     }
 
     fn emit_ret(&mut self) {
-        self.instructions.push(Instruction::RR {
+        self.push_instr(Instruction::RR {
             opcode: 0xF, func: 0x1, rs1: REG_RA, rs2: 0, rd: 0,
         });
     }
 
     fn emit_addi(&mut self, rd: u8, rs: u8, imm: i16) {
-        self.instructions.push(Instruction::RI {
+        self.push_instr(Instruction::RI {
             opcode: 0x8, rs, rd, imm,
         });
     }
 
     fn emit_store(&mut self, rs: u8, base: u8, offset: i16) {
-        self.instructions.push(Instruction::RI {
+        self.push_instr(Instruction::RI {
             opcode: 0xC, rs: base, rd: rs, imm: offset,
         });
     }
 
     fn emit_load(&mut self, rd: u8, base: u8, offset: i16) {
-        self.instructions.push(Instruction::RI {
+        self.push_instr(Instruction::RI {
             opcode: 0xB, rs: base, rd, imm: offset,
         });
     }
@@ -174,10 +206,10 @@ impl Compiler {
 
     fn compile_program(&mut self, program: &Program) -> Result<(), String> {
         // 第一遍：扫描函数定义
-        for func in &program.functions {
+        for sf in &program.functions {
             self.functions.push(FunctionInfo {
-                name: func.name.clone(),
-                param_count: func.params.len(),
+                name: sf.func.name.clone(),
+                param_count: sf.func.params.len(),
                 addr: 0,
             });
         }
@@ -189,12 +221,13 @@ impl Compiler {
         }
 
         // 编译函数体
-        for func in &program.functions {
+        for sf in &program.functions {
+            let func = &sf.func;
             let func_addr = self.current_addr();
             if let Some(info) = self.functions.iter_mut().find(|f| f.name == func.name) {
                 info.addr = func_addr;
             }
-            self.compile_function(func)?;
+            self.compile_function(func, sf.line)?;
         }
 
         // Patch 入口跳转
@@ -205,8 +238,9 @@ impl Compiler {
         }
 
         // 编译主程序
-        for stmt in &program.statements {
-            self.compile_statement(stmt)?;
+        for ss in &program.statements {
+            self.set_line(ss.line);
+            self.compile_statement(&ss.stmt)?;
         }
 
         // 程序结束：halt (JUMP 0)
@@ -218,7 +252,8 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_function(&mut self, func: &Function) -> Result<(), String> {
+    fn compile_function(&mut self, func: &Function, func_line: usize) -> Result<(), String> {
+        self.set_line(func_line);
         self.in_function = true;
         self.variables.clear();
         self.next_reg = REG_T0;
@@ -239,8 +274,9 @@ impl Compiler {
         }
 
         // 函数体
-        for stmt in &func.body {
-            self.compile_statement(stmt)?;
+        for ss in &func.body {
+            self.set_line(ss.line);
+            self.compile_statement(&ss.stmt)?;
         }
 
         // Epilogue
@@ -279,9 +315,11 @@ impl Compiler {
                 Ok(())
             }
             Statement::If { condition, then_body, else_body } => {
+                // then_body/else_body are Vec<SourceStatement>
                 self.compile_if(condition, then_body, else_body.as_deref())
             }
             Statement::While { condition, body } => {
+                // body is Vec<SourceStatement>
                 self.compile_while(condition, body)
             }
             Statement::ConsoleLog(args) => {
@@ -366,13 +404,13 @@ impl Compiler {
         let shift_reg = self.alloc_temp()?;
         self.emit_addi(shift_reg, REG_ZERO, 3);
         self.emit_nop();
-        self.instructions.push(Instruction::RR {
+        self.push_instr(Instruction::RR {
             opcode: 0x5, func: 0x0, rs1: idx_reg, rs2: shift_reg, rd: idx_reg,
         });
 
         // ADD base + offset
         self.emit_nop();
-        self.instructions.push(Instruction::RR {
+        self.push_instr(Instruction::RR {
             opcode: 0x0, func: 0x0, rs1: base_reg, rs2: idx_reg, rd: idx_reg,
         });
 
@@ -415,13 +453,13 @@ impl Compiler {
         let shift_reg = self.alloc_temp()?;
         self.emit_addi(shift_reg, REG_ZERO, 3);
         self.emit_nop();
-        self.instructions.push(Instruction::RR {
+        self.push_instr(Instruction::RR {
             opcode: 0x5, func: 0x0, rs1: idx_reg, rs2: shift_reg, rd: idx_reg,
         });
 
         // base + offset
         self.emit_nop();
-        self.instructions.push(Instruction::RR {
+        self.push_instr(Instruction::RR {
             opcode: 0x0, func: 0x0, rs1: base_reg, rs2: idx_reg, rd: idx_reg,
         });
 
@@ -470,7 +508,7 @@ impl Compiler {
     // 条件分支
     // =========================================================================
 
-    fn compile_if(&mut self, condition: &Expr, then_body: &[Statement], else_body: Option<&[Statement]>) -> Result<(), String> {
+    fn compile_if(&mut self, condition: &Expr, then_body: &[SourceStatement], else_body: Option<&[SourceStatement]>) -> Result<(), String> {
         let cond = self.compile_condition(condition)?;
         self.emit_nop();
 
@@ -479,8 +517,9 @@ impl Compiler {
             let jump_to_else_idx = self.instructions.len();
             self.emit_jump(0);
 
-            for stmt in then_body {
-                self.compile_statement(stmt)?;
+            for ss in then_body {
+                self.set_line(ss.line);
+                self.compile_statement(&ss.stmt)?;
             }
 
             if let Some(else_stmts) = else_body {
@@ -491,8 +530,9 @@ impl Compiler {
                 let offset = self.calc_offset(jump_to_else_idx, else_start_idx);
                 self.patch_offset(jump_to_else_idx, offset);
 
-                for stmt in else_stmts {
-                    self.compile_statement(stmt)?;
+                for ss in else_stmts {
+                    self.set_line(ss.line);
+                    self.compile_statement(&ss.stmt)?;
                 }
 
                 let end_idx = self.instructions.len();
@@ -507,8 +547,9 @@ impl Compiler {
             let bez_idx = self.instructions.len();
             self.emit_bez(cond.reg, 0);
 
-            for stmt in then_body {
-                self.compile_statement(stmt)?;
+            for ss in then_body {
+                self.set_line(ss.line);
+                self.compile_statement(&ss.stmt)?;
             }
 
             if let Some(else_stmts) = else_body {
@@ -519,8 +560,9 @@ impl Compiler {
                 let offset = self.calc_offset(bez_idx, else_start_idx);
                 self.patch_offset(bez_idx, offset);
 
-                for stmt in else_stmts {
-                    self.compile_statement(stmt)?;
+                for ss in else_stmts {
+                    self.set_line(ss.line);
+                    self.compile_statement(&ss.stmt)?;
                 }
 
                 let end_idx = self.instructions.len();
@@ -536,7 +578,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_while(&mut self, condition: &Expr, body: &[Statement]) -> Result<(), String> {
+    fn compile_while(&mut self, condition: &Expr, body: &[SourceStatement]) -> Result<(), String> {
         let loop_start_idx = self.instructions.len();
 
         let cond = self.compile_condition(condition)?;
@@ -547,8 +589,9 @@ impl Compiler {
             let jump_exit_idx = self.instructions.len();
             self.emit_jump(0);
 
-            for stmt in body {
-                self.compile_statement(stmt)?;
+            for ss in body {
+                self.set_line(ss.line);
+                self.compile_statement(&ss.stmt)?;
             }
 
             let jump_back_idx = self.instructions.len();
@@ -562,8 +605,9 @@ impl Compiler {
             let bez_exit_idx = self.instructions.len();
             self.emit_bez(cond.reg, 0);
 
-            for stmt in body {
-                self.compile_statement(stmt)?;
+            for ss in body {
+                self.set_line(ss.line);
+                self.compile_statement(&ss.stmt)?;
             }
 
             let jump_back_idx = self.instructions.len();
@@ -593,7 +637,7 @@ impl Compiler {
 
                 self.emit_nop();
 
-                self.instructions.push(Instruction::RR {
+                self.push_instr(Instruction::RR {
                     opcode: 0x1, func: 0x0,
                     rs1: left_reg, rs2: right_reg, rd: left_reg,
                 });
@@ -605,7 +649,7 @@ impl Compiler {
                         let shift_reg = self.alloc_temp()?;
                         self.emit_addi(shift_reg, REG_ZERO, 63);
                         self.emit_nop();
-                        self.instructions.push(Instruction::RR {
+                        self.push_instr(Instruction::RR {
                             opcode: 0x6, func: 0x0,
                             rs1: left_reg, rs2: shift_reg, rd: left_reg,
                         });
@@ -671,7 +715,7 @@ impl Compiler {
                     BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt => (0x1, 0x0),
                     BinOp::And | BinOp::Or => (0x2, 0x0), // 简化：AND
                 };
-                self.instructions.push(Instruction::RR {
+                self.push_instr(Instruction::RR {
                     opcode, func,
                     rs1: rd, rs2: tmp, rd,
                 });

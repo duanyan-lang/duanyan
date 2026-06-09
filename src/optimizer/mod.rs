@@ -4,7 +4,7 @@
 //! - 常量折叠 (Constant Folding)
 //! - 死代码消除 (Dead Code Elimination)
 
-use crate::parser::{Program, Statement, Expr, BinOp, Function};
+use crate::parser::{SourceStatement, SourceFunction, Program, Statement, Expr, BinOp, Function};
 
 /// 对 AST 执行优化 pass
 pub fn optimize(program: &Program) -> Program {
@@ -20,14 +20,17 @@ impl Optimizer {
     fn optimize_program(&mut self, program: &Program) -> Program {
         Program {
             statements: {
-                let stmts: Vec<_> = program.statements.iter()
-                    .map(|s| self.optimize_statement(s))
+                let optimized: Vec<SourceStatement> = program.statements.iter()
+                    .map(|ss| SourceStatement { stmt: self.optimize_statement(&ss.stmt), line: ss.line })
                     .collect();
-                stmts.into_iter().filter(|s| !self.is_dead_code(s)).collect()
+                optimized.into_iter().filter(|ss| !self.is_dead_code(&ss.stmt)).collect()
             },
-            functions: program.functions.iter()
-                .map(|f| self.optimize_function(f))
-                .collect(),
+            functions: {
+                let opt_fns: Vec<SourceFunction> = program.functions.iter()
+                    .map(|sf| SourceFunction { func: self.optimize_function(&sf.func), line: sf.line })
+                    .collect();
+                opt_fns
+            },
         }
     }
 
@@ -36,10 +39,10 @@ impl Optimizer {
             name: func.name.clone(),
             params: func.params.clone(),
             body: {
-                let stmts: Vec<_> = func.body.iter()
-                    .map(|s| self.optimize_statement(s))
+                let optimized: Vec<SourceStatement> = func.body.iter()
+                    .map(|ss| SourceStatement { stmt: self.optimize_statement(&ss.stmt), line: ss.line })
                     .collect();
-                stmts.into_iter().filter(|s| !self.is_dead_code(s)).collect()
+                optimized.into_iter().filter(|ss| !self.is_dead_code(&ss.stmt)).collect()
             },
         }
     }
@@ -66,30 +69,30 @@ impl Optimizer {
                 if let Expr::Number(n) = &cond {
                     if *n != 0 {
                         // 条件恒真，直接展开 then
-                        let optimized_body: Vec<Statement> = then_body.iter()
-                            .map(|s| self.optimize_statement(s))
+                        let optimized_body: Vec<SourceStatement> = then_body.iter()
+                            .map(|ss| SourceStatement { stmt: self.optimize_statement(&ss.stmt), line: ss.line })
                             .collect();
                         // 返回第一条语句（简化处理）
                         if optimized_body.len() == 1 {
-                            return optimized_body.into_iter().next().unwrap();
+                            return optimized_body.into_iter().next().unwrap().stmt;
                         }
                     } else {
                         // 条件恒假，展开 else
                         if let Some(else_stmts) = else_body {
-                            let optimized_body: Vec<Statement> = else_stmts.iter()
-                                .map(|s| self.optimize_statement(s))
+                            let optimized_body: Vec<SourceStatement> = else_stmts.iter()
+                                .map(|ss| SourceStatement { stmt: self.optimize_statement(&ss.stmt), line: ss.line })
                                 .collect();
                             if optimized_body.len() == 1 {
-                                return optimized_body.into_iter().next().unwrap();
+                                return optimized_body.into_iter().next().unwrap().stmt;
                             }
                         }
                     }
                 }
                 Statement::If {
                     condition: cond,
-                    then_body: then_body.iter().map(|s| self.optimize_statement(s)).collect(),
+                    then_body: then_body.iter().map(|ss| SourceStatement { stmt: self.optimize_statement(&ss.stmt), line: ss.line }).collect(),
                     else_body: else_body.as_ref().map(|stmts| {
-                        stmts.iter().map(|s| self.optimize_statement(s)).collect()
+                        stmts.iter().map(|ss| SourceStatement { stmt: self.optimize_statement(&ss.stmt), line: ss.line }).collect()
                     }),
                 }
             }
@@ -101,7 +104,7 @@ impl Optimizer {
                 }
                 Statement::While {
                     condition: cond,
-                    body: body.iter().map(|s| self.optimize_statement(s)).collect(),
+                    body: body.iter().map(|ss| SourceStatement { stmt: self.optimize_statement(&ss.stmt), line: ss.line }).collect(),
                 }
             }
             Statement::ConsoleLog(args) => Statement::ConsoleLog(
@@ -208,7 +211,7 @@ mod tests {
         let ast = parse(&tokens).unwrap();
         let optimized = optimize(&ast);
         // 3 + 4*2 = 3 + 8 = 11
-        match &optimized.statements[0] {
+        match &optimized.statements[0].stmt {
             Statement::Let { value, .. } => {
                 assert_eq!(*value, Expr::Number(11), "常量折叠: 3+4*2=11");
             }
@@ -221,7 +224,7 @@ mod tests {
         let tokens = tokenize("let x = a * 0;").unwrap();
         let ast = parse(&tokens).unwrap();
         let optimized = optimize(&ast);
-        match &optimized.statements[0] {
+        match &optimized.statements[0].stmt {
             Statement::Let { value, .. } => {
                 assert_eq!(*value, Expr::Number(0), "x*0=0");
             }
@@ -234,7 +237,7 @@ mod tests {
         let tokens = tokenize("let x = a + 0;").unwrap();
         let ast = parse(&tokens).unwrap();
         let optimized = optimize(&ast);
-        match &optimized.statements[0] {
+        match &optimized.statements[0].stmt {
             Statement::Let { value, .. } => {
                 assert_eq!(*value, Expr::Ident("a".to_string()), "a+0=a");
             }

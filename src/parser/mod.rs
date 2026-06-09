@@ -4,7 +4,7 @@
 //! Phase 4: 支持 console.log、数组、取模、逻辑运算
 
 mod ast;
-pub use ast::*;
+pub use ast::*;  // Phase 6: SourceStatement, SourceFunction
 
 use crate::lexer::{Token, TokenKind};
 
@@ -49,10 +49,13 @@ impl<'a> Parser<'a> {
         let mut functions = Vec::new();
         
         while *self.peek() != TokenKind::Eof {
+            let line = self.tokens[self.pos].line;
             if *self.peek() == TokenKind::Function {
-                functions.push(self.parse_function()?);
+                let func = self.parse_function()?;
+                functions.push(SourceFunction { func, line });
             } else {
-                statements.push(self.parse_statement()?);
+                let stmt = self.parse_statement()?;
+                statements.push(SourceStatement { stmt, line });
             }
         }
         Ok(Program { statements, functions })
@@ -251,11 +254,13 @@ impl<'a> Parser<'a> {
         Ok(Statement::While { condition, body })
     }
 
-    fn parse_block(&mut self) -> Result<Vec<Statement>, String> {
+    fn parse_block(&mut self) -> Result<Vec<SourceStatement>, String> {
         self.expect(&TokenKind::LBrace)?;
         let mut stmts = Vec::new();
         while *self.peek() != TokenKind::RBrace && *self.peek() != TokenKind::Eof {
-            stmts.push(self.parse_statement()?);
+            let line = self.tokens[self.pos].line;
+            let stmt = self.parse_statement()?;
+            stmts.push(SourceStatement { stmt, line });
         }
         self.expect(&TokenKind::RBrace)?;
         Ok(stmts)
@@ -419,7 +424,7 @@ mod tests {
         let tokens = tokenize("let x = 42;").unwrap();
         let program = parse(&tokens).unwrap();
         assert_eq!(program.statements.len(), 1);
-        match &program.statements[0] {
+        match &program.statements[0].stmt {
             Statement::Let { name, value } => {
                 assert_eq!(name, "x");
                 assert_eq!(*value, Expr::Number(42));
@@ -440,15 +445,15 @@ mod tests {
         let tokens = tokenize("function add(a, b) { return a + b; }").unwrap();
         let program = parse(&tokens).unwrap();
         assert_eq!(program.functions.len(), 1);
-        assert_eq!(program.functions[0].name, "add");
-        assert_eq!(program.functions[0].params, vec!["a", "b"]);
+        assert_eq!(program.functions[0].func.name, "add");
+        assert_eq!(program.functions[0].func.params, vec!["a", "b"]);
     }
 
     #[test]
     fn test_parse_call() {
         let tokens = tokenize("let x = add(3, 4);").unwrap();
         let program = parse(&tokens).unwrap();
-        match &program.statements[0] {
+        match &program.statements[0].stmt {
             Statement::Let { value, .. } => {
                 match value {
                     Expr::Call { name, args } => {
@@ -466,7 +471,7 @@ mod tests {
     fn test_parse_console_log() {
         let tokens = tokenize("console.log(42);").unwrap();
         let program = parse(&tokens).unwrap();
-        match &program.statements[0] {
+        match &program.statements[0].stmt {
             Statement::ConsoleLog(args) => {
                 assert_eq!(args.len(), 1);
                 assert_eq!(args[0], Expr::Number(42));
@@ -479,7 +484,7 @@ mod tests {
     fn test_parse_console_log_string() {
         let tokens = tokenize("console.log(\"hello\");").unwrap();
         let program = parse(&tokens).unwrap();
-        match &program.statements[0] {
+        match &program.statements[0].stmt {
             Statement::ConsoleLog(args) => {
                 assert_eq!(args[0], Expr::StringLit("hello".to_string()));
             }
@@ -491,7 +496,7 @@ mod tests {
     fn test_parse_array() {
         let tokens = tokenize("let arr = [1, 2, 3];").unwrap();
         let program = parse(&tokens).unwrap();
-        match &program.statements[0] {
+        match &program.statements[0].stmt {
             Statement::Let { value, .. } => {
                 match value {
                     Expr::Array(elems) => assert_eq!(elems.len(), 3),
@@ -506,7 +511,7 @@ mod tests {
     fn test_parse_array_index() {
         let tokens = tokenize("let x = arr[0];").unwrap();
         let program = parse(&tokens).unwrap();
-        match &program.statements[0] {
+        match &program.statements[0].stmt {
             Statement::Let { value, .. } => {
                 assert!(matches!(value, Expr::Index { .. }));
             }
