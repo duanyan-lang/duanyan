@@ -64,9 +64,13 @@ struct Compiler {
     functions: Vec<FunctionInfo>,
     in_function: bool,
     heap_offset: i16,
-    /// Phase 6: 源码映射 (instruction index → JS line)
     source_map: Vec<usize>,
     current_line: usize,
+    /// Phase 7: 寄存器溢出
+    spilled: Vec<(String, i16)>,        // 栈上变量 (name, offset)
+    spill_next: i16,                    // 下一个 spill slot 偏移
+    free_pool: Vec<u8>,                 // 空闲寄存器池
+    active_temps: Vec<u8>,              // 当前活跃临时寄存器
 }
 
 /// 条件求值结果
@@ -86,33 +90,113 @@ impl Compiler {
             heap_offset: HEAP_BASE,
             source_map: Vec::new(),
             current_line: 0,
+            spilled: Vec::new(),
+            spill_next: 0,
+            free_pool: Vec::new(),
+            active_temps: Vec::new(),
         }
     }
 
     fn alloc_reg(&mut self, name: &str) -> Result<u8, String> {
-        if let Some(reg) = self.get_var_reg(name) {
+        if let Some(reg) = self.var_reg(name) {
             return Ok(reg);
         }
-        if self.next_reg > 14 {
-            return Err("寄存器耗尽（最多6个局部变量）".to_string());
+        if self.is_spilled(name) {
+            return Err(format!("变量 '{}' 已在栈上", name));
         }
-        let reg = self.next_reg;
-        self.next_reg += 1;
+        let reg = self.get_free_reg()?;
         self.variables.push((name.to_string(), reg));
         Ok(reg)
     }
 
+    /// 将变量溢出到栈
+    fn spill_variable(&mut self, name: &str, reg: u8) {
+        let offset = self.spill_next;
+        self.spill_next += 8;
+        self.spilled.push((name.to_string(), offset));
+        // 生成 spill 代码: STORE reg, offset(x2)
+        // 由于 LOAD/STORE 的 IMM 是 12-bit，偏移最大 2047，足够
+        self.emit_store(reg, REG_SP, offset);
+    }
+
+    /// 加载溢出变量到指定寄存器
+    fn load_spilled(&mut self, name: &str, rd: u8) -> Result<(), String> {
+        let offset = self.spilled.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, o)| *o)
+            .ok_or_else(|| format!("未定义变量 '{}'", name))?;
+        self.emit_load(rd, REG_SP, offset);
+        Ok(())
+    }
+
+    /// 存储值到溢出变量
+    fn store_spilled(&mut self, name: &str, src_reg: u8) -> Result<(), String> {
+        let offset = self.spilled.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, o)| *o)
+            .ok_or_else(|| format!("未定义变量 '{}'", name))?;
+        self.emit_store(src_reg, REG_SP, offset);
+        Ok(())
+    }
+
+    /// 变量是否在栈上
+    fn is_spilled(&self, name: &str) -> bool {
+        self.spilled.iter().any(|(n, _)| n == name)
+    }
+
+    /// 获取变量所在寄存器（仅适用于寄存器变量）
+    fn var_reg(&self, name: &str) -> Option<u8> {
+        self.variables.iter().find(|(n, _)| n == name).map(|(_, r)| *r)
+    }
+
     fn alloc_temp(&mut self) -> Result<u8, String> {
-        if self.next_reg > 14 {
-            return Err("寄存器耗尽".to_string());
-        }
-        let reg = self.next_reg;
-        self.next_reg += 1;
+        let reg = self.get_free_reg()?;
+        self.active_temps.push(reg);
         Ok(reg)
     }
 
-    fn get_var_reg(&self, name: &str) -> Option<u8> {
-        self.variables.iter().find(|(n, _)| n == name).map(|(_, r)| *r)
+    /// 从空闲池获取寄存器（如池为空则推进 next_reg，如耗尽则溢出）
+    fn get_free_reg(&mut self) -> Result<u8, String> {
+        if let Some(reg) = self.free_pool.pop() {
+            return Ok(reg);
+        }
+        if self.next_reg <= 14 {
+            let reg = self.next_reg;
+            self.next_reg += 1;
+            return Ok(reg);
+        }
+        if !self.variables.is_empty() {
+            let (old_name, old_reg) = self.variables.remove(0);
+            self.spill_variable(&old_name, old_reg);
+            return Ok(old_reg);
+        }
+        Err("寄存器完全耗尽且无法溢出".to_string())
+    }
+
+    /// 释放临时寄存器
+    fn free_temp(&mut self, reg: u8) {
+        self.active_temps.retain(|&r| r != reg);
+        // 如果仍被命名变量持有，不回收
+        if self.variables.iter().any(|(_, r)| *r == reg) {
+            return;
+        }
+        if !self.free_pool.contains(&reg) {
+            self.free_pool.push(reg);
+        }
+    }
+
+    /// 获取变量值到指定寄存器（自动处理溢出加载）
+    fn get_var_to_reg(&mut self, name: &str, rd: u8) -> Result<(), String> {
+        if let Some(reg) = self.var_reg(name) {
+            if reg != rd {
+                self.emit_addi(rd, reg, 0); // MOV
+            }
+            Ok(())
+        } else if self.is_spilled(name) {
+            self.load_spilled(name, rd)
+        } else {
+            Err(format!("未定义变量 '{}'", name))
+        }
     }
 
     fn get_function(&self, name: &str) -> Option<&FunctionInfo> {
@@ -258,11 +342,11 @@ impl Compiler {
         self.variables.clear();
         self.next_reg = REG_T0;
 
-        // Prologue
-        self.emit_addi(REG_SP, REG_SP, -16);
-        self.emit_store(REG_RA, REG_SP, 12);
-        self.emit_store(REG_FP, REG_SP, 8);
-        self.emit_addi(REG_FP, REG_SP, 12);
+        // Prologue (Phase 7: 预留 128 字节给 spill area)
+        self.emit_addi(REG_SP, REG_SP, -144);  // 16 saved + 128 spill
+        self.emit_store(REG_RA, REG_SP, 140);
+        self.emit_store(REG_FP, REG_SP, 136);
+        self.emit_addi(REG_FP, REG_SP, 140);
 
         // 参数映射
         for (i, param) in func.params.iter().enumerate() {
@@ -279,7 +363,7 @@ impl Compiler {
             self.compile_statement(&ss.stmt)?;
         }
 
-        // Epilogue
+        // Epilogue (Phase 7: 恢复 144 字节栈帧)
         self.emit_load(REG_RA, REG_FP, 0);
         self.emit_load(REG_FP, REG_FP, -4);
         self.emit_addi(REG_SP, REG_FP, 4);
@@ -292,14 +376,34 @@ impl Compiler {
     fn compile_statement(&mut self, stmt: &Statement) -> Result<(), String> {
         match stmt {
             Statement::Let { name, value } => {
-                let rd = self.alloc_reg(name)?;
-                self.compile_expr_into(value, rd)?;
+                let is_new_spill = self.is_spilled(name);
+                if is_new_spill {
+                    // 变量已在栈上，计算到临时寄存器再存回
+                    let tmp = self.alloc_temp()?;
+                    self.compile_expr_into(value, tmp)?;
+                    self.store_spilled(name, tmp)?;
+                    self.free_temp(tmp);
+                } else {
+                    let rd = self.alloc_reg(name)?;
+                    self.compile_expr_into(value, rd)?;
+                    // 检查 alloc_reg 是否导致了溢出
+                    if self.is_spilled(name) {
+                        self.store_spilled(name, rd)?;
+                    }
+                }
                 Ok(())
             }
             Statement::Assign { name, value } => {
-                let rd = self.get_var_reg(name)
-                    .ok_or_else(|| format!("未定义变量 '{}'", name))?;
-                self.compile_expr_into(value, rd)?;
+                if self.is_spilled(name) {
+                    let tmp = self.alloc_temp()?;
+                    self.compile_expr_into(value, tmp)?;
+                    self.store_spilled(name, tmp)?;
+                    self.free_temp(tmp);
+                } else {
+                    let rd = self.var_reg(name)
+                        .ok_or_else(|| format!("未定义变量 '{}'", name))?;
+                    self.compile_expr_into(value, rd)?;
+                }
                 Ok(())
             }
             Statement::IndexAssign { name, index, value } => {
@@ -312,6 +416,7 @@ impl Compiler {
             Statement::Expr(expr) => {
                 let tmp = self.alloc_temp()?;
                 self.compile_expr_into(expr, tmp)?;
+                self.free_temp(tmp);
                 Ok(())
             }
             Statement::If { condition, then_body, else_body } => {
@@ -337,46 +442,52 @@ impl Compiler {
             match arg {
                 Expr::StringLit(s) => {
                     // 字符串：逐字符 STORE 到 UART TX
+                    let tmp = self.alloc_temp()?;
                     for byte in s.bytes() {
-                        // ADDI tmp, x0, char
-                        let tmp = REG_T0; // 复用 t0 做 UART 输出
                         self.emit_addi(tmp, REG_ZERO, byte as i16);
-                        self.emit_nop(); // 等 pipeline
-                        // STORE tmp, UART_TX_ADDR(x0)
+                        self.emit_nop();
                         self.emit_store(tmp, REG_ZERO, UART_TX_ADDR);
                     }
                     // 换行符
-                    self.emit_addi(REG_T0, REG_ZERO, 0x0A); // '\n'
+                    self.emit_addi(tmp, REG_ZERO, 0x0A);
                     self.emit_nop();
-                    self.emit_store(REG_T0, REG_ZERO, UART_TX_ADDR);
+                    self.emit_store(tmp, REG_ZERO, UART_TX_ADDR);
+                    self.free_temp(tmp);
                 }
                 Expr::Number(n) => {
                     // 编译期数字：转为字符串后逐字符输出到 UART
                     let s = n.to_string();
+                    let tmp = self.alloc_temp()?;
                     for byte in s.bytes() {
-                        self.emit_addi(REG_T0, REG_ZERO, byte as i16);
+                        self.emit_addi(tmp, REG_ZERO, byte as i16);
                         self.emit_nop();
-                        self.emit_store(REG_T0, REG_ZERO, UART_TX_ADDR);
+                        self.emit_store(tmp, REG_ZERO, UART_TX_ADDR);
                     }
                     // 换行
-                    self.emit_addi(REG_T0, REG_ZERO, 0x0A);
+                    self.emit_addi(tmp, REG_ZERO, 0x0A);
                     self.emit_nop();
-                    self.emit_store(REG_T0, REG_ZERO, UART_TX_ADDR);
+                    self.emit_store(tmp, REG_ZERO, UART_TX_ADDR);
+                    self.free_temp(tmp);
                 }
                 _ => {
-                    // 通用表达式：先发数字标记 0xFF，再计算并输出结果
-                    // 使用 T1 (x10) 发送标记，避免覆盖表达式结果
-                    self.emit_addi(REG_T0 + 1, REG_ZERO, -1_i16); // marker on T1
+                    // 通用表达式：分配专用寄存器避免冲突
+                    let expr_reg = self.alloc_temp()?;
+                    let marker_reg = self.alloc_temp()?;
+                    // 发数字标记 0xFF
+                    self.emit_addi(marker_reg, REG_ZERO, -1_i16);
                     self.emit_nop();
-                    self.emit_store(REG_T0 + 1, REG_ZERO, UART_TX_ADDR);
-                    // 计算表达式结果到 REG_T0
-                    self.compile_expr_into(arg, REG_T0)?;
+                    self.emit_store(marker_reg, REG_ZERO, UART_TX_ADDR);
+                    // 计算表达式结果
+                    self.compile_expr_into(arg, expr_reg)?;
                     self.emit_nop();
-                    self.emit_store(REG_T0, REG_ZERO, UART_TX_ADDR);
+                    self.emit_store(expr_reg, REG_ZERO, UART_TX_ADDR);
                     // 换行
-                    self.emit_addi(REG_T0 + 1, REG_ZERO, 0x0A);
+                    self.emit_addi(marker_reg, REG_ZERO, 0x0A);
                     self.emit_nop();
-                    self.emit_store(REG_T0 + 1, REG_ZERO, UART_TX_ADDR);
+                    self.emit_store(marker_reg, REG_ZERO, UART_TX_ADDR);
+                    // 回收临时寄存器
+                    self.free_temp(marker_reg);
+                    self.free_temp(expr_reg);
                 }
             }
         }
@@ -389,7 +500,7 @@ impl Compiler {
 
     fn compile_index_assign(&mut self, name: &str, index: &Expr, value: &Expr) -> Result<(), String> {
         // 获取数组基址寄存器
-        let base_reg = self.get_var_reg(name)
+        let base_reg = self.var_reg(name)
             .ok_or_else(|| format!("未定义数组 '{}'", name))?;
 
         // 计算 index
@@ -685,11 +796,7 @@ impl Compiler {
                 Ok(())
             }
             Expr::Ident(name) => {
-                let src = self.get_var_reg(name)
-                    .ok_or_else(|| format!("未定义变量 '{}'", name))?;
-                if src != rd {
-                    self.emit_addi(rd, src, 0);
-                }
+                self.get_var_to_reg(name, rd)?;
                 Ok(())
             }
             Expr::Call { name, args } => {
@@ -711,14 +818,16 @@ impl Compiler {
                     BinOp::Sub => (0x1, 0x0),
                     BinOp::Mul => (0x7, 0x8),
                     BinOp::Div => (0x7, 0xC),
-                    BinOp::Mod => (0x7, 0xE),  // REM
+                    BinOp::Mod => (0x7, 0xE),
                     BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt => (0x1, 0x0),
-                    BinOp::And | BinOp::Or => (0x2, 0x0), // 简化：AND
+                    BinOp::And | BinOp::Or => (0x2, 0x0),
                 };
                 self.push_instr(Instruction::RR {
                     opcode, func,
                     rs1: rd, rs2: tmp, rd,
                 });
+                // 回收临时寄存器
+                self.free_temp(tmp);
                 Ok(())
             }
         }
