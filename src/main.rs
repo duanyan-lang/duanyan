@@ -1,8 +1,8 @@
-//! SNAR - The Predator Compiler
+//! SNAR - The Snare Compiler
 //!
 //! 捕猎主题命令行: JavaScript/TypeScript → COUNPRE64 机器码
 //!
-//! 🐍 "在代码的丛林中，SNAR 是顶级掠食者"
+//! 🪤 "在代码的丛林中，SNAR 是无形的陷阱"
 
 use std::env;
 use std::fs;
@@ -22,7 +22,7 @@ const BANNER: &str = r#"
    ___) | |\  |/ ___ \|  _ < 
   |____/|_| \_/_/   \_\_| \_\  v{VERSION}
   
-  🐍 The Predator Compiler
+  🪤 The Snare Compiler
   JavaScript/TypeScript → COUNPRE64
 "#;
 
@@ -50,7 +50,7 @@ fn main() {
         "help" | "--help" | "-h" => { print_banner(); print_usage(); }
         "version" | "--version" | "-V" => print_banner(),
         _ => {
-            eprintln!("🐍 未知猎术 '{}'\n", args[1]);
+            eprintln!("🪤 未知猎术 '{}'\n", args[1]);
             print_usage();
             process::exit(1);
         }
@@ -134,12 +134,12 @@ fn cmd_build(args: &[String]) {
 // =============================================================================
 fn cmd_hunt(args: &[String]) {
     if args.is_empty() {
-        eprintln!("🐍 snar hunt: 请指定猎物");
+        eprintln!("🪤 snar hunt: 请指定猎物");
         eprintln!("用法: snar hunt <input.js|.ts> [--port COM3]");
         process::exit(1);
     }
 
-    println!("🐍 开始捕猎...");
+    println!("🪤 陷阱启动...");
     
     // 先编译
     let mut build_args = args.to_vec();
@@ -283,7 +283,7 @@ fn cmd_lock(args: &[String]) {
     println!("     2. 将 .hex 写入 memory_ctrl.v case 语句");
     println!("     3. Clean All → Run All (Synthesize + P&R)");
     println!("     4. Program Device");
-    println!("\n  🐍 或执行 PowerShell:");
+    println!("\n  🪤 或执行 PowerShell:");
     println!("     pwsh -File C:\\COUNPRE64\\tools\\fpga_com.ps1");
 }
 
@@ -417,10 +417,10 @@ fn print_banner() {
 }
 
 fn print_usage() {
-    println!("🐍 猎术手册:");
+    println!("🪤 猎术手册:");
     println!();
     println!("  snar build <file>   🔨 锻造武器 (编译为 .hex)");
-    println!("  snar hunt  <file>   🐍 捕猎执行 (编译+部署)");
+    println!("  snar hunt  <file>   🪤 设阱捕获 (编译+部署)");
     println!("  snar track <file>   🔍 追踪指令 (查看汇编)");
     println!("  snar scan  <file>   👁️  侦查目标 (代码分析)");
     println!("  snar lock  <hex>    🎯 锁定硬件 (烧录指引)");

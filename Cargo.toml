@@ -3,7 +3,7 @@ name = "snarjs"
 version = "0.2.0"
 edition = "2021"
 authors = ["Zhujun"]
-description = "SNAR: The Predator Compiler - JavaScript/TypeScript to COUNPRE64"
+description = "SNAR: The Snare Compiler - JavaScript/TypeScript to COUNPRE64"
 
 [[bin]]
 name = "snar"
