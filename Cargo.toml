@@ -1,9 +1,17 @@
 [package]
 name = "snarjs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Zhujun"]
-description = "SNARjs: JavaScript to COUNPRE64 Cross-Compiler"
+description = "SNAR: The Predator Compiler - JavaScript/TypeScript to COUNPRE64"
+
+[[bin]]
+name = "snar"
+path = "src/main.rs"
+
+[lib]
+name = "snarjs"
+path = "src/lib.rs"
 
 [dependencies]
 
