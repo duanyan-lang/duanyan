@@ -419,8 +419,40 @@ impl Compiler {
                 self.free_temp(tmp);
                 Ok(())
             }
+            Statement::For { init, condition, update, body } => {
+                self.compile_for(init, condition, update, body)
+            }
+            Statement::PostInc(name) => {
+                // name = name + 1 (单条 ADDI 指令)
+                if self.is_spilled(name) {
+                    let tmp = self.alloc_temp()?;
+                    self.load_spilled(name, tmp)?;
+                    self.emit_addi(tmp, tmp, 1);
+                    self.store_spilled(name, tmp)?;
+                    self.free_temp(tmp);
+                } else {
+                    let rd = self.var_reg(name)
+                        .ok_or_else(|| format!("未定义变量 '{}'", name))?;
+                    self.emit_addi(rd, rd, 1);
+                }
+                Ok(())
+            }
+            Statement::PostDec(name) => {
+                // name = name - 1 (单条 ADDI 指令, imm=-1)
+                if self.is_spilled(name) {
+                    let tmp = self.alloc_temp()?;
+                    self.load_spilled(name, tmp)?;
+                    self.emit_addi(tmp, tmp, -1);
+                    self.store_spilled(name, tmp)?;
+                    self.free_temp(tmp);
+                } else {
+                    let rd = self.var_reg(name)
+                        .ok_or_else(|| format!("未定义变量 '{}'", name))?;
+                    self.emit_addi(rd, rd, -1);
+                }
+                Ok(())
+            }
             Statement::If { condition, then_body, else_body } => {
-                // then_body/else_body are Vec<SourceStatement>
                 self.compile_if(condition, then_body, else_body.as_deref())
             }
             Statement::While { condition, body } => {
@@ -689,6 +721,72 @@ impl Compiler {
         Ok(())
     }
 
+
+    fn compile_for(
+        &mut self,
+        init: &Statement,
+        condition: &Expr,
+        update: &Statement,
+        body: &[SourceStatement],
+    ) -> Result<(), String> {
+        // 1. 执行初始化
+        self.compile_statement(init)?;
+
+        // 2. 循环开始: 条件检查
+        let loop_start_idx = self.instructions.len();
+        let cond = self.compile_condition(condition)?;
+        self.emit_nop();
+
+        // 3. 条件分支 (与 while 相同逻辑)
+        if cond.zero_means_true {
+            self.emit_bez(cond.reg, 8);
+            let jump_exit_idx = self.instructions.len();
+            self.emit_jump(0);
+
+            // 4. 循环体
+            for ss in body {
+                self.set_line(ss.line);
+                self.compile_statement(&ss.stmt)?;
+            }
+
+            // 5. 更新表达式
+            self.compile_statement(update)?;
+
+            // 6. 跳回循环开始
+            let jump_back_idx = self.instructions.len();
+            let back_offset = self.calc_offset(jump_back_idx, loop_start_idx);
+            self.emit_jump(back_offset);
+
+            // 7. 修补退出偏移
+            let end_idx = self.instructions.len();
+            let exit_offset = self.calc_offset(jump_exit_idx, end_idx);
+            self.patch_offset(jump_exit_idx, exit_offset);
+        } else {
+            let bez_exit_idx = self.instructions.len();
+            self.emit_bez(cond.reg, 0);
+
+            // 4. 循环体
+            for ss in body {
+                self.set_line(ss.line);
+                self.compile_statement(&ss.stmt)?;
+            }
+
+            // 5. 更新表达式
+            self.compile_statement(update)?;
+
+            // 6. 跳回循环开始
+            let jump_back_idx = self.instructions.len();
+            let back_offset = self.calc_offset(jump_back_idx, loop_start_idx);
+            self.emit_jump(back_offset);
+
+            // 7. 修补退出偏移
+            let end_idx = self.instructions.len();
+            let exit_offset = self.calc_offset(bez_exit_idx, end_idx);
+            self.patch_offset(bez_exit_idx, exit_offset);
+        }
+
+        Ok(())
+    }
     fn compile_while(&mut self, condition: &Expr, body: &[SourceStatement]) -> Result<(), String> {
         let loop_start_idx = self.instructions.len();
 
@@ -735,9 +833,10 @@ impl Compiler {
 
     fn compile_condition(&mut self, expr: &Expr) -> Result<CondResult, String> {
         match expr {
-            Expr::BinOp { op: op @ (BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt), left, right } => {
+            Expr::BinOp { op: op @ (BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge), left, right } => {
                 let (actual_left, actual_right, actual_op) = match op {
                     BinOp::Gt => (right.as_ref(), left.as_ref(), BinOp::Lt),
+                    BinOp::Ge => (right.as_ref(), left.as_ref(), BinOp::Le),
                     _ => (left.as_ref(), right.as_ref(), *op),
                 };
 
@@ -764,6 +863,23 @@ impl Compiler {
                             opcode: 0x6, func: 0x0,
                             rs1: left_reg, rs2: shift_reg, rd: left_reg,
                         });
+                        Ok(CondResult { reg: left_reg, zero_means_true: false })
+                    }
+                    BinOp::Le => {
+                        // a <= b  ⟺  (a - b - 1) >> 63 == 0
+                        // left_reg 已有 a - b (外层 SUB)
+                        // ADDI -1: left_reg = (a - b) - 1
+                        self.emit_addi(left_reg, left_reg, -1_i16);
+                        // NOP: 等待 ADDI 结果写回
+                        self.emit_nop();
+                        let shift_reg = self.alloc_temp()?;
+                        self.emit_addi(shift_reg, REG_ZERO, 63);
+                        self.emit_nop();
+                        self.push_instr(Instruction::RR {
+                            opcode: 0x6, func: 0x0,  // SHR
+                            rs1: left_reg, rs2: shift_reg, rd: left_reg,
+                        });
+                        // SHR 结果: 0 表示 a<=b (true), 1 表示 a>b (false)
                         Ok(CondResult { reg: left_reg, zero_means_true: false })
                     }
                     _ => unreachable!(),
@@ -865,7 +981,7 @@ impl Compiler {
                     BinOp::Mul => (0x7, 0x8),
                     BinOp::Div => (0x7, 0xC),
                     BinOp::Mod => (0x7, 0xE),
-                    BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt => (0x1, 0x0),
+                    BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => (0x1, 0x0),
                     BinOp::And | BinOp::Or => (0x2, 0x0),
                 };
                 self.push_instr(Instruction::RR {

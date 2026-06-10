@@ -14,6 +14,7 @@ pub enum TokenKind {
     If,
     Else,
     While,
+    For,
     Return,
 
     // 运算符
@@ -41,6 +42,10 @@ pub enum TokenKind {
     Semi,       // ;
     Comma,      // ,
     Dot,        // .  Phase 4: 成员访问
+    PlusPlus,   // ++ Phase 9: for循环
+    MinusMinus, // -- Phase 9: for循环
+    Le,         // <= Phase 9
+    Ge,         // >= Phase 9
 
     // 结束
     Eof,

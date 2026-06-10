@@ -107,6 +107,17 @@ impl Optimizer {
                     body: body.iter().map(|ss| SourceStatement { stmt: self.optimize_statement(&ss.stmt), line: ss.line }).collect(),
                 }
             }
+            Statement::For { init, condition, update, body } => {
+                let cond = self.fold_expr(condition);
+                Statement::For {
+                    init: Box::new(self.optimize_statement(init)),
+                    condition: cond,
+                    update: Box::new(self.optimize_statement(update)),
+                    body: body.iter().map(|ss| SourceStatement { stmt: self.optimize_statement(&ss.stmt), line: ss.line }).collect(),
+                }
+            }
+            Statement::PostInc(name) => Statement::PostInc(name.clone()),
+            Statement::PostDec(name) => Statement::PostDec(name.clone()),
             Statement::ConsoleLog(args) => Statement::ConsoleLog(
                 args.iter().map(|e| self.fold_expr(e)).collect()
             ),
@@ -188,6 +199,8 @@ impl Optimizer {
             BinOp::NotEq => Some(if lv != rv { 1 } else { 0 }),
             BinOp::Lt => Some(if lv < rv { 1 } else { 0 }),
             BinOp::Gt => Some(if lv > rv { 1 } else { 0 }),
+            BinOp::Le => Some(if lv <= rv { 1 } else { 0 }),
+            BinOp::Ge => Some(if lv >= rv { 1 } else { 0 }),
             BinOp::And => Some(if lv != 0 && rv != 0 { 1 } else { 0 }),
             BinOp::Or => Some(if lv != 0 || rv != 0 { 1 } else { 0 }),
         }

@@ -52,6 +52,17 @@ pub enum Statement {
         condition: Expr,
         body: Vec<SourceStatement>,
     },
+    /// for (init; cond; update) { body }
+    For {
+        init: Box<Statement>,
+        condition: Expr,
+        update: Box<Statement>,
+        body: Vec<SourceStatement>,
+    },
+    /// name++ (Phase 9)
+    PostInc(String),
+    /// name-- (Phase 9)
+    PostDec(String),
     /// console.log(args...)
     ConsoleLog(Vec<Expr>),
     /// 表达式语句
@@ -76,7 +87,7 @@ pub enum Expr {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
     Add, Sub, Mul, Div, Mod,
-    Eq, NotEq, Lt, Gt,
+    Eq, NotEq, Lt, Gt, Le, Ge,
     And, Or,
 }
 

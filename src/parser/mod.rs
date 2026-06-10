@@ -114,6 +114,7 @@ impl<'a> Parser<'a> {
             TokenKind::Return => self.parse_return(),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
+            TokenKind::For => self.parse_for(),
             TokenKind::Ident(_) => {
                 let name = if let TokenKind::Ident(n) = self.peek().clone() {
                     n.clone()
@@ -127,6 +128,20 @@ impl<'a> Parser<'a> {
                 }
                 
                 self.advance(); // consume ident
+                
+                // PostIncrement: name++
+                if *self.peek() == TokenKind::PlusPlus {
+                    self.advance();
+                    self.expect(&TokenKind::Semi)?;
+                    return Ok(Statement::PostInc(name));
+                }
+                
+                // PostDecrement: name--
+                if *self.peek() == TokenKind::MinusMinus {
+                    self.advance();
+                    self.expect(&TokenKind::Semi)?;
+                    return Ok(Statement::PostDec(name));
+                }
                 
                 // 数组索引赋值: name[index] = value;
                 if *self.peek() == TokenKind::LBracket {
@@ -254,6 +269,57 @@ impl<'a> Parser<'a> {
         Ok(Statement::While { condition, body })
     }
 
+
+    fn parse_for(&mut self) -> Result<Statement, String> {
+        self.advance(); // consume 'for'
+        self.expect(&TokenKind::LParen)?;
+        
+        // init: let i = expr; or i = expr;
+        let init = self.parse_statement()?;
+        
+        // condition: expr;
+        let condition = self.parse_expr()?;
+        self.expect(&TokenKind::Semi)?;
+        
+        // update: i++ or i-- or i = expr (no trailing semicolon)
+        let update = self.parse_for_update()?;
+        
+        self.expect(&TokenKind::RParen)?;
+        
+        // body
+        let body = self.parse_block()?;
+        
+        Ok(Statement::For {
+            init: Box::new(init),
+            condition,
+            update: Box::new(update),
+            body,
+        })
+    }
+
+    /// Parse for-loop update clause (no trailing semicolon)
+    fn parse_for_update(&mut self) -> Result<Statement, String> {
+        let name = match self.peek().clone() {
+            TokenKind::Ident(n) => n,
+            _ => return Err("for update expects identifier".to_string()),
+        };
+        self.advance(); // consume ident
+        
+        match self.peek() {
+            TokenKind::PlusPlus => { self.advance(); Ok(Statement::PostInc(name)) }
+            TokenKind::MinusMinus => { self.advance(); Ok(Statement::PostDec(name)) }
+            TokenKind::Eq => {
+                self.advance();
+                let value = self.parse_expr()?;
+                Ok(Statement::Assign { name, value })
+            }
+            _ => {
+                let tok = &self.tokens[self.pos];
+                Err(format!("line {} col {}: for update expects ++/--/=", tok.line, tok.col))
+            }
+        }
+    }
+
     fn parse_block(&mut self) -> Result<Vec<SourceStatement>, String> {
         self.expect(&TokenKind::LBrace)?;
         let mut stmts = Vec::new();
@@ -310,6 +376,8 @@ impl<'a> Parser<'a> {
                 TokenKind::EqEq => BinOp::Eq,
                 TokenKind::NotEq => BinOp::NotEq,
                 TokenKind::Lt => BinOp::Lt,
+                TokenKind::Le => BinOp::Le,
+                TokenKind::Ge => BinOp::Ge,
                 TokenKind::Gt => BinOp::Gt,
                 _ => break,
             };

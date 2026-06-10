@@ -105,14 +105,35 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
                     "while" => TokenKind::While,
+                    "for" => TokenKind::For,
                     "return" => TokenKind::Return,
                     _ => TokenKind::Ident(ident),
                 };
                 tokens.push(Token { kind, line, col: start_col });
             }
             // 运算符和分隔符
-            '+' => { tokens.push(Token { kind: TokenKind::Plus, line, col }); chars.next(); col += 1; }
-            '-' => { tokens.push(Token { kind: TokenKind::Minus, line, col }); chars.next(); col += 1; }
+            '+' => {
+                chars.next();
+                if chars.peek() == Some(&'+') {
+                    chars.next();
+                    tokens.push(Token { kind: TokenKind::PlusPlus, line, col });
+                    col += 2;
+                } else {
+                    tokens.push(Token { kind: TokenKind::Plus, line, col });
+                    col += 1;
+                }
+            }
+            '-' => {
+                chars.next();
+                if chars.peek() == Some(&'-') {
+                    chars.next();
+                    tokens.push(Token { kind: TokenKind::MinusMinus, line, col });
+                    col += 2;
+                } else {
+                    tokens.push(Token { kind: TokenKind::Minus, line, col });
+                    col += 1;
+                }
+            }
             '*' => { tokens.push(Token { kind: TokenKind::Star, line, col }); chars.next(); col += 1; }
             '/' => { tokens.push(Token { kind: TokenKind::Slash, line, col }); chars.next(); col += 1; }
             '%' => { tokens.push(Token { kind: TokenKind::Percent, line, col }); chars.next(); col += 1; }
@@ -158,8 +179,28 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                     return Err(format!("行{} 列{}: 未识别字符 '|'（是否需要 '||'？）", line, col));
                 }
             }
-            '<' => { tokens.push(Token { kind: TokenKind::Lt, line, col }); chars.next(); col += 1; }
-            '>' => { tokens.push(Token { kind: TokenKind::Gt, line, col }); chars.next(); col += 1; }
+            '<' => {
+                chars.next();
+                if chars.peek() == Some(&'=') {
+                    chars.next();
+                    tokens.push(Token { kind: TokenKind::Le, line, col });
+                    col += 2;
+                } else {
+                    tokens.push(Token { kind: TokenKind::Lt, line, col });
+                    col += 1;
+                }
+            }
+            '>' => {
+                chars.next();
+                if chars.peek() == Some(&'=') {
+                    chars.next();
+                    tokens.push(Token { kind: TokenKind::Ge, line, col });
+                    col += 2;
+                } else {
+                    tokens.push(Token { kind: TokenKind::Gt, line, col });
+                    col += 1;
+                }
+            }
             '(' => { tokens.push(Token { kind: TokenKind::LParen, line, col }); chars.next(); col += 1; }
             ')' => { tokens.push(Token { kind: TokenKind::RParen, line, col }); chars.next(); col += 1; }
             '{' => { tokens.push(Token { kind: TokenKind::LBrace, line, col }); chars.next(); col += 1; }
