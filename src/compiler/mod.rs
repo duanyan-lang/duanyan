@@ -3,7 +3,7 @@
 //! 将 AST 编译为 COUNPRE64 指令序列
 //! Phase 4: console.log → UART, 数组, 取模, 优化
 
-use crate::parser::{SourceStatement, Program, Statement, Expr, BinOp, Function};
+use crate::parser::{SourceStatement, Program, Statement, Expr, BinOp, MathOp, Function};
 use crate::backend::Instruction;
 
 /// 将 AST 编译为 COUNPRE64 指令列表
@@ -781,6 +781,48 @@ impl Compiler {
     // 表达式编译
     // =========================================================================
 
+    /// 编译 Math.max/min/abs → COUNPRE64 创新指令 (单周期!)
+    fn compile_math_intrinsic(&mut self, op: &MathOp, args: &[Expr], rd: u8) -> Result<(), String> {
+        match op {
+            MathOp::Abs => {
+                // ABS 只需一个参数: ABS rs1 → rd (rs2 ignored)
+                if args.is_empty() {
+                    return Err("Math.abs 需要 1 个参数".to_string());
+                }
+                self.compile_expr_into(&args[0], rd)?;
+                self.emit_nop();
+                self.push_instr(Instruction::RR {
+                    opcode: 0x0, func: 0xD,
+                    rs1: rd, rs2: 0, rd,  // ABS rd → rd
+                });
+            }
+            MathOp::Max | MathOp::Min => {
+                // MAX/MIN 需要两个参数
+                if args.len() < 2 {
+                    return Err(format!("Math.{:?} 需要 2 个参数", op));
+                }
+                let func = match op {
+                    MathOp::Max => 0xB,
+                    MathOp::Min => 0xC,
+                    _ => unreachable!(),
+                };
+                // 计算第一个参数到 rd
+                self.compile_expr_into(&args[0], rd)?;
+                // 计算第二个参数到临时寄存器
+                let tmp = self.alloc_temp()?;
+                self.compile_expr_into(&args[1], tmp)?;
+                self.emit_nop();
+                // MAX/MIN rd, tmp → rd
+                self.push_instr(Instruction::RR {
+                    opcode: 0x0, func,
+                    rs1: rd, rs2: tmp, rd,
+                });
+                self.free_temp(tmp);
+            }
+        }
+        Ok(())
+    }
+
     fn compile_expr_into(&mut self, expr: &Expr, rd: u8) -> Result<(), String> {
         match expr {
             Expr::Number(n) => {
@@ -807,6 +849,10 @@ impl Compiler {
             }
             Expr::Index { array, index } => {
                 self.compile_array_index(array, index, rd)
+            }
+            Expr::MathIntrinsic { op, args } => {
+                self.compile_math_intrinsic(op, args, rd)?;
+                Ok(())
             }
             Expr::BinOp { op, left, right } => {
                 self.compile_expr_into(left, rd)?;

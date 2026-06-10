@@ -68,6 +68,8 @@ pub enum Expr {
     Call { name: String, args: Vec<Expr> },
     Array(Vec<Expr>),
     Index { array: Box<Expr>, index: Box<Expr> },
+    /// Math.max/min/abs 内建 → COUNPRE64 创新指令
+    MathIntrinsic { op: MathOp, args: Vec<Expr> },
 }
 
 /// 二元运算符
@@ -76,4 +78,12 @@ pub enum BinOp {
     Add, Sub, Mul, Div, Mod,
     Eq, NotEq, Lt, Gt,
     And, Or,
+}
+
+/// Math 内建运算 → COUNPRE64 创新指令 (单周期)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MathOp {
+    Max,  // opcode=0x0, func=0xB
+    Min,  // opcode=0x0, func=0xC
+    Abs,  // opcode=0x0, func=0xD (单参数, rs2=0)
 }

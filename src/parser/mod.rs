@@ -371,6 +371,25 @@ impl<'a> Parser<'a> {
         match self.peek().clone() {
             TokenKind::Number(n) => { self.advance(); Ok(Expr::Number(n)) }
             TokenKind::StringLit(s) => { self.advance(); Ok(Expr::StringLit(s)) }
+            TokenKind::Ident(ref name) if name == "Math" => {
+                self.advance(); // consume 'Math'
+                self.expect(&TokenKind::Dot)?;
+                let method = match self.peek().clone() {
+                    TokenKind::Ident(ref m) => m.clone(),
+                    _ => return Err("Math 后期望 .max/.min/.abs".to_string()),
+                };
+                self.advance(); // consume method name
+                let op = match method.as_str() {
+                    "max" => MathOp::Max,
+                    "min" => MathOp::Min,
+                    "abs" => MathOp::Abs,
+                    _ => return Err(format!("不支持的 Math.{}", method)),
+                };
+                self.expect(&TokenKind::LParen)?;
+                let args = self.parse_args()?;
+                self.expect(&TokenKind::RParen)?;
+                Ok(Expr::MathIntrinsic { op, args })
+            }
             TokenKind::Ident(name) => {
                 self.advance();
                 // 函数调用
