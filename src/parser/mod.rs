@@ -154,6 +154,19 @@ impl<'a> Parser<'a> {
                     return Ok(Statement::IndexAssign { name, index, value });
                 }
                 
+                // 属性赋值: obj.prop = value; (Phase 10)
+                if *self.peek() == TokenKind::Dot {
+                    self.advance(); // consume '.'
+                    let prop = match self.peek().clone() {
+                        TokenKind::Ident(p) => { self.advance(); p }
+                        _ => return Err("prop assign: . expects ident".to_string()),
+                    };
+                    self.expect(&TokenKind::Eq)?;
+                    let value = self.parse_expr()?;
+                    self.expect(&TokenKind::Semi)?;
+                    return Ok(Statement::PropAssign { object: name, property: prop, value });
+                }
+                
                 // 函数调用: ident(...)
                 if *self.peek() == TokenKind::LParen {
                     self.advance(); // consume '('
@@ -424,13 +437,26 @@ impl<'a> Parser<'a> {
         self.parse_postfix(primary)
     }
 
-    /// 后缀操作符：数组索引 arr[i]
+    /// 后缀操作符: arr[i] + obj.key (Phase 10)
     fn parse_postfix(&mut self, mut expr: Expr) -> Result<Expr, String> {
-        while *self.peek() == TokenKind::LBracket {
-            self.advance(); // consume '['
-            let index = self.parse_expr()?;
-            self.expect(&TokenKind::RBracket)?;
-            expr = Expr::Index { array: Box::new(expr), index: Box::new(index) };
+        loop {
+            match self.peek() {
+                TokenKind::LBracket => {
+                    self.advance();
+                    let index = self.parse_expr()?;
+                    self.expect(&TokenKind::RBracket)?;
+                    expr = Expr::Index { array: Box::new(expr), index: Box::new(index) };
+                }
+                TokenKind::Dot => {
+                    self.advance();
+                    let prop = match self.peek().clone() {
+                        TokenKind::Ident(p) => { self.advance(); p }
+                        _ => return Err("property: . expects ident".to_string()),
+                    };
+                    expr = Expr::PropAccess { object: Box::new(expr), property: prop };
+                }
+                _ => break,
+            }
         }
         Ok(expr)
     }
@@ -492,6 +518,32 @@ impl<'a> Parser<'a> {
                 }
                 self.expect(&TokenKind::RBracket)?;
                 Ok(Expr::Array(elements))
+            }
+            // Phase 10: 对象字面量 { key: value, ... }
+            TokenKind::LBrace => {
+                self.advance(); // consume '{'
+                let mut keys = Vec::new();
+                let mut values = Vec::new();
+                if *self.peek() != TokenKind::RBrace {
+                    loop {
+                        let key = match self.peek().clone() {
+                            TokenKind::Ident(k) => { self.advance(); k }
+                            TokenKind::StringLit(k) => { self.advance(); k }
+                            _ => return Err("object: expects property name".to_string()),
+                        };
+                        self.expect(&TokenKind::Colon)?;
+                        let value = self.parse_expr()?;
+                        keys.push(key);
+                        values.push(value);
+                        if *self.peek() == TokenKind::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.expect(&TokenKind::RBrace)?;
+                Ok(Expr::ObjectLit { keys, values })
             }
             _ => {
                 let tok = &self.tokens[self.pos];

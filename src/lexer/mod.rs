@@ -210,6 +210,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
             ';' => { tokens.push(Token { kind: TokenKind::Semi, line, col }); chars.next(); col += 1; }
             ',' => { tokens.push(Token { kind: TokenKind::Comma, line, col }); chars.next(); col += 1; }
             '.' => { tokens.push(Token { kind: TokenKind::Dot, line, col }); chars.next(); col += 1; }
+            ':' => { tokens.push(Token { kind: TokenKind::Colon, line, col }); chars.next(); col += 1; }
             _ => {
                 return Err(format!("行{} 列{}: 未识别字符 '{}'", line, col, ch));
             }

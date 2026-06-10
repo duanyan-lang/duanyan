@@ -63,6 +63,8 @@ pub enum Statement {
     PostInc(String),
     /// name-- (Phase 9)
     PostDec(String),
+    /// obj.key = value (Phase 10)
+    PropAssign { object: String, property: String, value: Expr },
     /// console.log(args...)
     ConsoleLog(Vec<Expr>),
     /// 表达式语句
@@ -81,6 +83,10 @@ pub enum Expr {
     Index { array: Box<Expr>, index: Box<Expr> },
     /// Math.max/min/abs 内建 → COUNPRE64 创新指令
     MathIntrinsic { op: MathOp, args: Vec<Expr> },
+    /// { key: value, ... } 对象字面量 (Phase 10)
+    ObjectLit { keys: Vec<String>, values: Vec<Expr> },
+    /// obj.key 属性访问 (Phase 10)
+    PropAccess { object: Box<Expr>, property: String },
 }
 
 /// 二元运算符

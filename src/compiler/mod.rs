@@ -71,6 +71,8 @@ struct Compiler {
     spill_next: i16,                    // 下一个 spill slot 偏移
     free_pool: Vec<u8>,                 // 空闲寄存器池
     active_temps: Vec<u8>,              // 当前活跃临时寄存器
+    /// Phase 10: 对象属性映射 (var_name -> [prop_names])
+    object_props: Vec<(String, Vec<String>)>,
 }
 
 /// 条件求值结果
@@ -94,6 +96,7 @@ impl Compiler {
             spill_next: 0,
             free_pool: Vec::new(),
             active_temps: Vec::new(),
+            object_props: Vec::new(),
         }
     }
 
@@ -150,9 +153,22 @@ impl Compiler {
     }
 
     fn alloc_temp(&mut self) -> Result<u8, String> {
-        let reg = self.get_free_reg()?;
+        let reg = self.get_free_reg_safe()?;
         self.active_temps.push(reg);
         Ok(reg)
+    }
+
+    /// Get a free register that is NOT held by any named variable
+    fn get_free_reg_safe(&mut self) -> Result<u8, String> {
+        // Pop from free_pool, skipping any still held by variables
+        while let Some(reg) = self.free_pool.pop() {
+            if !self.variables.iter().any(|(_, r)| *r == reg) {
+                return Ok(reg);
+            }
+            // Register still owned by a variable, discard from pool
+        }
+        // No safe register in pool, try next_reg or spill
+        self.get_free_reg()
     }
 
     /// 从空闲池获取寄存器（如池为空则推进 next_reg，如耗尽则溢出）
@@ -376,6 +392,10 @@ impl Compiler {
     fn compile_statement(&mut self, stmt: &Statement) -> Result<(), String> {
         match stmt {
             Statement::Let { name, value } => {
+                // Phase 10: track object property layout
+                if let Expr::ObjectLit { keys, .. } = value {
+                    self.object_props.push((name.clone(), keys.clone()));
+                }
                 let is_new_spill = self.is_spilled(name);
                 if is_new_spill {
                     // 变量已在栈上，计算到临时寄存器再存回
@@ -451,6 +471,9 @@ impl Compiler {
                     self.emit_addi(rd, rd, -1);
                 }
                 Ok(())
+            }
+            Statement::PropAssign { object, property, value } => {
+                self.compile_prop_assign(object, property, value)
             }
             Statement::If { condition, then_body, else_body } => {
                 self.compile_if(condition, then_body, else_body.as_deref())
@@ -654,6 +677,7 @@ impl Compiler {
     fn compile_if(&mut self, condition: &Expr, then_body: &[SourceStatement], else_body: Option<&[SourceStatement]>) -> Result<(), String> {
         let cond = self.compile_condition(condition)?;
         self.emit_nop();
+        self.free_condition_temps(cond.reg);
 
         if cond.zero_means_true {
             self.emit_bez(cond.reg, 8);
@@ -736,6 +760,8 @@ impl Compiler {
         let loop_start_idx = self.instructions.len();
         let cond = self.compile_condition(condition)?;
         self.emit_nop();
+        // Free condition scratch registers (keep only cond.reg)
+        self.free_condition_temps(cond.reg);
 
         // 3. 条件分支 (与 while 相同逻辑)
         if cond.zero_means_true {
@@ -792,6 +818,7 @@ impl Compiler {
 
         let cond = self.compile_condition(condition)?;
         self.emit_nop();
+        self.free_condition_temps(cond.reg);
 
         if cond.zero_means_true {
             self.emit_bez(cond.reg, 8);
@@ -970,6 +997,14 @@ impl Compiler {
                 self.compile_math_intrinsic(op, args, rd)?;
                 Ok(())
             }
+            Expr::ObjectLit { keys, values } => {
+                self.compile_object_literal(keys, values, rd)?;
+                Ok(())
+            }
+            Expr::PropAccess { object, property } => {
+                self.compile_prop_access(object, property, rd)?;
+                Ok(())
+            }
             Expr::BinOp { op, left, right } => {
                 self.compile_expr_into(left, rd)?;
                 let tmp = self.alloc_temp()?;
@@ -993,6 +1028,74 @@ impl Compiler {
                 Ok(())
             }
         }
+    }
+
+    /// Free all active temps except the one holding condition result
+    fn free_condition_temps(&mut self, keep: u8) {
+        let to_free: Vec<u8> = self.active_temps.iter()
+            .filter(|&&r| r != keep)
+            .copied()
+            .collect();
+        for r in to_free {
+            self.free_temp(r);
+        }
+    }
+
+    // =========================================================================
+    // Phase 10: Object literal + property access
+    // =========================================================================
+
+    fn compile_object_literal(&mut self, keys: &[String], values: &[Expr], rd: u8) -> Result<(), String> {
+        let base_addr = self.alloc_heap(values.len() as i16);
+        self.emit_addi(rd, REG_ZERO, base_addr);
+        for (i, val) in values.iter().enumerate() {
+            let tmp = self.alloc_temp()?;
+            self.compile_expr_into(val, tmp)?;
+            let offset = (i as i16) * 8;
+            self.emit_nop();
+            self.emit_store(tmp, rd, offset);
+            self.free_temp(tmp);
+        }
+        Ok(())
+    }
+
+    fn compile_prop_access(&mut self, object: &Expr, property: &str, rd: u8) -> Result<(), String> {
+        self.compile_expr_into(object, rd)?;
+        let offset = self.get_prop_offset(object, property)?;
+        self.emit_nop();
+        self.emit_load(rd, rd, offset);
+        Ok(())
+    }
+
+    fn compile_prop_assign(&mut self, object: &str, property: &str, value: &Expr) -> Result<(), String> {
+        let orig_reg = self.var_reg(object)
+            .ok_or_else(|| format!("undefined object '{}'", object))?;
+        let obj_expr = Expr::Ident(object.to_string());
+        let offset = self.get_prop_offset(&obj_expr, property)?;
+        // Save base address to stack (protect against spills during value eval)
+        self.emit_store(orig_reg, REG_SP, -8);
+        let val_reg = self.alloc_temp()?;
+        self.compile_expr_into(value, val_reg)?;
+        // Reload base address from stack
+        let base_reg = self.alloc_temp()?;
+        self.emit_load(base_reg, REG_SP, -8);
+        self.emit_nop();
+        self.emit_store(val_reg, base_reg, offset);
+        self.free_temp(val_reg);
+        self.free_temp(base_reg);
+        Ok(())
+    }
+
+    fn get_prop_offset(&self, object: &Expr, property: &str) -> Result<i16, String> {
+        if let Expr::Ident(name) = object {
+            if let Some((_, props)) = self.object_props.iter().find(|(n, _)| n == name) {
+                if let Some(idx) = props.iter().position(|p| p == property) {
+                    return Ok((idx as i16) * 8);
+                }
+                return Err(format!("object '{}' has no property '{}'", name, property));
+            }
+        }
+        Err(format!("cannot resolve property offset for '{}'", property))
     }
 }
 

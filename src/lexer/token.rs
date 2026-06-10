@@ -46,6 +46,7 @@ pub enum TokenKind {
     MinusMinus, // -- Phase 9: for循环
     Le,         // <= Phase 9
     Ge,         // >= Phase 9
+    Colon,      // :  Phase 10: 对象属性
 
     // 结束
     Eof,

@@ -118,6 +118,11 @@ impl Optimizer {
             }
             Statement::PostInc(name) => Statement::PostInc(name.clone()),
             Statement::PostDec(name) => Statement::PostDec(name.clone()),
+            Statement::PropAssign { object, property, value } => Statement::PropAssign {
+                object: object.clone(),
+                property: property.clone(),
+                value: self.fold_expr(value),
+            },
             Statement::ConsoleLog(args) => Statement::ConsoleLog(
                 args.iter().map(|e| self.fold_expr(e)).collect()
             ),
@@ -178,6 +183,14 @@ impl Optimizer {
             Expr::Index { array, index } => Expr::Index {
                 array: Box::new(self.fold_expr(array)),
                 index: Box::new(self.fold_expr(index)),
+            },
+            Expr::ObjectLit { keys, values } => Expr::ObjectLit {
+                keys: keys.clone(),
+                values: values.iter().map(|e| self.fold_expr(e)).collect(),
+            },
+            Expr::PropAccess { object, property } => Expr::PropAccess {
+                object: Box::new(self.fold_expr(object)),
+                property: property.clone(),
             },
             other => other.clone(),
         }
