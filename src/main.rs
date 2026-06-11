@@ -16,6 +16,7 @@ mod optimizer;
 mod strip;
 mod engine;
 mod debugger;
+mod pack;
 
 const BANNER: &str = r#"
    ____  _   _    _    ____  
@@ -48,6 +49,8 @@ fn main() {
         "run"     => cmd_run(&args[2..]),
         "debug"   => cmd_debug(&args[2..]),
         "prey"    => cmd_prey(&args[2..]),
+        // 包管理器
+        "pack"    => pack::dispatch(&args[2..]),
         // 兼容旧命令
         "compile" => cmd_build(&args[2..]),
         // 通用
@@ -561,4 +564,6 @@ fn print_usage() {
     println!("  snar hunt  fibonacci.js");
     println!("  snar scan  complex.ts");
     println!("  snar track loop.js");
+    println!();
+    println!("猎包子命令: snar pack help");
 }
