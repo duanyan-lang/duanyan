@@ -69,7 +69,7 @@ fn main() {
 // =============================================================================
 fn cmd_build(args: &[String]) {
     if args.is_empty() {
-        eprintln!("🔨 snar build: 请指定猎物源码");
+        eprintln!("snar build: 请指定猎物源码");
         eprintln!("用法: snar build <input.js|.ts> [-o output.hex] [--asm] [-O]");
         process::exit(1);
     }
@@ -141,7 +141,7 @@ fn cmd_build(args: &[String]) {
 // =============================================================================
 fn cmd_hunt(args: &[String]) {
     if args.is_empty() {
-        eprintln!("🪤 snar hunt: 请指定猎物");
+        eprintln!("snar hunt: 请指定猎物");
         eprintln!("用法: snar hunt <input.js|.ts> [--port COM3]");
         process::exit(1);
     }
@@ -167,7 +167,7 @@ fn cmd_hunt(args: &[String]) {
 // =============================================================================
 fn cmd_track(args: &[String]) {
     if args.is_empty() {
-        eprintln!("🔍 snar track: 请指定追踪目标");
+        eprintln!("snar track: 请指定追踪目标");
         eprintln!("用法: snar track <input.js|.ts>");
         process::exit(1);
     }
@@ -208,7 +208,7 @@ fn cmd_track(args: &[String]) {
 // =============================================================================
 fn cmd_scan(args: &[String]) {
     if args.is_empty() {
-        eprintln!("👁️ snar scan: 请指定侦查目标");
+        eprintln!("snar scan: 请指定侦查目标");
         eprintln!("用法: snar scan <input.js|.ts>");
         process::exit(1);
     }
@@ -274,7 +274,7 @@ fn cmd_lock(args: &[String]) {
     let hex_file = if !args.is_empty() {
         args[0].clone()
     } else {
-        eprintln!("🎯 snar lock: 请指定 .hex 文件");
+        eprintln!("snar lock: 请指定 .hex 文件");
         eprintln!("用法: snar lock <file.hex> [--port COM3]");
         process::exit(1);
     };
@@ -299,7 +299,7 @@ fn cmd_lock(args: &[String]) {
 // =============================================================================
 fn cmd_bite(args: &[String]) {
     if args.is_empty() {
-        eprintln!("🦷 snar bite: 请指定目标");
+        eprintln!("snar bite: 请指定目标");
         eprintln!("用法: snar bite <input.js|.ts>");
         process::exit(1);
     }
@@ -338,7 +338,7 @@ fn cmd_bite(args: &[String]) {
 // =============================================================================
 fn cmd_run(args: &[String]) {
     if args.is_empty() {
-        eprintln!("⚡ snar run: 请指定执行目标");
+        eprintln!("snar run: 请指定执行目标");
         eprintln!("用法: snar run <input.js|.ts> [-O]");
         process::exit(1);
     }
@@ -423,7 +423,7 @@ fn cmd_prey(args: &[String]) {
 // =============================================================================
 fn cmd_debug(args: &[String]) {
     if args.is_empty() {
-        eprintln!("🐛 snar debug: 请指定调试目标");
+        eprintln!("snar debug: 请指定调试目标");
         eprintln!("用法: snar debug <input.js|.ts> [-O]");
         process::exit(1);
     }
@@ -539,17 +539,17 @@ fn print_banner() {
 }
 
 fn print_usage() {
-    println!("🪤 猎术手册:");
+    println!("猎术手册:");
     println!();
-    println!("  snar build <file>   🔨 锻造武器 (编译为 .hex)");
-    println!("  snar run   <file>   ⚡ 原生执行 (直接运行输出)");
-    println!("  snar debug <file>   🐛 调试模式 (单步/断点/寄存器)");
-    println!("  snar hunt  <file>   🪤 设阱捕获 (编译+部署)");
-    println!("  snar track <file>   🔍 追踪指令 (查看汇编)");
-    println!("  snar scan  <file>   👁️  侦查目标 (代码分析)");
-    println!("  snar lock  <hex>    🎯 锁定硬件 (烧录指引)");
-    println!("  snar bite  <file>   🦷 撕咬执行 (逐条解析)");
-    println!("  snar prey  [dir]    🎯 猎物列表 (列出源码)");
+    println!("  snar build <file>   锻造武器 (编译为 .hex)");
+    println!("  snar run   <file>   原生执行 (直接运行输出)");
+    println!("  snar debug <file>   调试模式 (单步/断点/寄存器)");
+    println!("  snar hunt  <file>   设阱捕获 (编译+部署)");
+    println!("  snar track <file>   追踪指令 (查看汇编)");
+    println!("  snar scan  <file>   侦查目标 (代码分析)");
+    println!("  snar lock  <hex>    锁定硬件 (烧录指引)");
+    println!("  snar bite  <file>   撕咬执行 (逐条解析)");
+    println!("  snar prey  [dir]    猎物列表 (列出源码)");
     println!();
     println!("选项:");
     println!("  -o <file>     输出文件");
