@@ -1,9 +1,9 @@
 [package]
 name = "snarjs"
-version = "0.3.0"
+version = "1.2.0"
 edition = "2021"
 authors = ["Zhujun"]
-description = "SNAR: The Snare Compiler - JavaScript/TypeScript to COUNPRE64"
+description = "SNARjs: JavaScript/TypeScript → COUNPRE64 / ESP32 / Arduino / STM32 / 树莓派 统一硬件编程编译器"
 
 [[bin]]
 name = "snar"

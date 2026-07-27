@@ -1,7 +1,7 @@
 //! 词法分析器 (Lexer)
 //!
 //! 将 JavaScript 源码切分为 Token 流
-//! Phase 4: 支持字符串字面量、数组语法、成员访问
+//! Phase A: 支持箭头函数、const、模板字符串、switch、三元、import/export
 
 mod token;
 pub use token::*;
@@ -68,6 +68,57 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                 }
                 tokens.push(Token { kind: TokenKind::StringLit(s), line, col: start_col });
             }
+            // 模板字符串 (Phase A.2)
+            '`' => {
+                let start_col = col;
+                chars.next();
+                col += 1;
+                let mut parts: Vec<TemplatePart> = Vec::new();
+                let mut current_text = String::new();
+                loop {
+                    let peeked = chars.peek().copied();
+                    match peeked {
+                        Some('`') => {
+                            chars.next();
+                            col += 1;
+                            if !current_text.is_empty() {
+                                parts.push(TemplatePart::Text(current_text.clone()));
+                                current_text.clear();
+                            }
+                            break;
+                        }
+                        Some('$') if matches!(chars.clone().nth(1), Some('{')) => {
+                            chars.next(); col += 1; // $
+                            chars.next(); col += 1; // {
+                            if !current_text.is_empty() {
+                                parts.push(TemplatePart::Text(current_text.clone()));
+                                current_text.clear();
+                            }
+                            let mut expr = String::new();
+                            let mut depth = 1;
+                            while let Some(&c) = chars.peek() {
+                                if c == '{' { depth += 1; }
+                                if c == '}' { depth -= 1; }
+                                if depth == 0 { chars.next(); col += 1; break; }
+                                expr.push(c);
+                                chars.next();
+                                col += 1;
+                            }
+                            parts.push(TemplatePart::Expr(expr));
+                        }
+                        Some(c) => {
+                            current_text.push(c);
+                            chars.next();
+                            col += 1;
+                            if c == '\n' { line += 1; col = 1; }
+                        }
+                        None => {
+                            return Err(format!("行{} 列{}: 未闭合的模板字符串", line, start_col));
+                        }
+                    }
+                }
+                tokens.push(Token { kind: TokenKind::TemplateLit(parts), line, col: start_col });
+            }
             // 数字字面量
             '0'..='9' => {
                 let start_col = col;
@@ -101,12 +152,25 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                 }
                 let kind = match ident.as_str() {
                     "let" => TokenKind::Let,
+                    "const" => TokenKind::Const,
                     "function" => TokenKind::Function,
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
                     "while" => TokenKind::While,
                     "for" => TokenKind::For,
                     "return" => TokenKind::Return,
+                    "switch" => TokenKind::Switch,
+                    "case" => TokenKind::Case,
+                    "default" => TokenKind::Default,
+                    "break" => TokenKind::Break,
+                    "import" => TokenKind::Import,
+                    "export" => TokenKind::Export,
+                    "from" => TokenKind::From,
+                    "true" => TokenKind::True,
+                    "false" => TokenKind::False,
+                    "null" => TokenKind::Null,
+                    "async" => TokenKind::Async,
+                    "await" => TokenKind::Await,
                     _ => TokenKind::Ident(ident),
                 };
                 tokens.push(Token { kind, line, col: start_col });
@@ -141,7 +205,17 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                 chars.next();
                 if chars.peek() == Some(&'=') {
                     chars.next();
-                    tokens.push(Token { kind: TokenKind::EqEq, line, col });
+                    if chars.peek() == Some(&'=') {
+                        chars.next();
+                        tokens.push(Token { kind: TokenKind::EqEqEq, line, col });
+                        col += 3;
+                    } else {
+                        tokens.push(Token { kind: TokenKind::EqEq, line, col });
+                        col += 2;
+                    }
+                } else if chars.peek() == Some(&'>') {
+                    chars.next();
+                    tokens.push(Token { kind: TokenKind::Arrow, line, col });
                     col += 2;
                 } else {
                     tokens.push(Token { kind: TokenKind::Eq, line, col });
@@ -152,8 +226,14 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                 chars.next();
                 if chars.peek() == Some(&'=') {
                     chars.next();
-                    tokens.push(Token { kind: TokenKind::NotEq, line, col });
-                    col += 2;
+                    if chars.peek() == Some(&'=') {
+                        chars.next();
+                        tokens.push(Token { kind: TokenKind::NotEqEq, line, col });
+                        col += 3;
+                    } else {
+                        tokens.push(Token { kind: TokenKind::NotEq, line, col });
+                        col += 2;
+                    }
                 } else {
                     tokens.push(Token { kind: TokenKind::Bang, line, col });
                     col += 1;
@@ -211,6 +291,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
             ',' => { tokens.push(Token { kind: TokenKind::Comma, line, col }); chars.next(); col += 1; }
             '.' => { tokens.push(Token { kind: TokenKind::Dot, line, col }); chars.next(); col += 1; }
             ':' => { tokens.push(Token { kind: TokenKind::Colon, line, col }); chars.next(); col += 1; }
+            '?' => { tokens.push(Token { kind: TokenKind::Question, line, col }); chars.next(); col += 1; }
             _ => {
                 return Err(format!("行{} 列{}: 未识别字符 '{}'", line, col, ch));
             }
@@ -260,5 +341,30 @@ mod tests {
         let tokens = tokenize("let arr = [1, 2, 3];").unwrap();
         assert!(tokens.iter().any(|t| t.kind == TokenKind::LBracket));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::RBracket));
+    }
+
+    // Phase v1.5: async/await 词法测试
+    #[test]
+    fn test_lex_async_function() {
+        let tokens = tokenize("async function foo() {}").unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::Async);
+        assert_eq!(tokens[1].kind, TokenKind::Function);
+        assert_eq!(tokens[2].kind, TokenKind::Ident("foo".to_string()));
+    }
+
+    #[test]
+    fn test_lex_await_expr() {
+        let tokens = tokenize("await sensor.read()").unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::Await);
+        assert_eq!(tokens[1].kind, TokenKind::Ident("sensor".to_string()));
+    }
+
+    #[test]
+    fn test_lex_async_as_ident() {
+        // async 在非函数上下文中作为标识符
+        let tokens = tokenize("let async = 5;").unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::Let);
+        assert_eq!(tokens[1].kind, TokenKind::Async);
+        assert_eq!(tokens[2].kind, TokenKind::Eq);
     }
 }

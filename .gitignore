@@ -1,1 +1,3 @@
 target/
+test_*.js
+test_*.hex

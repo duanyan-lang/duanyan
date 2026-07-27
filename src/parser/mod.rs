@@ -1,12 +1,12 @@
 //! 语法分析器 (Parser)
 //!
 //! 将 Token 流解析为 AST
-//! Phase 4: 支持 console.log、数组、取模、逻辑运算
+//! Phase A: 箭头函数、const、模板字符串、switch、三元、import/export、bool/null
 
 mod ast;
 pub use ast::*;  // Phase 6: SourceStatement, SourceFunction
 
-use crate::lexer::{Token, TokenKind};
+use crate::lexer::{Token, TokenKind, TemplatePart};
 
 /// 解析 Token 流为 AST
 pub fn parse(tokens: &[Token]) -> Result<Program, String> {
@@ -50,12 +50,36 @@ impl<'a> Parser<'a> {
         
         while *self.peek() != TokenKind::Eof {
             let line = self.tokens[self.pos].line;
-            if *self.peek() == TokenKind::Function {
-                let func = self.parse_function()?;
-                functions.push(SourceFunction { func, line });
-            } else {
-                let stmt = self.parse_statement()?;
-                statements.push(SourceStatement { stmt, line });
+            match self.peek() {
+                TokenKind::Function => {
+                    let func = self.parse_function()?;
+                    functions.push(SourceFunction { func, line });
+                }
+                // Phase v1.5: async function 声明
+                TokenKind::Async => {
+                    self.advance(); // consume 'async'
+                    if *self.peek() == TokenKind::Function {
+                        let mut func = self.parse_function()?;
+                        func.is_async = true;
+                        functions.push(SourceFunction { func, line });
+                    } else {
+                        // async 作为标识符（上下文关键字）
+                        let stmt = self.parse_statement_after_ident("async".to_string())?;
+                        statements.push(SourceStatement { stmt, line });
+                    }
+                }
+                TokenKind::Import => {
+                    let stmt = self.parse_import()?;
+                    statements.push(SourceStatement { stmt, line });
+                }
+                TokenKind::Export => {
+                    let stmt = self.parse_export()?;
+                    statements.push(SourceStatement { stmt, line });
+                }
+                _ => {
+                    let stmt = self.parse_statement()?;
+                    statements.push(SourceStatement { stmt, line });
+                }
             }
         }
         Ok(Program { statements, functions })
@@ -78,7 +102,7 @@ impl<'a> Parser<'a> {
         
         let body = self.parse_block()?;
         
-        Ok(Function { name, params, body })
+        Ok(Function { name, params, body, is_async: false })
     }
 
     fn parse_params(&mut self) -> Result<Vec<String>, String> {
@@ -111,10 +135,32 @@ impl<'a> Parser<'a> {
     fn parse_statement(&mut self) -> Result<Statement, String> {
         match self.peek() {
             TokenKind::Let => self.parse_let(),
+            TokenKind::Const => self.parse_const(),
             TokenKind::Return => self.parse_return(),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
             TokenKind::For => self.parse_for(),
+            TokenKind::Switch => self.parse_switch(),
+            TokenKind::Break => {
+                self.advance();
+                self.expect(&TokenKind::Semi)?;
+                Ok(Statement::Break)
+            }
+            TokenKind::Import => self.parse_import(),
+            TokenKind::Export => self.parse_export(),
+            // Phase v1.5: async function 在语句位置
+            TokenKind::Async => {
+                self.advance(); // consume 'async'
+                if *self.peek() == TokenKind::Function {
+                    let mut func = self.parse_function()?;
+                    func.is_async = true;
+                    // 语句位置的 async function 当作表达式语句
+                    Ok(Statement::Expr(Expr::Ident(format!("__async_fn_{}", func.name))))
+                } else {
+                    // async 作为标识符
+                    self.parse_statement_after_ident("async".to_string())
+                }
+            }
             TokenKind::Ident(_) => {
                 let name = if let TokenKind::Ident(n) = self.peek().clone() {
                     n.clone()
@@ -154,13 +200,23 @@ impl<'a> Parser<'a> {
                     return Ok(Statement::IndexAssign { name, index, value });
                 }
                 
-                // 属性赋值: obj.prop = value; (Phase 10)
+                // 属性赋值或方法调用: obj.prop = value; 或 obj.method(args);
                 if *self.peek() == TokenKind::Dot {
                     self.advance(); // consume '.'
                     let prop = match self.peek().clone() {
                         TokenKind::Ident(p) => { self.advance(); p }
-                        _ => return Err("prop assign: . expects ident".to_string()),
+                        _ => return Err("prop: . expects ident".to_string()),
                     };
+                    // 方法调用: obj.method(args)
+                    if *self.peek() == TokenKind::LParen {
+                        self.advance(); // consume '('
+                        let call_name = format!("{}.{}", name, prop);
+                        let args = self.parse_args()?;
+                        self.expect(&TokenKind::RParen)?;
+                        self.expect(&TokenKind::Semi)?;
+                        return Ok(Statement::Expr(Expr::Call { name: call_name, args }));
+                    }
+                    // 属性赋值: obj.prop = value
                     self.expect(&TokenKind::Eq)?;
                     let value = self.parse_expr()?;
                     self.expect(&TokenKind::Semi)?;
@@ -195,6 +251,42 @@ impl<'a> Parser<'a> {
                 Err(format!("行{} 列{}: 意外的 token {:?}", tok.line, tok.col, tok.kind))
             }
         }
+    }
+
+    /// Phase v1.5: 已消费标识符后继续解析语句（用于 async 作为变量名的情况）
+    fn parse_statement_after_ident(&mut self, name: String) -> Result<Statement, String> {
+        // PostIncrement: name++
+        if *self.peek() == TokenKind::PlusPlus {
+            self.advance();
+            self.expect(&TokenKind::Semi)?;
+            return Ok(Statement::PostInc(name));
+        }
+        // PostDecrement: name--
+        if *self.peek() == TokenKind::MinusMinus {
+            self.advance();
+            self.expect(&TokenKind::Semi)?;
+            return Ok(Statement::PostDec(name));
+        }
+        // 函数调用: ident(...)
+        if *self.peek() == TokenKind::LParen {
+            self.advance();
+            let args = self.parse_args()?;
+            self.expect(&TokenKind::RParen)?;
+            self.expect(&TokenKind::Semi)?;
+            return Ok(Statement::Expr(Expr::Call { name, args }));
+        }
+        // 赋值: ident = expr;
+        if *self.peek() == TokenKind::Eq {
+            self.advance();
+            let value = self.parse_expr()?;
+            self.expect(&TokenKind::Semi)?;
+            return Ok(Statement::Assign { name, value });
+        }
+        // 表达式语句
+        let mut expr = Expr::Ident(name);
+        expr = self.parse_expr_continuation(expr)?;
+        self.expect(&TokenKind::Semi)?;
+        Ok(Statement::Expr(expr))
     }
 
     /// 解析 console.log(args...);
@@ -238,6 +330,32 @@ impl<'a> Parser<'a> {
 
     fn parse_let(&mut self) -> Result<Statement, String> {
         self.advance(); // consume 'let'
+
+        // Phase A.6: 解构赋值 let { a, b } = obj;
+        if *self.peek() == TokenKind::LBrace {
+            self.advance(); // consume '{'
+            let mut names = Vec::new();
+            loop {
+                match self.peek().clone() {
+                    TokenKind::Ident(n) => { self.advance(); names.push(n); }
+                    _ => {
+                        let tok = &self.tokens[self.pos];
+                        return Err(format!("行{} 列{}: 解构赋值期望标识符", tok.line, tok.col));
+                    }
+                }
+                if *self.peek() == TokenKind::Comma {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            self.expect(&TokenKind::RBrace)?;
+            self.expect(&TokenKind::Eq)?;
+            let source = self.parse_expr()?;
+            self.expect(&TokenKind::Semi)?;
+            return Ok(Statement::DestructLet { names, source });
+        }
+
         let name = match self.peek().clone() {
             TokenKind::Ident(n) => { self.advance(); n }
             _ => {
@@ -249,6 +367,128 @@ impl<'a> Parser<'a> {
         let value = self.parse_expr()?;
         self.expect(&TokenKind::Semi)?;
         Ok(Statement::Let { name, value })
+    }
+
+    /// const name = value; (Phase A.5)
+    fn parse_const(&mut self) -> Result<Statement, String> {
+        self.advance(); // consume 'const'
+        let name = match self.peek().clone() {
+            TokenKind::Ident(n) => { self.advance(); n }
+            _ => {
+                let tok = &self.tokens[self.pos];
+                return Err(format!("行{} 列{}: const 后期望标识符", tok.line, tok.col));
+            }
+        };
+        self.expect(&TokenKind::Eq)?;
+        let value = self.parse_expr()?;
+        self.expect(&TokenKind::Semi)?;
+        Ok(Statement::Const { name, value })
+    }
+
+    /// switch (expr) { case val: ... default: ... } (Phase A.3)
+    fn parse_switch(&mut self) -> Result<Statement, String> {
+        self.advance(); // consume 'switch'
+        self.expect(&TokenKind::LParen)?;
+        let discriminant = self.parse_expr()?;
+        self.expect(&TokenKind::RParen)?;
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut cases = Vec::new();
+        while *self.peek() != TokenKind::RBrace && *self.peek() != TokenKind::Eof {
+            match self.peek() {
+                TokenKind::Case => {
+                    self.advance(); // consume 'case'
+                    let test = self.parse_expr()?;
+                    self.expect(&TokenKind::Colon)?;
+                    let mut body = Vec::new();
+                    while *self.peek() != TokenKind::Case
+                        && *self.peek() != TokenKind::Default
+                        && *self.peek() != TokenKind::RBrace
+                        && *self.peek() != TokenKind::Eof
+                    {
+                        let line = self.tokens[self.pos].line;
+                        let stmt = self.parse_statement()?;
+                        body.push(SourceStatement { stmt, line });
+                    }
+                    cases.push(SwitchCase { test: Some(test), body });
+                }
+                TokenKind::Default => {
+                    self.advance(); // consume 'default'
+                    self.expect(&TokenKind::Colon)?;
+                    let mut body = Vec::new();
+                    while *self.peek() != TokenKind::Case
+                        && *self.peek() != TokenKind::Default
+                        && *self.peek() != TokenKind::RBrace
+                        && *self.peek() != TokenKind::Eof
+                    {
+                        let line = self.tokens[self.pos].line;
+                        let stmt = self.parse_statement()?;
+                        body.push(SourceStatement { stmt, line });
+                    }
+                    cases.push(SwitchCase { test: None, body });
+                }
+                _ => {
+                    let tok = &self.tokens[self.pos];
+                    return Err(format!("行{} 列{}: switch 中期望 case/default", tok.line, tok.col));
+                }
+            }
+        }
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Statement::Switch { discriminant, cases })
+    }
+
+    /// import { items } from "module"; (Phase A.4)
+    fn parse_import(&mut self) -> Result<Statement, String> {
+        self.advance(); // consume 'import'
+        self.expect(&TokenKind::LBrace)?;
+        let mut items = Vec::new();
+        loop {
+            match self.peek().clone() {
+                TokenKind::Ident(n) => { self.advance(); items.push(n); }
+                _ => {
+                    let tok = &self.tokens[self.pos];
+                    return Err(format!("行{} 列{}: import 期望标识符", tok.line, tok.col));
+                }
+            }
+            if *self.peek() == TokenKind::Comma {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RBrace)?;
+        self.expect(&TokenKind::From)?;
+        let source = match self.peek().clone() {
+            TokenKind::StringLit(s) => { self.advance(); s }
+            _ => {
+                let tok = &self.tokens[self.pos];
+                return Err(format!("行{} 列{}: from 后期望字符串", tok.line, tok.col));
+            }
+        };
+        self.expect(&TokenKind::Semi)?;
+        Ok(Statement::Import { items, source })
+    }
+
+    /// export function/const/let (Phase A.4)
+    fn parse_export(&mut self) -> Result<Statement, String> {
+        self.advance(); // consume 'export'
+        // export function ...
+        if *self.peek() == TokenKind::Function {
+            let func = self.parse_function()?;
+            let _line = 0; // simplified
+            // Wrap as export statement: export the function definition isn't directly a Statement
+            // We'll just mark it: return Export with inner Let as placeholder
+            // Actually, let's emit as Expr for now since functions are tracked separately
+            return Ok(Statement::Export {
+                item: Box::new(Statement::Let {
+                    name: func.name.clone(),
+                    value: Expr::Ident(func.name.clone()),
+                }),
+            });
+        }
+        // export const/let ...
+        let inner = self.parse_statement()?;
+        Ok(Statement::Export { item: Box::new(inner) })
     }
 
     fn parse_return(&mut self) -> Result<Statement, String> {
@@ -347,7 +587,20 @@ impl<'a> Parser<'a> {
 
     /// 表达式解析（运算符优先级）
     fn parse_expr(&mut self) -> Result<Expr, String> {
-        self.parse_logical_or()
+        let expr = self.parse_logical_or()?;
+        // Phase A.7: 三元运算符 cond ? a : b
+        if *self.peek() == TokenKind::Question {
+            self.advance(); // consume '?'
+            let then_expr = self.parse_expr()?;
+            self.expect(&TokenKind::Colon)?;
+            let else_expr = self.parse_expr()?;
+            return Ok(Expr::Ternary {
+                condition: Box::new(expr),
+                then_expr: Box::new(then_expr),
+                else_expr: Box::new(else_expr),
+            });
+        }
+        Ok(expr)
     }
 
     /// 继续解析表达式（已有左侧部分）
@@ -387,7 +640,9 @@ impl<'a> Parser<'a> {
         loop {
             let op = match self.peek() {
                 TokenKind::EqEq => BinOp::Eq,
+                TokenKind::EqEqEq => BinOp::StrictEq,
                 TokenKind::NotEq => BinOp::NotEq,
+                TokenKind::NotEqEq => BinOp::StrictNotEq,
                 TokenKind::Lt => BinOp::Lt,
                 TokenKind::Le => BinOp::Le,
                 TokenKind::Ge => BinOp::Ge,
@@ -437,7 +692,50 @@ impl<'a> Parser<'a> {
         self.parse_postfix(primary)
     }
 
-    /// 后缀操作符: arr[i] + obj.key (Phase 10)
+    /// 向前看检查是否是箭头函数: (...)=>
+    fn is_arrow_function(&self) -> bool {
+        // 找到匹配的右括号，然后检查后面是否有 =>
+        let mut depth = 0;
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            match &self.tokens[i].kind {
+                TokenKind::LParen => { depth += 1; }
+                TokenKind::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // 检查下一个 token 是否是 =>
+                        return i + 1 < self.tokens.len()
+                            && self.tokens[i + 1].kind == TokenKind::Arrow;
+                    }
+                }
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// 解析箭头函数 (params) => expr 或 (params) => { body }
+    fn parse_arrow_function(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume '('
+        let params = self.parse_params()?;
+        self.expect(&TokenKind::RParen)?;
+        self.expect(&TokenKind::Arrow)?;
+
+        // 块体或表达式体
+        let body = if *self.peek() == TokenKind::LBrace {
+            let stmts = self.parse_block()?;
+            ArrowBody::Block(stmts)
+        } else {
+            let expr = self.parse_expr()?;
+            ArrowBody::Expr(Box::new(expr))
+        };
+
+        Ok(Expr::ArrowFunc { params, body, is_async: false })
+    }
+
+    /// 后缀操作符: arr[i] + obj.key (Phase 10) + str.method() (Phase A.8)
     fn parse_postfix(&mut self, mut expr: Expr) -> Result<Expr, String> {
         loop {
             match self.peek() {
@@ -453,7 +751,41 @@ impl<'a> Parser<'a> {
                         TokenKind::Ident(p) => { self.advance(); p }
                         _ => return Err("property: . expects ident".to_string()),
                     };
-                    expr = Expr::PropAccess { object: Box::new(expr), property: prop };
+                    // Phase A.8: 字符串方法 .length / .charAt(i) / .slice(a, b)
+                    if prop == "length" || prop == "charAt" || prop == "slice" || prop == "substring" || prop == "indexOf" {
+                        if *self.peek() == TokenKind::LParen {
+                            self.advance(); // consume '('
+                            let args = self.parse_args()?;
+                            self.expect(&TokenKind::RParen)?;
+                            expr = Expr::StringMethod {
+                                object: Box::new(expr),
+                                method: prop,
+                                args,
+                            };
+                        } else if prop == "length" {
+                            // .length 无括号
+                            expr = Expr::StringMethod {
+                                object: Box::new(expr),
+                                method: prop,
+                                args: vec![],
+                            };
+                        } else {
+                            expr = Expr::PropAccess { object: Box::new(expr), property: prop };
+                        }
+                    } else if *self.peek() == TokenKind::LParen {
+                        // Phase C.3: 对象方法调用 obj.method(args)
+                        // 生成 Call { name: "obj.method", args }
+                        self.advance(); // consume '('
+                        let call_name = match &expr {
+                            Expr::Ident(obj_name) => format!("{}.{}", obj_name, prop),
+                            _ => prop.clone(),
+                        };
+                        let args = self.parse_args()?;
+                        self.expect(&TokenKind::RParen)?;
+                        expr = Expr::Call { name: call_name, args };
+                    } else {
+                        expr = Expr::PropAccess { object: Box::new(expr), property: prop };
+                    }
                 }
                 _ => break,
             }
@@ -465,6 +797,98 @@ impl<'a> Parser<'a> {
         match self.peek().clone() {
             TokenKind::Number(n) => { self.advance(); Ok(Expr::Number(n)) }
             TokenKind::StringLit(s) => { self.advance(); Ok(Expr::StringLit(s)) }
+            // Phase A: true / false / null
+            TokenKind::True => { self.advance(); Ok(Expr::Bool(true)) }
+            TokenKind::False => { self.advance(); Ok(Expr::Bool(false)) }
+            TokenKind::Null => { self.advance(); Ok(Expr::Null) }
+            // Phase v1.5: await expr
+            TokenKind::Await => {
+                self.advance(); // consume 'await'
+                let expr = self.parse_unary()?;
+                Ok(Expr::Await { expr: Box::new(expr) })
+            }
+            // Phase v1.5: async 箭头函数 async (params) => ...
+            TokenKind::Async => {
+                self.advance(); // consume 'async'
+                if *self.peek() == TokenKind::LParen && self.is_arrow_function() {
+                    // async (params) => body
+                    self.advance(); // consume '('
+                    let params = self.parse_params()?;
+                    self.expect(&TokenKind::RParen)?;
+                    self.expect(&TokenKind::Arrow)?;
+                    let body = if *self.peek() == TokenKind::LBrace {
+                        let stmts = self.parse_block()?;
+                        ArrowBody::Block(stmts)
+                    } else {
+                        let expr = self.parse_expr()?;
+                        ArrowBody::Expr(Box::new(expr))
+                    };
+                    Ok(Expr::ArrowFunc { params, body, is_async: true })
+                } else {
+                    // async 作为标识符
+                    let name = "async".to_string();
+                    if *self.peek() == TokenKind::LParen {
+                        self.advance();
+                        let args = self.parse_args()?;
+                        self.expect(&TokenKind::RParen)?;
+                        Ok(Expr::Call { name, args })
+                    } else {
+                        Ok(Expr::Ident(name))
+                    }
+                }
+            }
+            // Phase v1.5: Promise.all([...]) / Promise.race([...])
+            TokenKind::Ident(ref name) if name == "Promise" => {
+                self.advance(); // consume 'Promise'
+                self.expect(&TokenKind::Dot)?;
+                let method = match self.peek().clone() {
+                    TokenKind::Ident(ref m) => m.clone(),
+                    _ => return Err("Promise 后期望 .all/.race".to_string()),
+                };
+                self.advance(); // consume method name
+                self.expect(&TokenKind::LParen)?;
+                self.expect(&TokenKind::LBracket)?;
+                let mut promises = Vec::new();
+                if *self.peek() != TokenKind::RBracket {
+                    loop {
+                        promises.push(self.parse_expr()?);
+                        if *self.peek() == TokenKind::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.expect(&TokenKind::RBracket)?;
+                self.expect(&TokenKind::RParen)?;
+                match method.as_str() {
+                    "all" => Ok(Expr::PromiseAll { promises }),
+                    "race" => Ok(Expr::PromiseRace { promises }),
+                    _ => Err(format!("不支持的 Promise.{}", method)),
+                }
+            }
+            // Phase A.2: 模板字符串
+            TokenKind::TemplateLit(ref parts) => {
+                let parts = parts.clone();
+                self.advance();
+                let expr_parts: Vec<TemplateExprPart> = parts.into_iter().map(|p| match p {
+                    TemplatePart::Text(t) => TemplateExprPart::Text(t),
+                    TemplatePart::Expr(e) => {
+                        // 递归解析内嵌表达式
+                        let tokens = crate::lexer::tokenize(&e).unwrap_or_default();
+                        if tokens.is_empty() {
+                            TemplateExprPart::Text(e)
+                        } else {
+                            let mut inner_parser = Parser::new(&tokens);
+                            match inner_parser.parse_expr() {
+                                Ok(expr) => TemplateExprPart::Expr(expr),
+                                Err(_) => TemplateExprPart::Text(e),
+                            }
+                        }
+                    }
+                }).collect();
+                Ok(Expr::TemplateStr { parts: expr_parts })
+            }
             TokenKind::Ident(ref name) if name == "Math" => {
                 self.advance(); // consume 'Math'
                 self.expect(&TokenKind::Dot)?;
@@ -497,6 +921,12 @@ impl<'a> Parser<'a> {
                 }
             }
             TokenKind::LParen => {
+                // Phase A.1: 可能是箭头函数 (params) => ...
+                // 或普通括号表达式 (expr)
+                // 向前看: 检查是否是箭头函数
+                if self.is_arrow_function() {
+                    return self.parse_arrow_function();
+                }
                 self.advance();
                 let expr = self.parse_expr()?;
                 self.expect(&TokenKind::RParen)?;
@@ -655,6 +1085,238 @@ mod tests {
                 assert!(matches!(value, Expr::Index { .. }));
             }
             _ => panic!("期望 Let 语句"),
+        }
+    }
+
+    // Phase A 测试
+
+    #[test]
+    fn test_parse_const() {
+        let tokens = tokenize("const MAX = 100;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Const { name, value } => {
+                assert_eq!(name, "MAX");
+                assert_eq!(*value, Expr::Number(100));
+            }
+            _ => panic!("期望 Const 语句"),
+        }
+    }
+
+    #[test]
+    fn test_parse_bool_null() {
+        let tokens = tokenize("let a = true; let b = false; let c = null;").unwrap();
+        let program = parse(&tokens).unwrap();
+        assert_eq!(program.statements.len(), 3);
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => assert_eq!(*value, Expr::Bool(true)),
+            _ => panic!("期望 Let"),
+        }
+        match &program.statements[1].stmt {
+            Statement::Let { value, .. } => assert_eq!(*value, Expr::Bool(false)),
+            _ => panic!("期望 Let"),
+        }
+        match &program.statements[2].stmt {
+            Statement::Let { value, .. } => assert_eq!(*value, Expr::Null),
+            _ => panic!("期望 Let"),
+        }
+    }
+
+    #[test]
+    fn test_parse_ternary() {
+        let tokens = tokenize("let x = a > b ? 1 : 0;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                assert!(matches!(value, Expr::Ternary { .. }));
+            }
+            _ => panic!("期望 Let"),
+        }
+    }
+
+    #[test]
+    fn test_parse_switch() {
+        let source = "switch (x) { case 1: console.log(1); break; case 2: console.log(2); break; default: console.log(0); break; }";
+        let tokens = tokenize(source).unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Switch { cases, .. } => {
+                assert_eq!(cases.len(), 3); // 2 cases + 1 default
+                assert!(cases[0].test.is_some());
+                assert!(cases[2].test.is_none()); // default
+            }
+            _ => panic!("期望 Switch"),
+        }
+    }
+
+    #[test]
+    fn test_parse_arrow_func_expr() {
+        let tokens = tokenize("let add = (a, b) => a + b;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                match value {
+                    Expr::ArrowFunc { params, body, .. } => {
+                        assert_eq!(params, &vec!["a".to_string(), "b".to_string()]);
+                        assert!(matches!(body, ArrowBody::Expr(_)));
+                    }
+                    _ => panic!("期望 ArrowFunc"),
+                }
+            }
+            _ => panic!("期望 Let"),
+        }
+    }
+
+    #[test]
+    fn test_parse_arrow_block() {
+        let tokens = tokenize("let fn = (n) => { return n * n; };").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                match value {
+                    Expr::ArrowFunc { params, body, .. } => {
+                        assert_eq!(params.len(), 1);
+                        assert!(matches!(body, ArrowBody::Block(_)));
+                    }
+                    _ => panic!("期望 ArrowFunc"),
+                }
+            }
+            _ => panic!("期望 Let"),
+        }
+    }
+
+    #[test]
+    fn test_parse_template_string() {
+        let tokens = tokenize("let msg = `hello`;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                assert!(matches!(value, Expr::TemplateStr { .. }));
+            }
+            _ => panic!("期望 Let"),
+        }
+    }
+
+    #[test]
+    fn test_parse_strict_eq() {
+        let tokens = tokenize("let x = a === b;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                match value {
+                    Expr::BinOp { op, .. } => assert_eq!(*op, BinOp::StrictEq),
+                    _ => panic!("期望 BinOp"),
+                }
+            }
+            _ => panic!("期望 Let"),
+        }
+    }
+
+    #[test]
+    fn test_parse_import() {
+        let tokens = tokenize("import { GPIO, UART } from \"snar:hw\";").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Import { items, source } => {
+                assert_eq!(items, &vec!["GPIO".to_string(), "UART".to_string()]);
+                assert_eq!(source, "snar:hw");
+            }
+            _ => panic!("期望 Import"),
+        }
+    }
+
+    #[test]
+    fn test_parse_destruct_let() {
+        let tokens = tokenize("let { x, y } = point;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::DestructLet { names, source } => {
+                assert_eq!(names, &vec!["x".to_string(), "y".to_string()]);
+                assert_eq!(*source, Expr::Ident("point".to_string()));
+            }
+            _ => panic!("期望 DestructLet"),
+        }
+    }
+
+    // Phase v1.5: async/await 语法测试
+    #[test]
+    fn test_parse_async_function() {
+        let tokens = tokenize("async function readSensor() { return 1; }").unwrap();
+        let program = parse(&tokens).unwrap();
+        assert_eq!(program.functions.len(), 1);
+        let func = &program.functions[0].func;
+        assert_eq!(func.name, "readSensor");
+        assert!(func.is_async);
+    }
+
+    #[test]
+    fn test_parse_await_expr() {
+        let tokens = tokenize("let x = await sensor.read();").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                match value {
+                    Expr::Await { expr } => {
+                        match expr.as_ref() {
+                            Expr::Call { name, .. } => assert_eq!(name, "sensor.read"),
+                            _ => panic!("期望 Call"),
+                        }
+                    }
+                    _ => panic!("期望 Await"),
+                }
+            }
+            _ => panic!("期望 Let"),
+        }
+    }
+
+    #[test]
+    fn test_parse_promise_all() {
+        let tokens = tokenize("let r = Promise.all([a(), b()]);").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                match value {
+                    Expr::PromiseAll { promises } => {
+                        assert_eq!(promises.len(), 2);
+                    }
+                    _ => panic!("期望 PromiseAll"),
+                }
+            }
+            _ => panic!("期望 Let"),
+        }
+    }
+
+    #[test]
+    fn test_parse_promise_race() {
+        let tokens = tokenize("let r = Promise.race([x(), y()]);").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                match value {
+                    Expr::PromiseRace { promises } => {
+                        assert_eq!(promises.len(), 2);
+                    }
+                    _ => panic!("期望 PromiseRace"),
+                }
+            }
+            _ => panic!("期望 Let"),
+        }
+    }
+
+    #[test]
+    fn test_parse_async_arrow() {
+        let tokens = tokenize("let fn = async () => { return 1; };").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                match value {
+                    Expr::ArrowFunc { is_async, .. } => {
+                        assert!(*is_async);
+                    }
+                    _ => panic!("期望 ArrowFunc"),
+                }
+            }
+            _ => panic!("期望 Let"),
         }
     }
 }

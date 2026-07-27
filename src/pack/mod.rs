@@ -16,6 +16,7 @@ pub mod lockfile;
 pub mod archive;
 pub mod registry;
 pub mod resolver;
+pub mod snarrc;
 
 use std::path::Path;
 use std::fs;
@@ -33,7 +34,10 @@ pub fn dispatch(args: &[String]) {
         Some("update") => cmd_update(&args[1..]),
         Some("remove") => cmd_remove(&args[1..]),
         Some("list") | Some("ls") => cmd_list(),
+        Some("search") => cmd_search(&args[1..]),
         Some("hunt") => cmd_hunt(&args[1..]),
+        Some("lock") => cmd_lock(),
+        Some("verify") => cmd_verify(),
         Some(other) => {
             eprintln!("未知猎包指令: '{}'", other);
             print_pack_usage();
@@ -56,7 +60,10 @@ pub fn print_pack_usage() {
     println!("  update [name]   更新猎包");
     println!("  remove <name>   移除猎包");
     println!("  list            查看已捕获的猎包, 简写: ls");
+    println!("  search <query>  搜索猎包 (Registry)");
     println!("  hunt [file]     出击狩猎 (install + run)");
+    println!("  lock            生成依赖锁定文件 (snar.lock)");
+    println!("  verify          验证依赖完整性");
     println!();
     println!("示例:");
     println!("  snar pack init");
@@ -264,13 +271,14 @@ fn cmd_publish() {
 
     println!("  包大小: {} bytes", data.len());
 
-    // 上传
-    let client = RegistryClient::new(&registry::get_registry_url());
+    // 上传 - 支持自定义 registry
+    let url = snarrc::get_effective_registry_url(&cwd);
+    let client = RegistryClient::new(&url);
     let metadata = manifest.to_json();
 
     match client.publish(&manifest.name, &manifest.version, &metadata, &data) {
         Ok(msg) => {
-            println!("投放成功: {}@{} 已进入猎场", manifest.name, manifest.version);
+            println!("投放成功: {}@{} 已进入猎场 (registry: {})", manifest.name, manifest.version, url);
             let _ = msg;
         }
         Err(e) => {
@@ -428,6 +436,50 @@ fn cmd_list() {
 }
 
 // =============================================================================
+// snar pack search - 搜索猎包
+// =============================================================================
+fn cmd_search(args: &[String]) {
+    if args.is_empty() {
+        eprintln!("snar pack search: 请指定搜索关键词");
+        eprintln!("用法: snar pack search <query>");
+        eprintln!("示例: snar pack search motor");
+        std::process::exit(1);
+    }
+
+    let query = args.join(" ");
+    let url = registry::get_registry_url();
+    let client = RegistryClient::new(&url);
+
+    println!("🔍 搜索猎包: \"{}\"", query);
+    println!("{:-<50}", "");
+
+    match client.search(&query) {
+        Ok(results) => {
+            if results.is_empty() {
+                println!("未找到匹配的猎包");
+            } else {
+                println!("{:<25} {:<12} {}", "猎包", "最新版本", "描述");
+                println!("{:-<50}", "");
+                for pkg in &results {
+                    let desc = if pkg.description.len() > 30 {
+                        format!("{}...", &pkg.description[..27])
+                    } else {
+                        pkg.description.clone()
+                    };
+                    println!("{:<25} {:<12} {}", pkg.name, pkg.latest, desc);
+                }
+                println!("{:-<50}", "");
+                println!("共找到 {} 个猎包", results.len());
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ {}", e);
+            eprintln!("💡 确保 Registry 服务正在运行: {}", url);
+        }
+    }
+}
+
+// =============================================================================
 // snar pack hunt - 出击狩猎 (install + run)
 // =============================================================================
 fn cmd_hunt(args: &[String]) {
@@ -484,4 +536,82 @@ fn cmd_hunt(args: &[String]) {
 
     let mut engine = crate::engine::Engine::new(machine_code);
     let _ = engine.run();
+}
+
+// =============================================================================
+// snar pack lock - 生成锁定文件
+// =============================================================================
+fn cmd_lock() {
+    let cwd = std::env::current_dir().expect("无法获取当前目录");
+    let manifest = Manifest::load(&cwd).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    });
+
+    println!("生成依赖锁定文件...");
+
+    let client = RegistryClient::new(&snarrc::get_effective_registry_url(&cwd));
+    let mut lockfile = Lockfile { packages: Vec::new() };
+
+    for (name, constraint_str) in &manifest.dependencies {
+        match client.get_package(name) {
+            Ok(pkg_info) => {
+                let constraint = resolver::VersionConstraint::parse(constraint_str)
+                    .unwrap_or_else(|_| resolver::VersionConstraint::parse("*").unwrap());
+                if let Some(version) = constraint.best_match(&pkg_info.versions) {
+                    lockfile.upsert(LockedPackage {
+                        name: name.clone(),
+                        version,
+                        checksum: "pending".to_string(),
+                    });
+                }
+            }
+            Err(e) => {
+                eprintln!("  {} 解析失败: {}", name, e);
+            }
+        }
+    }
+
+    lockfile.save(&cwd).unwrap_or_else(|e| {
+        eprintln!("写入 snar.lock 失败: {}", e);
+        std::process::exit(1);
+    });
+
+    println!("snar.lock 已生成 ({} 个依赖)", lockfile.packages.len());
+}
+
+// =============================================================================
+// snar pack verify - 验证依赖完整性
+// =============================================================================
+fn cmd_verify() {
+    let cwd = std::env::current_dir().expect("无法获取当前目录");
+    let manifest = Manifest::load(&cwd).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    });
+    let lockfile = Lockfile::load(&cwd).unwrap_or_else(|_| Lockfile { packages: Vec::new() });
+
+    println!("验证依赖完整性...");
+    let mut ok = true;
+
+    for (name, _constraint) in &manifest.dependencies {
+        if let Some(locked) = lockfile.find(name) {
+            let pkg_dir = cwd.join(".snar").join("packages").join(name);
+            if pkg_dir.exists() {
+                println!("  {} {} ... OK", name, locked.version);
+            } else {
+                println!("  {} {} ... 缺失 (需要安装)", name, locked.version);
+                ok = false;
+            }
+        } else {
+            println!("  {} ... 未锁定", name);
+            ok = false;
+        }
+    }
+
+    if ok {
+        println!("\n所有依赖验证通过");
+    } else {
+        println!("\n部分依赖缺失，运行 'snar pack install' 修复");
+    }
 }

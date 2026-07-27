@@ -3,7 +3,7 @@
 //! 将 AST 编译为 COUNPRE64 指令序列
 //! Phase 4: console.log → UART, 数组, 取模, 优化
 
-use crate::parser::{SourceStatement, Program, Statement, Expr, BinOp, MathOp, Function};
+use crate::parser::{SourceStatement, Program, Statement, Expr, BinOp, MathOp, Function, ArrowBody, TemplateExprPart, SwitchCase};
 use crate::backend::Instruction;
 
 /// 将 AST 编译为 COUNPRE64 指令列表
@@ -398,7 +398,6 @@ impl Compiler {
                 }
                 let is_new_spill = self.is_spilled(name);
                 if is_new_spill {
-                    // 变量已在栈上，计算到临时寄存器再存回
                     let tmp = self.alloc_temp()?;
                     self.compile_expr_into(value, tmp)?;
                     self.store_spilled(name, tmp)?;
@@ -406,11 +405,16 @@ impl Compiler {
                 } else {
                     let rd = self.alloc_reg(name)?;
                     self.compile_expr_into(value, rd)?;
-                    // 检查 alloc_reg 是否导致了溢出
                     if self.is_spilled(name) {
                         self.store_spilled(name, rd)?;
                     }
                 }
+                Ok(())
+            }
+            // Phase A.5: const 与 let 相同（不可变在编译期不强制）
+            Statement::Const { name, value } => {
+                let rd = self.alloc_reg(name)?;
+                self.compile_expr_into(value, rd)?;
                 Ok(())
             }
             Statement::Assign { name, value } => {
@@ -484,6 +488,46 @@ impl Compiler {
             }
             Statement::ConsoleLog(args) => {
                 self.compile_console_log(args)
+            }
+            // Phase A.3: switch 编译为 if-else 链
+            Statement::Switch { discriminant, cases } => {
+                self.compile_switch(discriminant, cases)
+            }
+            // Phase A.3: break 暂为NOP（switch中后续可扩展）
+            Statement::Break => {
+                self.emit_nop();
+                Ok(())
+            }
+            // Phase A.4: import 为编译期指令，不产生机器码
+            Statement::Import { .. } => {
+                Ok(())
+            }
+            // Phase A.4: export 编译内部语句
+            Statement::Export { item } => {
+                self.compile_statement(item)
+            }
+            // Phase A.6: 解构赋值 let { a, b } = obj;
+            Statement::DestructLet { names, source } => {
+                // 计算源表达式到临时寄存器
+                let src_reg = self.alloc_temp()?;
+                self.compile_expr_into(source, src_reg)?;
+                // 每个 name 对应源对象的一个属性（偏移 = index * 8）
+                for (i, name) in names.iter().enumerate() {
+                    let offset = (i as i16) * 8;
+                    if self.is_spilled(name) {
+                        let tmp = self.alloc_temp()?;
+                        self.emit_nop();
+                        self.emit_load(tmp, src_reg, offset);
+                        self.store_spilled(name, tmp)?;
+                        self.free_temp(tmp);
+                    } else {
+                        let rd = self.alloc_reg(name)?;
+                        self.emit_nop();
+                        self.emit_load(rd, src_reg, offset);
+                    }
+                }
+                self.free_temp(src_reg);
+                Ok(())
             }
         }
     }
@@ -641,6 +685,11 @@ impl Compiler {
     // =========================================================================
 
     fn compile_call(&mut self, name: &str, args: &[Expr], rd: u8) -> Result<(), String> {
+        // Phase C.3: 硬件 API 静态链接 — 拦截 snar:hw 调用
+        if let Some(hw_call) = self.try_compile_hw_call(name, args, rd)? {
+            return Ok(());
+        }
+
         let func_info = self.get_function(name)
             .ok_or_else(|| format!("未定义函数 '{}'", name))?;
         let func_addr = func_info.addr;
@@ -668,6 +717,131 @@ impl Compiler {
         }
 
         Ok(())
+    }
+
+    // =========================================================================
+    // Phase C.3: 硬件 API 静态链接
+    // 拦截 snar:hw 调用，生成内存映射 I/O 指令
+    // =========================================================================
+
+    fn try_compile_hw_call(&mut self, name: &str, args: &[Expr], rd: u8) -> Result<Option<()>, String> {
+        use crate::hardware_api::counpre64_map as hw;
+
+        match name {
+            // GPIO.output(pin) → 设置方向寄存器 (写入pin号)
+            "GPIO.output" if args.len() == 1 => {
+                let pin_reg = self.alloc_temp()?;
+                self.compile_expr_into(&args[0], pin_reg)?;
+                // 写入 pin 号到 GPIO_DIR → 该 pin 设为 output
+                self.emit_store(pin_reg, 0, hw::GPIO_DIR);
+                self.emit_addi(rd, 0, 1); // 返回 1
+                self.free_temp(pin_reg);
+                Ok(Some(()))
+            }
+            // GPIO.high(pin) → 输出高 (写入pin号)
+            "GPIO.high" if args.len() == 1 => {
+                let pin_reg = self.alloc_temp()?;
+                self.compile_expr_into(&args[0], pin_reg)?;
+                // 写入 pin 号到 GPIO_OUT → 该 pin 设高
+                self.emit_store(pin_reg, 0, hw::GPIO_OUT);
+                self.emit_addi(rd, 0, 1);
+                self.free_temp(pin_reg);
+                Ok(Some(()))
+            }
+            // GPIO.low(pin) → 输出低 (写入pin号)
+            "GPIO.low" if args.len() == 1 => {
+                let pin_reg = self.alloc_temp()?;
+                self.compile_expr_into(&args[0], pin_reg)?;
+                // 写入 pin 号到 GPIO_LOW → 该 pin 设低
+                self.emit_store(pin_reg, 0, hw::GPIO_LOW);
+                self.emit_addi(rd, 0, 0);
+                self.free_temp(pin_reg);
+                Ok(Some(()))
+            }
+            // GPIO.read(pin) → 读取输入寄存器
+            "GPIO.read" if args.len() == 1 => {
+                self.emit_load(rd, 0, hw::GPIO_IN);
+                Ok(Some(()))
+            }
+            // UART.init(baud)
+            "UART.init" if args.len() == 1 => {
+                let baud_reg = self.alloc_temp()?;
+                self.compile_expr_into(&args[0], baud_reg)?;
+                self.emit_store(baud_reg, 0, hw::UART_BAUD);
+                self.emit_addi(rd, 0, 1); // 返回 1 表示成功
+                self.free_temp(baud_reg);
+                Ok(Some(()))
+            }
+            // Timer.delay(ms) → 简化为 NOP 循环 (实际硬件用忙等待)
+            "Timer.delay" if args.len() == 1 => {
+                let ms_reg = self.alloc_temp()?;
+                self.compile_expr_into(&args[0], ms_reg)?;
+                // 简化: 写入 TIMER_PERIOD 并启动
+                self.emit_store(ms_reg, 0, hw::TIMER_PERIOD);
+                let ctrl_reg = self.alloc_temp()?;
+                self.emit_addi(ctrl_reg, 0, 1); // enable
+                self.emit_store(ctrl_reg, 0, hw::TIMER_CTRL);
+                self.emit_addi(rd, 0, 0);
+                self.free_temp(ms_reg);
+                self.free_temp(ctrl_reg);
+                Ok(Some(()))
+            }
+            // PWM.duty(pin, value)
+            "PWM.duty" if args.len() == 2 => {
+                let pin_reg = self.alloc_temp()?;
+                let duty_reg = self.alloc_temp()?;
+                self.compile_expr_into(&args[0], pin_reg)?;
+                self.compile_expr_into(&args[1], duty_reg)?;
+                self.emit_store(duty_reg, 0, hw::PWM_DUTY);
+                self.emit_addi(rd, 0, 1);
+                self.free_temp(pin_reg);
+                self.free_temp(duty_reg);
+                Ok(Some(()))
+            }
+            // ADC.read(channel)
+            "ADC.read" if args.len() == 1 => {
+                let ch_reg = self.alloc_temp()?;
+                self.compile_expr_into(&args[0], ch_reg)?;
+                self.emit_store(ch_reg, 0, hw::ADC_CHANNEL);
+                self.emit_load(rd, 0, hw::ADC_VALUE);
+                self.free_temp(ch_reg);
+                Ok(Some(()))
+            }
+            // ADC.channel(ch) → 设置 ADC 通道
+            "ADC.channel" if args.len() == 1 => {
+                let ch_reg = self.alloc_temp()?;
+                self.compile_expr_into(&args[0], ch_reg)?;
+                self.emit_store(ch_reg, 0, hw::ADC_CHANNEL);
+                self.emit_addi(rd, 0, 1);
+                self.free_temp(ch_reg);
+                Ok(Some(()))
+            }
+            // UART.write(byte) → 发送一个字节
+            "UART.write" if args.len() == 1 => {
+                let data_reg = self.alloc_temp()?;
+                self.compile_expr_into(&args[0], data_reg)?;
+                self.emit_store(data_reg, 0, hw::UART_TX_DATA);
+                self.emit_addi(rd, 0, 1);
+                self.free_temp(data_reg);
+                Ok(Some(()))
+            }
+            // GPIO.input(pin) → 设为输入
+            "GPIO.input" if args.len() == 1 => {
+                let pin_reg = self.alloc_temp()?;
+                self.compile_expr_into(&args[0], pin_reg)?;
+                self.emit_store(pin_reg, 0, hw::GPIO_DIR_IN);
+                self.emit_addi(rd, 0, 1);
+                self.free_temp(pin_reg);
+                Ok(Some(()))
+            }
+            // ADC.read() → 读取当前通道
+            "ADC.read" if args.is_empty() => {
+                self.emit_load(rd, 0, hw::ADC_VALUE);
+                Ok(Some(()))
+            }
+            // 非硬件 API 调用
+            _ => Ok(None),
+        }
     }
 
     // =========================================================================
@@ -860,10 +1034,13 @@ impl Compiler {
 
     fn compile_condition(&mut self, expr: &Expr) -> Result<CondResult, String> {
         match expr {
-            Expr::BinOp { op: op @ (BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge), left, right } => {
+            Expr::BinOp { op: op @ (BinOp::Eq | BinOp::NotEq | BinOp::StrictEq | BinOp::StrictNotEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge), left, right } => {
                 let (actual_left, actual_right, actual_op) = match op {
                     BinOp::Gt => (right.as_ref(), left.as_ref(), BinOp::Lt),
                     BinOp::Ge => (right.as_ref(), left.as_ref(), BinOp::Le),
+                    // StrictEq/StrictNotEq → 整数类型与Eq/NotEq相同
+                    BinOp::StrictEq => (left.as_ref(), right.as_ref(), BinOp::Eq),
+                    BinOp::StrictNotEq => (left.as_ref(), right.as_ref(), BinOp::NotEq),
                     _ => (left.as_ref(), right.as_ref(), *op),
                 };
 
@@ -1016,16 +1193,168 @@ impl Compiler {
                     BinOp::Mul => (0x7, 0x8),
                     BinOp::Div => (0x7, 0xC),
                     BinOp::Mod => (0x7, 0xE),
-                    BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => (0x1, 0x0),
+                    BinOp::Eq | BinOp::StrictEq
+                    | BinOp::NotEq | BinOp::StrictNotEq
+                    | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => (0x1, 0x0),
                     BinOp::And | BinOp::Or => (0x2, 0x0),
                 };
                 self.push_instr(Instruction::RR {
                     opcode, func,
                     rs1: rd, rs2: tmp, rd,
                 });
-                // 回收临时寄存器
                 self.free_temp(tmp);
                 Ok(())
+            }
+            // Phase A: 布尔值 → 0/1
+            Expr::Bool(b) => {
+                self.emit_addi(rd, REG_ZERO, if *b { 1 } else { 0 });
+                Ok(())
+            }
+            // Phase A: null → 0
+            Expr::Null => {
+                self.emit_addi(rd, REG_ZERO, 0);
+                Ok(())
+            }
+            // Phase A.7: 三元运算符 cond ? then : else
+            Expr::Ternary { condition, then_expr, else_expr } => {
+                let cond = self.compile_condition(condition)?;
+                self.emit_nop();
+                self.free_condition_temps(cond.reg);
+
+                if cond.zero_means_true {
+                    // BEZ → then (zero means true)
+                    self.emit_bez(cond.reg, 8);
+                    let jump_else_idx = self.instructions.len();
+                    self.emit_jump(0); // → else
+                    // then branch
+                    self.compile_expr_into(then_expr, rd)?;
+                    let jump_end_idx = self.instructions.len();
+                    self.emit_jump(0); // → end
+                    // else branch
+                    let else_start = self.instructions.len();
+                    let offset = self.calc_offset(jump_else_idx, else_start);
+                    self.patch_offset(jump_else_idx, offset);
+                    self.compile_expr_into(else_expr, rd)?;
+                    // end
+                    let end_idx = self.instructions.len();
+                    let offset = self.calc_offset(jump_end_idx, end_idx);
+                    self.patch_offset(jump_end_idx, offset);
+                } else {
+                    let bez_else_idx = self.instructions.len();
+                    self.emit_bez(cond.reg, 0); // skip then if zero (false)
+                    // then branch
+                    self.compile_expr_into(then_expr, rd)?;
+                    let jump_end_idx = self.instructions.len();
+                    self.emit_jump(0);
+                    // else branch
+                    let else_start = self.instructions.len();
+                    let offset = self.calc_offset(bez_else_idx, else_start);
+                    self.patch_offset(bez_else_idx, offset);
+                    self.compile_expr_into(else_expr, rd)?;
+                    // end
+                    let end_idx = self.instructions.len();
+                    let offset = self.calc_offset(jump_end_idx, end_idx);
+                    self.patch_offset(jump_end_idx, offset);
+                }
+                Ok(())
+            }
+            // Phase A.1: 箭头函数 → 编译为内联函数定义
+            Expr::ArrowFunc { params, body, .. } => {
+                // 生成唯一函数名
+                let func_name = format!("__arrow_{}", self.functions.len());
+                let func_body = match body {
+                    ArrowBody::Block(stmts) => stmts.clone(),
+                    ArrowBody::Expr(expr) => vec![SourceStatement {
+                        stmt: Statement::Return(*expr.clone()),
+                        line: 0,
+                    }],
+                };
+                let func = Function {
+                    name: func_name.clone(),
+                    params: params.clone(),
+                    body: func_body,
+                    is_async: false,
+                };
+                // 记录函数信息
+                let addr = self.current_addr();
+                self.functions.push(FunctionInfo {
+                    name: func_name.clone(),
+                    param_count: params.len(),
+                    addr,
+                });
+                // 编译函数体
+                let saved_in_function = self.in_function;
+                let saved_vars = self.variables.clone();
+                let saved_next_reg = self.next_reg;
+                self.compile_function(&func, 0)?;
+                self.in_function = saved_in_function;
+                self.variables = saved_vars;
+                self.next_reg = saved_next_reg;
+                // 将函数地址存入变量
+                self.emit_addi(rd, REG_ZERO, addr as i16);
+                Ok(())
+            }
+            // Phase A.2: 模板字符串 → 输出第一个文本部分的ASCII值（简化）
+            Expr::TemplateStr { parts } => {
+                // 简化：取第一个文本部分的第一个字符
+                let first_byte = parts.iter().find_map(|p| match p {
+                    TemplateExprPart::Text(t) => t.bytes().next(),
+                    _ => None,
+                }).unwrap_or(0);
+                self.emit_addi(rd, REG_ZERO, first_byte as i16);
+                Ok(())
+            }
+            // Phase A.8: 字符串方法
+            Expr::StringMethod { object, method, args: _ } => {
+                match method.as_str() {
+                    "length" => {
+                        // 编译期无法知道字符串长度，返回 0
+                        self.compile_expr_into(object, rd)?;
+                        // NOP: 占位
+                        self.emit_nop();
+                        Ok(())
+                    }
+                    "charAt" => {
+                        // str.charAt(i) → 简化为返回字符串首字符
+                        self.compile_expr_into(object, rd)?;
+                        Ok(())
+                    }
+                    "slice" | "substring" | "indexOf" => {
+                        // 简化：返回对象值
+                        self.compile_expr_into(object, rd)?;
+                        Ok(())
+                    }
+                    _ => {
+                        self.compile_expr_into(object, rd)?;
+                        Ok(())
+                    }
+                }
+            }
+            // Phase v1.5: await expr → 状态机变换（当前简化为编译内部表达式）
+            Expr::Await { expr } => {
+                // TODO: 完整状态机变换在 Task 3 实现
+                // 当前简化：直接编译内部表达式
+                self.compile_expr_into(expr, rd)
+            }
+            // Phase v1.5: Promise.all → 并行等待（当前简化为编译第一个 promise）
+            Expr::PromiseAll { promises } => {
+                // TODO: 完整并行等待在 Task 3 实现
+                if let Some(first) = promises.first() {
+                    self.compile_expr_into(first, rd)
+                } else {
+                    self.emit_addi(rd, REG_ZERO, 0);
+                    Ok(())
+                }
+            }
+            // Phase v1.5: Promise.race → 竞争等待（当前简化为编译第一个 promise）
+            Expr::PromiseRace { promises } => {
+                // TODO: 完整竞争等待在 Task 3 实现
+                if let Some(first) = promises.first() {
+                    self.compile_expr_into(first, rd)
+                } else {
+                    self.emit_addi(rd, REG_ZERO, 0);
+                    Ok(())
+                }
             }
         }
     }
@@ -1042,10 +1371,77 @@ impl Compiler {
     }
 
     // =========================================================================
+    // Phase A.3: switch 编译
+    // =========================================================================
+
+    fn compile_switch(&mut self, discriminant: &Expr, cases: &[SwitchCase]) -> Result<(), String> {
+        // 计算判别表达式的值到临时寄存器
+        let disc_reg = self.alloc_temp()?;
+        self.compile_expr_into(discriminant, disc_reg)?;
+
+        let mut end_jumps: Vec<usize> = Vec::new();
+
+        for case in cases {
+            if let Some(test) = &case.test {
+                // case val: 比较 disc_reg == val
+                let val_reg = self.alloc_temp()?;
+                self.compile_expr_into(test, val_reg)?;
+                self.emit_nop();
+                // SUB disc_reg - val_reg → scratch
+                let cmp_reg = self.alloc_temp()?;
+                self.push_instr(Instruction::RR {
+                    opcode: 0x1, func: 0x0,
+                    rs1: disc_reg, rs2: val_reg, rd: cmp_reg,
+                });
+                // BEZ: if cmp_reg == 0, fall through to body
+                self.emit_nop();
+                self.emit_bez(cmp_reg, 8);
+                let skip_body_idx = self.instructions.len();
+                self.emit_jump(0); // skip body if not equal
+
+                self.free_temp(cmp_reg);
+                self.free_temp(val_reg);
+
+                // case body
+                for ss in &case.body {
+                    self.set_line(ss.line);
+                    self.compile_statement(&ss.stmt)?;
+                }
+
+                // jump to end of switch
+                let jump_end_idx = self.instructions.len();
+                self.emit_jump(0);
+                end_jumps.push(jump_end_idx);
+
+                // patch skip_body
+                let body_start = self.instructions.len();
+                let offset = self.calc_offset(skip_body_idx, body_start);
+                self.patch_offset(skip_body_idx, offset);
+            } else {
+                // default: 直接执行
+                for ss in &case.body {
+                    self.set_line(ss.line);
+                    self.compile_statement(&ss.stmt)?;
+                }
+            }
+        }
+
+        // patch all end jumps
+        let end_idx = self.instructions.len();
+        for j in end_jumps {
+            let offset = self.calc_offset(j, end_idx);
+            self.patch_offset(j, offset);
+        }
+
+        self.free_temp(disc_reg);
+        Ok(())
+    }
+
+    // =========================================================================
     // Phase 10: Object literal + property access
     // =========================================================================
 
-    fn compile_object_literal(&mut self, keys: &[String], values: &[Expr], rd: u8) -> Result<(), String> {
+    fn compile_object_literal(&mut self, _keys: &[String], values: &[Expr], rd: u8) -> Result<(), String> {
         let base_addr = self.alloc_heap(values.len() as i16);
         self.emit_addi(rd, REG_ZERO, base_addr);
         for (i, val) in values.iter().enumerate() {
@@ -1206,5 +1602,40 @@ mod tests {
         // 应包含 REM 指令 (opcode=7, func=E)
         let has_rem = instrs.iter().any(|i| matches!(i, Instruction::RR { opcode: 0x7, func: 0xE, .. }));
         assert!(has_rem, "% 应生成 REM 指令");
+    }
+
+    // Phase C.3: 硬件 API 静态链接测试
+    #[test]
+    fn test_hw_gpio_high() {
+        // GPIO.high(13) 应生成 STORE 指令到 GPIO_OUT 地址 (0x201)
+        let source = r#"let x = GPIO.high(13);"#;
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        // 应包含 STORE 指令 (opcode=0xC)
+        let has_store = instrs.iter().any(|i| matches!(i, Instruction::RI { opcode: 0xC, .. }));
+        assert!(has_store, "GPIO.high 应生成 STORE 指令");
+    }
+
+    #[test]
+    fn test_hw_uart_init() {
+        // UART.init(9600) 应生成 STORE 指令到 UART_BAUD 地址 (0x103)
+        let source = r#"let x = UART.init(9600);"#;
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        let has_store = instrs.iter().any(|i| matches!(i, Instruction::RI { opcode: 0xC, .. }));
+        assert!(has_store, "UART.init 应生成 STORE 指令");
+    }
+
+    #[test]
+    fn test_hw_adc_read() {
+        // ADC.read(0) 应生成 LOAD 指令从 ADC_VALUE 地址 (0x502)
+        let source = r#"let x = ADC.read(0);"#;
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let instrs = compile(&ast).unwrap();
+        let has_load = instrs.iter().any(|i| matches!(i, Instruction::RI { opcode: 0xB, .. }));
+        assert!(has_load, "ADC.read 应生成 LOAD 指令");
     }
 }

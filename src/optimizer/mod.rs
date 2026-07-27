@@ -4,7 +4,7 @@
 //! - 常量折叠 (Constant Folding)
 //! - 死代码消除 (Dead Code Elimination)
 
-use crate::parser::{SourceStatement, SourceFunction, Program, Statement, Expr, BinOp, Function};
+use crate::parser::{SourceStatement, SourceFunction, Program, Statement, Expr, BinOp, Function, SwitchCase};
 
 /// 对 AST 执行优化 pass
 pub fn optimize(program: &Program) -> Program {
@@ -38,6 +38,7 @@ impl Optimizer {
         Function {
             name: func.name.clone(),
             params: func.params.clone(),
+            is_async: func.is_async,
             body: {
                 let optimized: Vec<SourceStatement> = func.body.iter()
                     .map(|ss| SourceStatement { stmt: self.optimize_statement(&ss.stmt), line: ss.line })
@@ -127,6 +128,41 @@ impl Optimizer {
                 args.iter().map(|e| self.fold_expr(e)).collect()
             ),
             Statement::Expr(expr) => Statement::Expr(self.fold_expr(expr)),
+            // Phase A: const 与 let 相同
+            Statement::Const { name, value } => Statement::Const {
+                name: name.clone(),
+                value: self.fold_expr(value),
+            },
+            // Phase A.3: switch
+            Statement::Switch { discriminant, cases } => {
+                let disc = self.fold_expr(discriminant);
+                let cases: Vec<SwitchCase> = cases.iter().map(|c| {
+                    SwitchCase {
+                        test: c.test.as_ref().map(|e| self.fold_expr(e)),
+                        body: c.body.iter().map(|ss| SourceStatement {
+                            stmt: self.optimize_statement(&ss.stmt),
+                            line: ss.line,
+                        }).collect(),
+                    }
+                }).collect();
+                Statement::Switch { discriminant: disc, cases }
+            }
+            // Phase A.3: break
+            Statement::Break => Statement::Break,
+            // Phase A.4: import
+            Statement::Import { items, source } => Statement::Import {
+                items: items.clone(),
+                source: source.clone(),
+            },
+            // Phase A.4: export
+            Statement::Export { item } => Statement::Export {
+                item: Box::new(self.optimize_statement(item)),
+            },
+            // Phase A.6: 解构赋值
+            Statement::DestructLet { names, source } => Statement::DestructLet {
+                names: names.clone(),
+                source: self.fold_expr(source),
+            },
         }
     }
 
@@ -216,6 +252,9 @@ impl Optimizer {
             BinOp::Ge => Some(if lv >= rv { 1 } else { 0 }),
             BinOp::And => Some(if lv != 0 && rv != 0 { 1 } else { 0 }),
             BinOp::Or => Some(if lv != 0 || rv != 0 { 1 } else { 0 }),
+            // Phase A: === 和 !== 对整数与 == / != 等价
+            BinOp::StrictEq => Some(if lv == rv { 1 } else { 0 }),
+            BinOp::StrictNotEq => Some(if lv != rv { 1 } else { 0 }),
         }
     }
 

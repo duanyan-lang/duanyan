@@ -7,6 +7,7 @@
 //! 这不是模拟器——这是 COUNPRE64 指令集的原生执行
 
 use std::collections::HashMap;
+use crate::hardware_sim::HardwareSimulator;
 
 /// UART TX 地址（与 FPGA 一致）
 const UART_TX_ADDR: i64 = 0x100;
@@ -27,6 +28,10 @@ pub struct Engine {
     output: String,
     halted: bool,
     pending_num: bool,  // 上一条 UART 输出是数字标记 0xFF
+    /// 硬件模拟器 (Phase D)
+    hw_sim: HardwareSimulator,
+    /// 硬件模拟模式
+    hw_mode: bool,
 }
 
 /// 运行时错误类型
@@ -64,7 +69,19 @@ impl Engine {
             output: String::new(),
             halted: false,
             pending_num: false,
+            hw_sim: HardwareSimulator::new(),
+            hw_mode: false,
         }
+    }
+
+    /// 启用硬件模拟模式
+    pub fn set_hw_mode(&mut self, enabled: bool) {
+        self.hw_mode = enabled;
+    }
+
+    /// 获取硬件模拟器引用（用于打印状态）
+    pub fn hw_sim(&self) -> &HardwareSimulator {
+        &self.hw_sim
     }
 
     /// 执行到 HALT，返回输出字符串和执行统计
@@ -176,7 +193,12 @@ impl Engine {
             }
             0xB => { // LOAD: rd = mem[rs + imm]
                 let addr = self.regs[rs].wrapping_add(imm);
-                let val = *self.memory.get(&addr).unwrap_or(&0);
+                let val = if self.hw_mode && addr >= 0x100 && addr < 0x800 {
+                    // Phase D: 硬件地址范围委托给硬件模拟器
+                    self.hw_sim.handle_load(addr)
+                } else {
+                    *self.memory.get(&addr).unwrap_or(&0)
+                };
                 self.set_reg(rd, val);
                 self.pc += 1;
             }
@@ -206,6 +228,9 @@ impl Engine {
                             print!("{}", s);
                         }
                     }
+                } else if self.hw_mode && addr >= 0x200 && addr < 0x800 {
+                    // Phase D: 硬件地址范围委托给硬件模拟器
+                    self.hw_sim.handle_store(addr, val);
                 } else {
                     self.memory.insert(addr, val);
                 }
@@ -291,6 +316,93 @@ impl Engine {
             self.step();
             self.cycles += 1;
         }
+    }
+
+    /// Phase v1.5: 带事件循环的执行
+    ///
+    /// 执行主程序后，进入事件循环处理定时器回调和异步任务。
+    /// 当没有待处理事件时退出。
+    pub fn run_with_event_loop(
+        &mut self,
+        timer_manager: &mut crate::stdlib::TimerManager,
+        async_scheduler: &mut crate::stdlib::AsyncScheduler,
+    ) -> Result<(String, u64), String> {
+        // 1. 执行主程序直到 HALT
+        self.regs[2] = STACK_INIT;
+        while !self.halted {
+            if self.cycles >= MAX_CYCLES {
+                return Err(format!("执行超限: {} 条指令（疑似死循环）", MAX_CYCLES));
+            }
+            if self.pc >= self.instructions.len() {
+                break;
+            }
+            self.step();
+            self.cycles += 1;
+        }
+
+        // 2. 事件循环
+        let mut loop_iterations = 0u64;
+        let max_loop_iterations = 100_000u64; // 防止无限事件循环
+
+        loop {
+            loop_iterations += 1;
+            if loop_iterations >= max_loop_iterations {
+                break; // 安全退出
+            }
+
+            // 2a. 推进定时器
+            let callbacks = timer_manager.tick(1);
+
+            // 2b. 检查异步任务
+            let completed = async_scheduler.poll_all();
+
+            // 2c. 如果没有待处理事件，退出
+            if callbacks.is_empty() && async_scheduler.is_empty() {
+                break;
+            }
+
+            // 2d. 执行定时器回调
+            for cb_pc in callbacks {
+                let saved_pc = self.pc;
+                let saved_halted = self.halted;
+                self.pc = cb_pc;
+                self.halted = false;
+                // 执行回调直到 RET 或 HALT
+                let mut cb_cycles = 0u64;
+                while !self.halted && cb_cycles < 10000 {
+                    if self.pc >= self.instructions.len() {
+                        break;
+                    }
+                    self.step();
+                    cb_cycles += 1;
+                    self.cycles += 1;
+                }
+                self.pc = saved_pc;
+                self.halted = saved_halted;
+            }
+
+            // 2e. 执行异步任务的 poll 函数
+            let poll_addrs = async_scheduler.get_poll_addrs();
+            for (poll_addr, _ctx_addr) in poll_addrs {
+                let saved_pc = self.pc;
+                let saved_halted = self.halted;
+                self.pc = poll_addr;
+                self.halted = false;
+                let mut poll_cycles = 0u64;
+                while !self.halted && poll_cycles < 10000 {
+                    if self.pc >= self.instructions.len() {
+                        break;
+                    }
+                    self.step();
+                    poll_cycles += 1;
+                    self.cycles += 1;
+                }
+                self.pc = saved_pc;
+                self.halted = saved_halted;
+            }
+        }
+
+        Ok((self.output.clone(), self.cycles))
     }
 }
 
