@@ -1214,12 +1214,12 @@ mod tests {
 
     #[test]
     fn test_parse_import() {
-        let tokens = tokenize("import { GPIO, UART } from \"snar:hw\";").unwrap();
+        let tokens = tokenize("import { GPIO, UART } from \"hardy:hw\";").unwrap();
         let program = parse(&tokens).unwrap();
         match &program.statements[0].stmt {
             Statement::Import { items, source } => {
                 assert_eq!(items, &vec!["GPIO".to_string(), "UART".to_string()]);
-                assert_eq!(source, "snar:hw");
+                assert_eq!(source, "hardy:hw");
             }
             _ => panic!("期望 Import"),
         }

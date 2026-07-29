@@ -1,4 +1,4 @@
-//! SNARjs 编译器库
+//! HardyScript 编译器库
 //!
 //! JavaScript → COUNPRE64 机器码 / ESP32 C 代码 / Arduino sketch / STM32 HAL / RPi 的完整编译流水线
 //! Phase E: STM32 + 树莓派后端 (AST → C → HAL/sysfs 项目)

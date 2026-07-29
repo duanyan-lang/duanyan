@@ -1,6 +1,6 @@
 //! 串口监视器模块
 //!
-//! Phase B: `snar monitor` 命令
+//! Phase B: `hardy monitor` 命令
 //! 串口监视器，显示 UART 输出
 
 use std::io::{self, Read, Write};
@@ -29,7 +29,7 @@ impl Default for MonitorConfig {
 
 /// 启动监视器（当前为模拟模式）
 pub fn start_monitor(config: &MonitorConfig) -> Result<(), String> {
-    println!("📺 SNARjs 串口监视器");
+    println!("📺 HardyScript 串口监视器");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("  端口: {}", config.port);
     println!("  波特率: {}", config.baud_rate);

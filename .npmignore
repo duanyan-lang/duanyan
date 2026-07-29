@@ -1,0 +1,29 @@
+# Build artifacts
+target/
+*.hex
+*.bin
+*.elf
+
+# Test files
+test_*.js
+test_*.hex
+tests/
+
+# IDE
+.vscode/
+.qoder/
+
+# Git
+.git/
+.gitignore
+
+# Docs (keep README)
+docs/
+
+# Cargo lock (not needed for npm)
+Cargo.lock
+
+# Scripts (keep install.js)
+scripts/build.ps1
+scripts/build.sh
+scripts/first-build.ps1

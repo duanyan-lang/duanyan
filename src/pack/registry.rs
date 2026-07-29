@@ -1,6 +1,6 @@
 //! Registry API 客户端
 //!
-//! 与 SNAR Registry 服务器通信
+//! 与 Hardy Registry 服务器通信
 
 use super::http;
 use super::json::JsonValue;
@@ -57,7 +57,7 @@ impl RegistryClient {
         Ok(PackageInfo { name: pkg_name, description, versions, latest })
     }
 
-    /// 下载指定版本的 .snar 包
+    /// 下载指定版本的 .hardy 包
     pub fn download(&self, name: &str, version: &str) -> Result<Vec<u8>, String> {
         let url = format!("{}/api/packages/{}/{}", self.base_url, name, version);
         let resp = http::http_get(&url)?;
@@ -135,6 +135,6 @@ impl RegistryClient {
 
 /// 从环境变量或配置文件获取 Registry URL
 pub fn get_registry_url() -> String {
-    std::env::var("SNAR_REGISTRY")
+    std::env::var("HARDY_REGISTRY")
         .unwrap_or_else(|_| RegistryClient::default_url())
 }

@@ -1,5 +1,5 @@
 // Phase 5 TypeScript 测试
-// SNARjs 自动剥离类型注解后编译
+// HardyScript 自动剥离类型注解后编译
 
 interface Config {
     speed: number;

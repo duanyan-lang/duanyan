@@ -1,6 +1,6 @@
 //! 手写 JSON 解析器 (零依赖)
 //!
-//! 递归下降解析器，支持 SNAR PACK 所需的完整 JSON 子集
+//! 递归下降解析器，支持 Hardy PACK 所需的完整 JSON 子集
 
 use std::fmt;
 

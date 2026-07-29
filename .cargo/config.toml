@@ -1,2 +1,2 @@
-# SNARjs 编译配置
+# HardyScript 编译配置
 # 交叉编译器运行在宿主机上，不需要指定特殊 target

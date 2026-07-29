@@ -1,4 +1,4 @@
-//! SNARjs Git Operations
+//! HardyScript Git Operations
 //!
 //! Phase H: Git 集成模块
 //! 通过 CLI 封装 git 命令，提供 IDE 和 CLI 可用的 Git 操作接口
@@ -327,14 +327,14 @@ pub fn git_init(dir: &Path) -> Result<String, String> {
 /// 生成 .gitignore 内容
 pub fn git_generate_gitignore(board: &str) -> String {
     let mut content = String::new();
-    content.push_str("# SNARjs 项目 .gitignore\n");
-    content.push_str("# 自动生成 by snar git hooks install\n\n");
+    content.push_str("# HardyScript 项目 .gitignore\n");
+    content.push_str("# 自动生成 by hardy git hooks install\n\n");
 
     content.push_str("# 构建产物\n");
     content.push_str("build/\n*.hex\n*.bin\n*.rom\n*.asm\n*.map\n\n");
 
-    content.push_str("# SNAR 工具链\n");
-    content.push_str(".snar/\nsnar.lock\n\n");
+    content.push_str("# Hardy 工具链\n");
+    content.push_str(".hardy/\nhardy.lock\n\n");
 
     content.push_str("# IDE\n");
     content.push_str(".vscode/\n.idea/\n*.swp\n*.swo\n\n");
@@ -364,19 +364,19 @@ pub fn git_generate_gitignore(board: &str) -> String {
     content
 }
 
-/// 安装 Git Hooks (pre-commit 自动跑 snar lint)
+/// 安装 Git Hooks (pre-commit 自动跑 hardy lint)
 pub fn git_install_hooks(dir: &Path) -> Result<(), String> {
     let hooks_dir = dir.join(".git").join("hooks");
     std::fs::create_dir_all(&hooks_dir)
         .map_err(|e| format!("创建 hooks 目录失败: {}", e))?;
 
     let hook_content = r#"#!/bin/sh
-# SNARjs pre-commit hook
-# 自动运行 snar lint 检查
+# HardyScript pre-commit hook
+# 自动运行 hardy lint 检查
 
-echo "Running snar lint..."
-if command -v snar &> /dev/null; then
-    snar lint
+echo "Running hardy lint..."
+if command -v hardy &> /dev/null; then
+    hardy lint
     if [ $? -ne 0 ]; then
         echo "Lint 检查失败! 请修复错误后再提交。"
         echo "使用 'git commit --no-verify' 跳过检查。"
@@ -384,7 +384,7 @@ if command -v snar &> /dev/null; then
     fi
     echo "Lint 检查通过"
 else
-    echo "Warning: snar 命令未找到，跳过 lint 检查"
+    echo "Warning: hardy 命令未找到，跳过 lint 检查"
 fi
 "#;
 
@@ -554,7 +554,7 @@ mod tests {
     fn test_generate_gitignore() {
         let gi = git_generate_gitignore("esp32");
         assert!(gi.contains("build/"));
-        assert!(gi.contains(".snar/"));
+        assert!(gi.contains(".hardy/"));
         assert!(gi.contains("ESP32"));
     }
 }

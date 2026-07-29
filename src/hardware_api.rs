@@ -1,4 +1,4 @@
-//! 硬件API模块 (snar:hw)
+//! 硬件API模块 (hardy:hw)
 //!
 //! 定义统一的硬件API接口规范和各平台的内存映射
 //! Phase B: 硬件API层
@@ -61,23 +61,23 @@ pub mod counpre64_map {
 /// 硬件API类型
 #[derive(Debug, Clone, PartialEq)]
 pub enum HardwareModule {
-    /// snar:hw - 通用硬件API
+    /// hardy:hw - 通用硬件API
     Core,
-    /// snar:esp32 - ESP32扩展
+    /// hardy:esp32 - ESP32扩展
     Esp32,
-    /// snar:ai - 千漉AI
+    /// hardy:ai - 锻言AI
     Ai,
-    /// snar:sensor - 传感器
+    /// hardy:sensor - 传感器
     Sensor,
 }
 
 impl HardwareModule {
     pub fn from_import_source(source: &str) -> Option<Self> {
         match source {
-            "snar:hw" => Some(Self::Core),
-            "snar:esp32" => Some(Self::Esp32),
-            "snar:ai" => Some(Self::Ai),
-            "snar:sensor" => Some(Self::Sensor),
+            "hardy:hw" => Some(Self::Core),
+            "hardy:esp32" => Some(Self::Esp32),
+            "hardy:ai" => Some(Self::Ai),
+            "hardy:sensor" => Some(Self::Sensor),
             _ => None,
         }
     }
@@ -128,7 +128,7 @@ pub enum HardwareCall {
     /// sensor.read()
     AdcRead { channel: u8 },
     // Phase F: AI API
-    /// Brain.init(model_path) — 加载千漉Mini模型
+    /// Brain.init(model_path) — 加载锻言Mini模型
     BrainInit { path: String },
     /// Brain.classify(input, labels) — 分类推理
     BrainClassify { n_labels: u8 },
@@ -176,9 +176,9 @@ mod tests {
 
     #[test]
     fn test_hardware_module_parse() {
-        assert_eq!(HardwareModule::from_import_source("snar:hw"), Some(HardwareModule::Core));
-        assert_eq!(HardwareModule::from_import_source("snar:esp32"), Some(HardwareModule::Esp32));
-        assert_eq!(HardwareModule::from_import_source("snar:ai"), Some(HardwareModule::Ai));
+        assert_eq!(HardwareModule::from_import_source("hardy:hw"), Some(HardwareModule::Core));
+        assert_eq!(HardwareModule::from_import_source("hardy:esp32"), Some(HardwareModule::Esp32));
+        assert_eq!(HardwareModule::from_import_source("hardy:ai"), Some(HardwareModule::Ai));
         assert_eq!(HardwareModule::from_import_source("unknown"), None);
     }
 

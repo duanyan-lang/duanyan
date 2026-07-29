@@ -1,6 +1,6 @@
-//! SNARjs CI/CD - 持续集成/持续部署
+//! HardyScript CI/CD - 持续集成/持续部署
 //!
-//! Phase H: `snar ci` 命令
+//! Phase H: `hardy ci` 命令
 //! CI模式编译、版本管理、CI模板生成、产物归档
 
 use std::fs;
@@ -167,8 +167,8 @@ pub fn ci_build_all(dir: &Path, config: &CiConfig) -> CiBuildResult {
             let build_dir = dir.join("build").join(target);
             fs::create_dir_all(&build_dir).ok();
 
-            // 调用 SNARjs 编译 (跨平台，不依赖 sh)
-            let output = Command::new("snar")
+            // 调用 HardyScript 编译 (跨平台，不依赖 sh)
+            let output = Command::new("hardy")
                 .args([
                     "build",
                     &entry_path.to_string_lossy(),
@@ -230,7 +230,7 @@ pub fn ci_build_all(dir: &Path, config: &CiConfig) -> CiBuildResult {
 pub fn ci_release(dir: &Path, version: &str) -> Result<ReleaseInfo, String> {
     let build_dir = dir.join("build");
     if !build_dir.exists() {
-        return Err("build/ 目录不存在，请先运行 'snar ci build --all'".to_string());
+        return Err("build/ 目录不存在，请先运行 'hardy ci build --all'".to_string());
     }
 
     let release_dir = dir.join("release").join(version);
@@ -312,7 +312,7 @@ pub fn ci_generate_github_action(dir: &Path) -> Result<(), String> {
     fs::create_dir_all(&workflows_dir)
         .map_err(|e| format!("创建 workflows 目录失败: {}", e))?;
 
-    let content = r#"name: SNARjs CI
+    let content = r#"name: HardyScript CI
 
 on:
   push:
@@ -326,18 +326,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SNARjs
+      - name: Install HardyScript
         run: |
           cargo install --path .
           # 或从 release 下载:
-          # curl -L https://github.com/opensnar/snarjs/releases/latest/download/snar-linux -o /usr/local/bin/snar
-          # chmod +x /usr/local/bin/snar
+          # curl -L https://github.com/openhardy/hardyscript/releases/latest/download/hardy-linux -o /usr/local/bin/hardy
+          # chmod +x /usr/local/bin/hardy
 
       - name: Lint
-        run: snar lint
+        run: hardy lint
 
       - name: Build All Targets
-        run: snar ci build --all
+        run: hardy ci build --all
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -352,11 +352,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SNARjs
+      - name: Install HardyScript
         run: cargo install --path .
 
       - name: Release
-        run: snar ci release --version ${{ github.ref_name }}
+        run: hardy ci release --version ${{ github.ref_name }}
 
       - name: Upload Release
         uses: softprops/action-gh-release@v2
@@ -364,17 +364,17 @@ jobs:
           files: release/${{ github.ref_name }}/*
 "#;
 
-    fs::write(workflows_dir.join("snar-ci.yml"), content)
+    fs::write(workflows_dir.join("hardy-ci.yml"), content)
         .map_err(|e| format!("写入 CI 模板失败: {}", e))?;
 
-    println!("GitHub Actions CI 模板已生成: .github/workflows/snar-ci.yml");
+    println!("GitHub Actions CI 模板已生成: .github/workflows/hardy-ci.yml");
     Ok(())
 }
 
 /// 生成 GitLab CI 模板
 pub fn ci_generate_gitlab_ci(dir: &Path) -> Result<(), String> {
-    let content = r#"# SNARjs GitLab CI 配置
-# 自动生成 by snar ci template --gitlab
+    let content = r#"# HardyScript GitLab CI 配置
+# 自动生成 by hardy ci template --gitlab
 
 stages:
   - lint
@@ -382,12 +382,12 @@ stages:
   - release
 
 variables:
-  SNAR_VERSION: "latest"
+  HARDY_VERSION: "latest"
 
 lint:
   stage: lint
   script:
-    - snar lint
+    - hardy lint
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -395,7 +395,7 @@ lint:
 build:
   stage: build
   script:
-    - snar ci build --all
+    - hardy ci build --all
   artifacts:
     paths:
       - build/
@@ -404,7 +404,7 @@ build:
 release:
   stage: release
   script:
-    - snar ci release --version $CI_COMMIT_TAG
+    - hardy ci release --version $CI_COMMIT_TAG
   artifacts:
     paths:
       - release/
@@ -423,10 +423,10 @@ release:
 pub fn ci_archive(dir: &Path, version: &str) -> Result<String, String> {
     let release_dir = dir.join("release").join(version);
     if !release_dir.exists() {
-        return Err("release 目录不存在，请先运行 'snar ci release'".to_string());
+        return Err("release 目录不存在，请先运行 'hardy ci release'".to_string());
     }
 
-    let _archive_name = format!("snar-release-{}.tar.gz", version);
+    let _archive_name = format!("hardy-release-{}.tar.gz", version);
 
     use std::io::Write;
     let mut total_files = 0u32;
@@ -479,7 +479,7 @@ pub fn ci_archive(dir: &Path, version: &str) -> Result<String, String> {
 
     // gzip压缩 (简易: 直接写tar，因为flate2可能不在deps中)
     // 这里用 .tar 替代 .tar.gz，避免外部依赖
-    let archive_path = dir.join("release").join(format!("snar-release-{}.tar", version));
+    let archive_path = dir.join("release").join(format!("hardy-release-{}.tar", version));
     let mut file = fs::File::create(&archive_path)
         .map_err(|e| format!("创建归档文件失败: {}", e))?;
     file.write_all(&tar_data)
@@ -596,17 +596,17 @@ mod tests {
 
     #[test]
     fn test_github_action_template() {
-        let dir = std::env::temp_dir().join("snar_ci_test_gh");
+        let dir = std::env::temp_dir().join("hardy_ci_test_gh");
         fs::create_dir_all(&dir).ok();
         let result = ci_generate_github_action(&dir);
         assert!(result.is_ok());
-        assert!(dir.join(".github/workflows/snar-ci.yml").exists());
+        assert!(dir.join(".github/workflows/hardy-ci.yml").exists());
         fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn test_gitlab_ci_template() {
-        let dir = std::env::temp_dir().join("snar_ci_test_gl");
+        let dir = std::env::temp_dir().join("hardy_ci_test_gl");
         fs::create_dir_all(&dir).ok();
         let result = ci_generate_gitlab_ci(&dir);
         assert!(result.is_ok());
@@ -617,7 +617,7 @@ mod tests {
     #[test]
     fn test_simple_hash() {
         // Create a temp file and hash it
-        let dir = std::env::temp_dir().join("snar_hash_test");
+        let dir = std::env::temp_dir().join("hardy_hash_test");
         fs::create_dir_all(&dir).ok();
         let path = dir.join("test.txt");
         fs::write(&path, "hello world").ok();

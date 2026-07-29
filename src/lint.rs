@@ -1,6 +1,6 @@
-//! SNARjs Lint - 代码规范检查器
+//! HardyScript Lint - 代码规范检查器
 //!
-//! Phase H: `snar lint` 命令
+//! Phase H: `hardy lint` 命令
 //! 可扩展规则系统 + 自动修复 + 资源约束检查
 
 use std::collections::HashMap;
@@ -93,9 +93,9 @@ impl LintConfig {
         }
     }
 
-    /// 从 .snar/lint.json 加载
+    /// 从 .hardy/lint.json 加载
     pub fn load(dir: &Path) -> Self {
-        let path = dir.join(".snar").join("lint.json");
+        let path = dir.join(".hardy").join("lint.json");
         if !path.exists() {
             return Self::default_config();
         }
@@ -177,7 +177,7 @@ pub fn builtin_rules() -> Vec<LintRule> {
         LintRule { id: "no-magic-numbers".into(), description: "避免魔数 (除0/1/2外)".into(), severity: Severity::Info, fixable: false },
         LintRule { id: "require-hardware-init".into(), description: "必须有 hardware.init() 调用".into(), severity: Severity::Warning, fixable: false },
         LintRule { id: "no-blocking-loops".into(), description: "禁止无 delay/yield 的无限循环".into(), severity: Severity::Error, fixable: false },
-        LintRule { id: "prefer-hardware-api".into(), description: "使用 SNARjs API".into(), severity: Severity::Info, fixable: false },
+        LintRule { id: "prefer-hardware-api".into(), description: "使用 HardyScript API".into(), severity: Severity::Info, fixable: false },
         LintRule { id: "resource-budget".into(), description: "RAM/Flash 不超板子上限".into(), severity: Severity::Error, fixable: false },
         LintRule { id: "pin-valid".into(), description: "引脚号在板子合法范围内".into(), severity: Severity::Error, fixable: false },
         LintRule { id: "no-dead-code".into(), description: "不可达代码 (return后的语句)".into(), severity: Severity::Warning, fixable: false },
@@ -441,7 +441,7 @@ pub fn lint_file(file_path: &Path, source: &str, config: &LintConfig) -> LintRes
 
     // brain-timeout-required: AI推理调用必须设置超时保护
     if !config.is_rule_disabled("brain-timeout-required") {
-        let ai_patterns = ["snarAI.infer(", "snarAI.predict(", "model.infer(", "model.predict(", "ai.run("];
+        let ai_patterns = ["hardyAI.infer(", "hardyAI.predict(", "model.infer(", "model.predict(", "ai.run("];
         for (line_idx, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
             let line_num = (line_idx + 1) as u32;
@@ -464,7 +464,7 @@ pub fn lint_file(file_path: &Path, source: &str, config: &LintConfig) -> LintRes
                             file: file_name.clone(),
                             line: line_num,
                             column: 1,
-                            suggestion: Some("在调用前设置 timeout 参数，例如: snarAI.infer(data, { timeout: 200 })".into()),
+                            suggestion: Some("在调用前设置 timeout 参数，例如: hardyAI.infer(data, { timeout: 200 })".into()),
                             fix: None,
                         });
                     }
@@ -840,7 +840,7 @@ mod tests {
     #[test]
     fn test_lint_brain_timeout() {
         let config = LintConfig::default_config();
-        let source = "let result = snarAI.infer(sensorData);";
+        let source = "let result = hardyAI.infer(sensorData);";
         let result = lint_file(Path::new("test.js"), source, &config);
         assert!(result.diagnostics.iter().any(|d| d.rule_id == "brain-timeout-required"));
     }
@@ -848,7 +848,7 @@ mod tests {
     #[test]
     fn test_lint_brain_timeout_with_timeout_ok() {
         let config = LintConfig::default_config();
-        let source = "let opts = { timeout: 200 };\nlet result = snarAI.infer(sensorData);";
+        let source = "let opts = { timeout: 200 };\nlet result = hardyAI.infer(sensorData);";
         let result = lint_file(Path::new("test.js"), source, &config);
         assert!(!result.diagnostics.iter().any(|d| d.rule_id == "brain-timeout-required"));
     }

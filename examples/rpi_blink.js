@@ -1,7 +1,7 @@
-// SNARjs Raspberry Pi 示例 — LED 闪烁 (GPIO 17)
-// 编译: snar build examples/rpi_blink.js --target rpi
+// HardyScript Raspberry Pi 示例 — LED 闪烁 (GPIO 17)
+// 编译: hardy build examples/rpi_blink.js --target rpi
 
-import { GPIO, Timer } from "snar:hw";
+import { GPIO, Timer } from "hardy:hw";
 
 let led = GPIO.output(17);
 

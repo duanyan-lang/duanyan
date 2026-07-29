@@ -1,7 +1,7 @@
 //! Espruino / Moddable 兼容预处理模块
 //!
 //! Phase C: 跨引擎语法兼容预处理
-//! 自动将 Espruino/Moddable 风格 API 转换为 SNARjs 标准模块化写法
+//! 自动将 Espruino/Moddable 风格 API 转换为 HardyScript 标准模块化写法
 
 /// 兼容层警告
 #[derive(Debug, Clone)]
@@ -26,7 +26,7 @@ impl std::fmt::Display for CompatWarning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "⚠️  行 {}: 检测到 {:?} 旧式 API '{}', 建议改用 SNAR 标准写法: {}",
+            "⚠️  行 {}: 检测到 {:?} 旧式 API '{}', 建议改用 Hardy 标准写法: {}",
             self.line, self.api_type, self.original, self.suggestion
         )
     }
@@ -45,7 +45,7 @@ pub struct PreprocessResult {
     pub required_imports: Vec<String>,
 }
 
-/// Espruino → SNARjs 转换规则
+/// Espruino → HardyScript 转换规则
 #[derive(Debug, Clone)]
 struct TransformRule {
     /// 匹配模式 (简单字符串匹配)
@@ -63,57 +63,57 @@ fn get_transform_rules() -> Vec<TransformRule> {
         // Espruino GPIO API
         TransformRule {
             pattern: "pinMode(",
-            replacement: "__snar_gpio__.pinMode(",
-            import_module: "snar:hw",
+            replacement: "__hardy_gpio__.pinMode(",
+            import_module: "hardy:hw",
             api_type: LegacyApiType::Espruino,
         },
         TransformRule {
             pattern: "digitalWrite(",
-            replacement: "__snar_gpio__.digitalWrite(",
-            import_module: "snar:hw",
+            replacement: "__hardy_gpio__.digitalWrite(",
+            import_module: "hardy:hw",
             api_type: LegacyApiType::Espruino,
         },
         TransformRule {
             pattern: "digitalRead(",
-            replacement: "__snar_gpio__.digitalRead(",
-            import_module: "snar:hw",
+            replacement: "__hardy_gpio__.digitalRead(",
+            import_module: "hardy:hw",
             api_type: LegacyApiType::Espruino,
         },
         TransformRule {
             pattern: "analogRead(",
-            replacement: "__snar_adc__.read(",
-            import_module: "snar:hw",
+            replacement: "__hardy_adc__.read(",
+            import_module: "hardy:hw",
             api_type: LegacyApiType::Espruino,
         },
         TransformRule {
             pattern: "analogWrite(",
-            replacement: "__snar_pwm__.write(",
-            import_module: "snar:hw",
+            replacement: "__hardy_pwm__.write(",
+            import_module: "hardy:hw",
             api_type: LegacyApiType::Espruino,
         },
         // Espruino Timer API
         TransformRule {
             pattern: "setTimeout(",
-            replacement: "__snar_timer__.setTimeout(",
-            import_module: "snar:hw",
+            replacement: "__hardy_timer__.setTimeout(",
+            import_module: "hardy:hw",
             api_type: LegacyApiType::Espruino,
         },
         TransformRule {
             pattern: "setInterval(",
-            replacement: "__snar_timer__.setInterval(",
-            import_module: "snar:hw",
+            replacement: "__hardy_timer__.setInterval(",
+            import_module: "hardy:hw",
             api_type: LegacyApiType::Espruino,
         },
         TransformRule {
             pattern: "clearTimeout(",
-            replacement: "__snar_timer__.clearTimeout(",
-            import_module: "snar:hw",
+            replacement: "__hardy_timer__.clearTimeout(",
+            import_module: "hardy:hw",
             api_type: LegacyApiType::Espruino,
         },
         TransformRule {
             pattern: "clearInterval(",
-            replacement: "__snar_timer__.clearInterval(",
-            import_module: "snar:hw",
+            replacement: "__hardy_timer__.clearInterval(",
+            import_module: "hardy:hw",
             api_type: LegacyApiType::Espruino,
         },
         // Espruino Serial API
@@ -174,7 +174,7 @@ pub fn preprocess(source: &str) -> PreprocessResult {
     // 如果需要注入模块，在文件开头添加
     if !required_imports.is_empty() {
         let import_line = format!(
-            "// [SNARjs 自动注入] 兼容旧式 API\nconst __snar_gpio__ = {{ pinMode: GPIO.output, digitalWrite: (p,v) => v ? GPIO.high(p) : GPIO.low(p), digitalRead: GPIO.read }};\nconst __snar_adc__ = {{ read: ADC.read }};\nconst __snar_pwm__ = {{ write: PWM.duty }};\nconst __snar_timer__ = {{ setTimeout: Timer.setTimeout, setInterval: Timer.setInterval, clearTimeout: Timer.clear, clearInterval: Timer.clear }};\n"
+            "// [HardyScript 自动注入] 兼容旧式 API\nconst __hardy_gpio__ = {{ pinMode: GPIO.output, digitalWrite: (p,v) => v ? GPIO.high(p) : GPIO.low(p), digitalRead: GPIO.read }};\nconst __hardy_adc__ = {{ read: ADC.read }};\nconst __hardy_pwm__ = {{ write: PWM.duty }};\nconst __hardy_timer__ = {{ setTimeout: Timer.setTimeout, setInterval: Timer.setInterval, clearTimeout: Timer.clear, clearInterval: Timer.clear }};\n"
         );
         result_source = format!("{}{}", import_line, result_source);
     }
@@ -190,14 +190,14 @@ pub fn preprocess(source: &str) -> PreprocessResult {
 /// 获取 API 建议
 fn get_suggestion(pattern: &str) -> String {
     match pattern {
-        "pinMode(" => "const gpio = require('snar:hw').GPIO; gpio.output(pin)".to_string(),
+        "pinMode(" => "const gpio = require('hardy:hw').GPIO; gpio.output(pin)".to_string(),
         "digitalWrite(" => "gpio.write(pin, value)".to_string(),
         "digitalRead(" => "gpio.read(pin)".to_string(),
-        "analogRead(" => "const adc = require('snar:hw').ADC; adc.read(channel)".to_string(),
-        "analogWrite(" => "const pwm = require('snar:hw').PWM; pwm.duty(pin, value)".to_string(),
-        "setTimeout(" => "const Timer = require('snar:hw').Timer; Timer.delay(ms)".to_string(),
+        "analogRead(" => "const adc = require('hardy:hw').ADC; adc.read(channel)".to_string(),
+        "analogWrite(" => "const pwm = require('hardy:hw').PWM; pwm.duty(pin, value)".to_string(),
+        "setTimeout(" => "const Timer = require('hardy:hw').Timer; Timer.delay(ms)".to_string(),
         "setInterval(" => "// 使用 while(true) + Timer.delay() 替代".to_string(),
-        _ => "使用 snar:hw 标准模块".to_string(),
+        _ => "使用 hardy:hw 标准模块".to_string(),
     }
 }
 
@@ -211,10 +211,10 @@ pub fn transform_moddable_import(source: &str) -> (String, Vec<CompatWarning>) {
     // Moddable: import Timer from "timer"
 
     let moddable_patterns = [
-        ("import Digital from \"pins/digital", "const GPIO = require('snar:hw').GPIO"),
-        ("import Analog from \"pins/analog", "const ADC = require('snar:hw').ADC"),
-        ("import PWM from \"pwm", "const PWM = require('snar:hw').PWM"),
-        ("import Timer from \"timer", "const Timer = require('snar:hw').Timer"),
+        ("import Digital from \"pins/digital", "const GPIO = require('hardy:hw').GPIO"),
+        ("import Analog from \"pins/analog", "const ADC = require('hardy:hw').ADC"),
+        ("import PWM from \"pwm", "const PWM = require('hardy:hw').PWM"),
+        ("import Timer from \"timer", "const Timer = require('hardy:hw').Timer"),
         ("import Serial from \"serial", "// Serial → console.log"),
     ];
 
@@ -232,7 +232,7 @@ pub fn transform_moddable_import(source: &str) -> (String, Vec<CompatWarning>) {
                     suggestion: replacement.to_string(),
                     api_type: LegacyApiType::Moddable,
                 });
-                // 注释掉原 import，添加 SNAR 标准 import
+                // 注释掉原 import，添加 Hardy 标准 import
                 current_line = format!("// [Moddable兼容] {}\n{}", line.trim(), replacement);
             }
         }
@@ -257,7 +257,7 @@ digitalWrite(2, 1);
         let result = preprocess(source);
         assert!(result.has_legacy_api);
         assert_eq!(result.warnings.len(), 2);
-        assert!(result.source.contains("__snar_gpio__"));
+        assert!(result.source.contains("__hardy_gpio__"));
     }
 
     #[test]
@@ -266,7 +266,7 @@ digitalWrite(2, 1);
         let (result, warnings) = transform_moddable_import(source);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].api_type, LegacyApiType::Moddable);
-        assert!(result.contains("require('snar:hw')"));
+        assert!(result.contains("require('hardy:hw')"));
     }
 
     #[test]
@@ -285,6 +285,6 @@ console.log(x);
         let source = "setTimeout(() => console.log('hi'), 1000);";
         let result = preprocess(source);
         assert!(result.has_legacy_api);
-        assert!(result.source.contains("__snar_timer__"));
+        assert!(result.source.contains("__hardy_timer__"));
     }
 }

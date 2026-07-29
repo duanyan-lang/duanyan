@@ -1,4 +1,4 @@
-//! snar.json 项目清单管理
+//! hardy.json 项目清单管理
 //!
 //! 读写项目配置文件，管理依赖声明
 
@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 use super::json::JsonValue;
 
-/// 项目清单 (snar.json)
+/// 项目清单 (hardy.json)
 #[derive(Debug, Clone)]
 pub struct Manifest {
     pub name: String,
@@ -18,14 +18,14 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// 从当前目录读取 snar.json
+    /// 从当前目录读取 hardy.json
     pub fn load(dir: &Path) -> Result<Manifest, String> {
-        let path = dir.join("snar.json");
+        let path = dir.join("hardy.json");
         if !path.exists() {
-            return Err(format!("未找到 snar.json，请先运行 'snar pack init'"));
+            return Err(format!("未找到 hardy.json，请先运行 'hardy pack init'"));
         }
         let content = fs::read_to_string(&path)
-            .map_err(|e| format!("读取 snar.json 失败: {}", e))?;
+            .map_err(|e| format!("读取 hardy.json 失败: {}", e))?;
         Self::from_str(&content)
     }
 
@@ -52,12 +52,12 @@ impl Manifest {
         Ok(Manifest { name, version, description, main, author, dependencies })
     }
 
-    /// 保存为 snar.json
+    /// 保存为 hardy.json
     pub fn save(&self, dir: &Path) -> Result<(), String> {
         let json = self.to_json();
-        let path = dir.join("snar.json");
+        let path = dir.join("hardy.json");
         fs::write(&path, json)
-            .map_err(|e| format!("写入 snar.json 失败: {}", e))
+            .map_err(|e| format!("写入 hardy.json 失败: {}", e))
     }
 
     /// 序列化为 JSON

@@ -217,7 +217,7 @@ fn sanitize_sketch_name(name: &str) -> String {
     let sanitized: String = name.chars()
         .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
         .collect();
-    if sanitized.is_empty() { "snar_sketch".to_string() } else { sanitized }
+    if sanitized.is_empty() { "hardy_sketch".to_string() } else { sanitized }
 }
 
 #[cfg(test)]
@@ -237,7 +237,7 @@ mod tests {
     fn test_sanitize_sketch_name() {
         assert_eq!(sanitize_sketch_name("my-sketch"), "my_sketch");
         assert_eq!(sanitize_sketch_name("hello.js"), "hello_js");
-        assert_eq!(sanitize_sketch_name(""), "snar_sketch");
+        assert_eq!(sanitize_sketch_name(""), "hardy_sketch");
         assert_eq!(sanitize_sketch_name("blink"), "blink");
     }
 

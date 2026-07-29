@@ -1,4 +1,4 @@
-//! SNAR PACK - 猎包管理器
+//! Hardy PACK - 猎包管理器
 //!
 //! 子命令:
 //!   init    - 初始化猎物巢穴 (项目)
@@ -16,7 +16,7 @@ pub mod lockfile;
 pub mod archive;
 pub mod registry;
 pub mod resolver;
-pub mod snarrc;
+pub mod hardyrc;
 
 use std::path::Path;
 use std::fs;
@@ -49,12 +49,12 @@ pub fn dispatch(args: &[String]) {
 
 /// 打印 pack 子命令帮助
 pub fn print_pack_usage() {
-    println!("SNAR PACK - 猎包管理器");
+    println!("Hardy PACK - 猎包管理器");
     println!();
-    println!("用法: snar pack <指令>");
+    println!("用法: hardy pack <指令>");
     println!();
     println!("猎包指令:");
-    println!("  init            初始化猎物巢穴 (创建 snar.json)");
+    println!("  init            初始化猎物巢穴 (创建 hardy.json)");
     println!("  install [name]  安装猎包 (捕获依赖), 简写: i");
     println!("  publish         发布猎包 (贡献猎物)");
     println!("  update [name]   更新猎包");
@@ -62,26 +62,26 @@ pub fn print_pack_usage() {
     println!("  list            查看已捕获的猎包, 简写: ls");
     println!("  search <query>  搜索猎包 (Registry)");
     println!("  hunt [file]     出击狩猎 (install + run)");
-    println!("  lock            生成依赖锁定文件 (snar.lock)");
+    println!("  lock            生成依赖锁定文件 (hardy.lock)");
     println!("  verify          验证依赖完整性");
     println!();
     println!("示例:");
-    println!("  snar pack init");
-    println!("  snar pack i math-utils");
-    println!("  snar pack install");
-    println!("  snar pack publish");
-    println!("  snar pack hunt index.js");
+    println!("  hardy pack init");
+    println!("  hardy pack i math-utils");
+    println!("  hardy pack install");
+    println!("  hardy pack publish");
+    println!("  hardy pack hunt index.js");
 }
 
 // =============================================================================
-// snar pack init - 初始化猎物巢穴
+// hardy pack init - 初始化猎物巢穴
 // =============================================================================
 fn cmd_init() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
 
-    // 检查是否已有 snar.json
-    if cwd.join("snar.json").exists() {
-        eprintln!("snar.json 已存在，跳过初始化");
+    // 检查是否已有 hardy.json
+    if cwd.join("hardy.json").exists() {
+        eprintln!("hardy.json 已存在，跳过初始化");
         return;
     }
 
@@ -105,25 +105,25 @@ fn cmd_init() {
     m.main = main;
     m.author = author;
 
-    // 创建 snar.json
+    // 创建 hardy.json
     m.save(&cwd).unwrap_or_else(|e| {
-        eprintln!("写入 snar.json 失败: {}", e);
+        eprintln!("写入 hardy.json 失败: {}", e);
         std::process::exit(1);
     });
 
-    // 创建 .snar 目录
-    let snar_dir = cwd.join(".snar").join("packages");
-    fs::create_dir_all(&snar_dir).ok();
+    // 创建 .hardy 目录
+    let hardy_dir = cwd.join(".hardy").join("packages");
+    fs::create_dir_all(&hardy_dir).ok();
 
     // 创建 .gitignore (如果不存在)
     let gitignore = cwd.join(".gitignore");
     if !gitignore.exists() {
-        fs::write(&gitignore, ".snar/\nsnar.lock\n").ok();
+        fs::write(&gitignore, ".hardy/\nhardy.lock\n").ok();
     }
 
     println!();
-    println!("snar.json 已创建");
-    println!(".snar/ 目录已创建");
+    println!("hardy.json 已创建");
+    println!(".hardy/ 目录已创建");
     println!();
     println!("开始狩猎吧!");
 }
@@ -142,13 +142,13 @@ fn prompt_input(prompt: &str, default: &str) -> String {
 }
 
 // =============================================================================
-// snar pack install - 安装猎包
+// hardy pack install - 安装猎包
 // =============================================================================
 fn cmd_install(args: &[String]) {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
 
     if args.is_empty() {
-        // 安装所有依赖 (从 snar.json)
+        // 安装所有依赖 (从 hardy.json)
         install_all(&cwd);
     } else {
         // 安装指定包
@@ -182,7 +182,7 @@ fn install_all(dir: &Path) {
     }
 
     lockfile.save(dir).unwrap_or_else(|e| {
-        eprintln!("写入 snar.lock 失败: {}", e);
+        eprintln!("写入 hardy.lock 失败: {}", e);
     });
 
     println!();
@@ -229,14 +229,14 @@ fn install_package(
     let version = constraint.best_match(&pkg_info.versions)
         .ok_or_else(|| format!("无匹配版本 (可用: {})", pkg_info.versions.join(", ")))?;
 
-    // 3. 下载 .snar 包
+    // 3. 下载 .hardy 包
     let data = client.download(name, &version)?;
 
     // 4. 校验和
     let checksum = archive::data_checksum(&data);
 
-    // 5. 解压到 .snar/packages/{name}/
-    let target = dir.join(".snar").join("packages").join(name);
+    // 5. 解压到 .hardy/packages/{name}/
+    let target = dir.join(".hardy").join("packages").join(name);
     fs::create_dir_all(&target)
         .map_err(|e| format!("创建目录失败: {}", e))?;
     archive::unpack(&data, &target)?;
@@ -252,7 +252,7 @@ fn install_package(
 }
 
 // =============================================================================
-// snar pack publish - 发布猎包
+// hardy pack publish - 发布猎包
 // =============================================================================
 fn cmd_publish() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -272,7 +272,7 @@ fn cmd_publish() {
     println!("  包大小: {} bytes", data.len());
 
     // 上传 - 支持自定义 registry
-    let url = snarrc::get_effective_registry_url(&cwd);
+    let url = hardyrc::get_effective_registry_url(&cwd);
     let client = RegistryClient::new(&url);
     let metadata = manifest.to_json();
 
@@ -289,7 +289,7 @@ fn cmd_publish() {
 }
 
 // =============================================================================
-// snar pack update - 更新猎包
+// hardy pack update - 更新猎包
 // =============================================================================
 fn cmd_update(args: &[String]) {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -370,12 +370,12 @@ fn update_one(
 }
 
 // =============================================================================
-// snar pack remove - 移除猎包
+// hardy pack remove - 移除猎包
 // =============================================================================
 fn cmd_remove(args: &[String]) {
     if args.is_empty() {
         eprintln!("请指定要释放的猎包名称");
-        eprintln!("用法: snar pack remove <name>");
+        eprintln!("用法: hardy pack remove <name>");
         std::process::exit(1);
     }
 
@@ -398,7 +398,7 @@ fn cmd_remove(args: &[String]) {
     lockfile.save(&cwd).ok();
 
     // 删除文件
-    let pkg_dir = cwd.join(".snar").join("packages").join(name);
+    let pkg_dir = cwd.join(".hardy").join("packages").join(name);
     if pkg_dir.exists() {
         fs::remove_dir_all(&pkg_dir).ok();
     }
@@ -407,7 +407,7 @@ fn cmd_remove(args: &[String]) {
 }
 
 // =============================================================================
-// snar pack list - 猎物清单
+// hardy pack list - 猎物清单
 // =============================================================================
 fn cmd_list() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -415,7 +415,7 @@ fn cmd_list() {
 
     if lockfile.packages.is_empty() {
         println!("猎物清单为空");
-        println!("运行 'snar pack install' 捕获猎包");
+        println!("运行 'hardy pack install' 捕获猎包");
         return;
     }
 
@@ -436,13 +436,13 @@ fn cmd_list() {
 }
 
 // =============================================================================
-// snar pack search - 搜索猎包
+// hardy pack search - 搜索猎包
 // =============================================================================
 fn cmd_search(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar pack search: 请指定搜索关键词");
-        eprintln!("用法: snar pack search <query>");
-        eprintln!("示例: snar pack search motor");
+        eprintln!("hardy pack search: 请指定搜索关键词");
+        eprintln!("用法: hardy pack search <query>");
+        eprintln!("示例: hardy pack search motor");
         std::process::exit(1);
     }
 
@@ -480,7 +480,7 @@ fn cmd_search(args: &[String]) {
 }
 
 // =============================================================================
-// snar pack hunt - 出击狩猎 (install + run)
+// hardy pack hunt - 出击狩猎 (install + run)
 // =============================================================================
 fn cmd_hunt(args: &[String]) {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -539,7 +539,7 @@ fn cmd_hunt(args: &[String]) {
 }
 
 // =============================================================================
-// snar pack lock - 生成锁定文件
+// hardy pack lock - 生成锁定文件
 // =============================================================================
 fn cmd_lock() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -550,7 +550,7 @@ fn cmd_lock() {
 
     println!("生成依赖锁定文件...");
 
-    let client = RegistryClient::new(&snarrc::get_effective_registry_url(&cwd));
+    let client = RegistryClient::new(&hardyrc::get_effective_registry_url(&cwd));
     let mut lockfile = Lockfile { packages: Vec::new() };
 
     for (name, constraint_str) in &manifest.dependencies {
@@ -573,15 +573,15 @@ fn cmd_lock() {
     }
 
     lockfile.save(&cwd).unwrap_or_else(|e| {
-        eprintln!("写入 snar.lock 失败: {}", e);
+        eprintln!("写入 hardy.lock 失败: {}", e);
         std::process::exit(1);
     });
 
-    println!("snar.lock 已生成 ({} 个依赖)", lockfile.packages.len());
+    println!("hardy.lock 已生成 ({} 个依赖)", lockfile.packages.len());
 }
 
 // =============================================================================
-// snar pack verify - 验证依赖完整性
+// hardy pack verify - 验证依赖完整性
 // =============================================================================
 fn cmd_verify() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -596,7 +596,7 @@ fn cmd_verify() {
 
     for (name, _constraint) in &manifest.dependencies {
         if let Some(locked) = lockfile.find(name) {
-            let pkg_dir = cwd.join(".snar").join("packages").join(name);
+            let pkg_dir = cwd.join(".hardy").join("packages").join(name);
             if pkg_dir.exists() {
                 println!("  {} {} ... OK", name, locked.version);
             } else {
@@ -612,6 +612,6 @@ fn cmd_verify() {
     if ok {
         println!("\n所有依赖验证通过");
     } else {
-        println!("\n部分依赖缺失，运行 'snar pack install' 修复");
+        println!("\n部分依赖缺失，运行 'hardy pack install' 修复");
     }
 }

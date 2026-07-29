@@ -1,6 +1,6 @@
 //! 开发板检测与管理模块
 //!
-//! Phase B: `snar board list/info` 命令
+//! Phase B: `hardy board list/info` 命令
 //! USB串口自动检测板子类型
 
 use std::fmt;
@@ -41,7 +41,7 @@ pub fn get_known_boards() -> Vec<BoardInfo> {
     vec![
         BoardInfo {
             name: "COUNPRE64-FPGA".to_string(),
-            description: "Gowin GW1NSR-4C FPGA 开发板 (SNARjs 原生目标)".to_string(),
+            description: "Gowin GW1NSR-4C FPGA 开发板 (HardyScript 原生目标)".to_string(),
             mcu: "COUNPRE64 (Gowin GW1NSR-4C)".to_string(),
             frequency_mhz: 27,
             ram_kb: 32,
@@ -201,7 +201,7 @@ pub fn get_known_boards() -> Vec<BoardInfo> {
         },
         BoardInfo {
             name: "Arduino Nano 33 BLE".to_string(),
-            description: "nRF52840 ARM Cortex-M4F (ai tier, 可跑千漉Mini)".to_string(),
+            description: "nRF52840 ARM Cortex-M4F (ai tier, 可跑锻言Mini)".to_string(),
             mcu: "nRF52840".to_string(),
             frequency_mhz: 64,
             ram_kb: 256,
@@ -330,14 +330,14 @@ pub fn cmd_board_set(board_name: &str) {
             println!("✅ 默认开发板已设置: {}", board.name);
             println!("   {}", board.description);
             println!();
-            println!("   💡 下次 'snar build' 将自动使用此板子作为目标");
-            println!("   💡 配置文件: .snar/board (当前目录)");
-            // 写入 .snar/board 文件
-            let snar_dir = std::path::Path::new(".snar");
-            if !snar_dir.exists() {
-                let _ = std::fs::create_dir_all(snar_dir);
+            println!("   💡 下次 'hardy build' 将自动使用此板子作为目标");
+            println!("   💡 配置文件: .hardy/board (当前目录)");
+            // 写入 .hardy/board 文件
+            let hardy_dir = std::path::Path::new(".hardy");
+            if !hardy_dir.exists() {
+                let _ = std::fs::create_dir_all(hardy_dir);
             }
-            let _ = std::fs::write(snar_dir.join("board"), &board.name);
+            let _ = std::fs::write(hardy_dir.join("board"), &board.name);
             return;
         }
     }

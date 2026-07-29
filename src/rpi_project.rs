@@ -53,7 +53,7 @@ pub fn generate_rpi_project(
 fn generate_makefile(stem: &str) -> String {
     let name = sanitize_name(stem);
     format!(
-r#"# SNARjs Raspberry Pi Makefile (auto-generated)
+r#"# HardyScript Raspberry Pi Makefile (auto-generated)
 CC      = gcc
 TARGET  = {name}
 
@@ -90,7 +90,7 @@ fn generate_run_script(stem: &str) -> String {
     let name = sanitize_name(stem);
     format!(
 r#"#!/bin/bash
-# SNARjs Raspberry Pi 部署脚本 (auto-generated)
+# HardyScript Raspberry Pi 部署脚本 (auto-generated)
 # 用法: ./run.sh [pi_host] [pi_user]
 #
 # 示例: ./run.sh 192.168.1.100 pi
@@ -121,7 +121,7 @@ fn sanitize_name(name: &str) -> String {
     let s: String = name.chars()
         .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
         .collect();
-    if s.is_empty() { "snar_app".to_string() } else { s }
+    if s.is_empty() { "hardy_app".to_string() } else { s }
 }
 
 #[cfg(test)]
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn test_sanitize_name() {
         assert_eq!(sanitize_name("my-app"), "my_app");
-        assert_eq!(sanitize_name(""), "snar_app");
+        assert_eq!(sanitize_name(""), "hardy_app");
     }
 
     #[test]

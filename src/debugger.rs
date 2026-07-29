@@ -1,4 +1,4 @@
-//! snar debug - 交互式调试器
+//! hardy debug - 交互式调试器
 //!
 //! 单步执行、断点、寄存器/内存查看、源码定位
 
@@ -38,14 +38,14 @@ impl Debugger {
     }
 
     pub fn run_interactive(&mut self) {
-        println!("🪤 SNAR 调试器已启动");
+        println!("🪤 Hardy 调试器已启动");
         println!("输入 help 查看命令列表\n");
 
         self.show_context();
 
         let stdin = io::stdin();
         loop {
-            print!("snar> ");
+            print!("hardy> ");
             io::stdout().flush().unwrap();
 
             let mut input = String::new();
@@ -271,7 +271,7 @@ impl Debugger {
     }
 
     fn cmd_help(&self) {
-        println!("🪤 SNAR 调试器命令:");
+        println!("🪤 Hardy 调试器命令:");
         println!();
         println!("  s, step          单步执行一条指令");
         println!("  c, continue      继续执行到断点或终止");

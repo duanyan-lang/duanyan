@@ -1,7 +1,7 @@
 //! 项目模板生成模块
 //!
-//! Phase B: `snar new` 命令
-//! 快速创建 SNARjs 项目模板
+//! Phase B: `hardy new` 命令
+//! 快速创建 HardyScript 项目模板
 
 use std::fs;
 use std::path::Path;
@@ -77,7 +77,7 @@ pub fn create_project(name: &str, template: &ProjectTemplate, target_dir: &Path,
         "counpre64"
     };
 
-    // 创建 snar.json 配置
+    // 创建 hardy.json 配置
     let config = format!(
         r#"{{
     "name": "{}",
@@ -95,7 +95,7 @@ pub fn create_project(name: &str, template: &ProjectTemplate, target_dir: &Path,
         board.unwrap_or("counpre64-fpga"),
         name
     );
-    write_file(&project_dir.join("snar.json"), &config)?;
+    write_file(&project_dir.join("hardy.json"), &config)?;
 
     // 创建 .gitignore
     write_file(
@@ -125,7 +125,7 @@ fn write_file(path: &Path, content: &str) -> Result<(), String> {
 }
 
 fn generate_blank_template() -> String {
-    r#"// SNARjs 空白项目
+    r#"// HardyScript 空白项目
 // 在此编写你的代码
 
 let x = 42;
@@ -136,10 +136,10 @@ console.log(x);
 }
 
 fn generate_blinky_template() -> String {
-    r#"// SNARjs LED 闪烁示例
-// 使用 snar:hw 硬件API
+    r#"// HardyScript LED 闪烁示例
+// 使用 hardy:hw 硬件API
 
-import { GPIO, Timer } from "snar:hw";
+import { GPIO, Timer } from "hardy:hw";
 
 let led = GPIO.output(13);
 
@@ -154,13 +154,13 @@ while (true) {
 }
 
 fn generate_uart_template() -> String {
-    r#"// SNARjs 串口通信示例
-// 使用 snar:hw 硬件API
+    r#"// HardyScript 串口通信示例
+// 使用 hardy:hw 硬件API
 
-import { UART } from "snar:hw";
+import { UART } from "hardy:hw";
 
 UART.init(115200);
-UART.write("Hello from SNARjs!\r\n");
+UART.write("Hello from HardyScript!\r\n");
 
 let counter = 0;
 while (true) {
@@ -174,10 +174,10 @@ while (true) {
 }
 
 fn generate_button_template() -> String {
-    r#"// SNARjs GPIO 按键控制示例
-// 使用 snar:hw 硬件API
+    r#"// HardyScript GPIO 按键控制示例
+// 使用 hardy:hw 硬件API
 
-import { GPIO } from "snar:hw";
+import { GPIO } from "hardy:hw";
 
 let led = GPIO.output(13);
 let button = GPIO.input(2, "pullup");

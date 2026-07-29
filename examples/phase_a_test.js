@@ -58,4 +58,4 @@ console.log(px);
 console.log(py);
 
 // A.4: import 示例
-// import { GPIO, UART } from "snar:hw";
+// import { GPIO, UART } from "hardy:hw";

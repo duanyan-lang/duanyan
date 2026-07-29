@@ -1,7 +1,7 @@
-// SNARjs STM32 示例 — LED 闪烁 (BluePill PC13)
-// 编译: snar build examples/stm32_blink.js --target stm32
+// HardyScript STM32 示例 — LED 闪烁 (BluePill PC13)
+// 编译: hardy build examples/stm32_blink.js --target stm32
 
-import { GPIO, Timer } from "snar:hw";
+import { GPIO, Timer } from "hardy:hw";
 
 let led = GPIO.output(13); // PC13 = pin 16+13 = 29 in our model
 

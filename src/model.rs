@@ -1,6 +1,6 @@
-//! .qianlu 模型文件格式 + 模型工具
+//! .duanyan 模型文件格式 + 模型工具
 //!
-//! Phase F: 千漉Mini — 端侧专用AI
+//! Phase F: 锻言Mini — 端侧专用AI
 //! 定义二进制模型格式，提供读写、验证、量化、CLI 工具
 
 use std::path::Path;
@@ -10,39 +10,39 @@ use std::io::{Read, Write, BufReader, BufWriter};
 // 常量
 // =============================================================================
 
-/// .qianlu 文件魔数
-pub const MAGIC: &[u8; 8] = b"QIANLU01";
+/// .duanyan 文件魔数
+pub const MAGIC: &[u8; 8] = b"DUANYAN1";
 /// 当前文件格式版本
 pub const FORMAT_VERSION: u32 = 1;
 /// 文件头大小 (bytes)
 pub const HEADER_SIZE: usize = 52;
 
 // =============================================================================
-// 千漉Mini 正式规格常量 (v5.1)
+// 锻言Mini 正式规格常量 (v5.1)
 // =============================================================================
 
-/// 千漉Mini Transformer层数
-pub const QIANLU_MINI_LAYERS: u32 = 6;
-/// 千漉Mini hidden维度
-pub const QIANLU_MINI_HIDDEN: u32 = 384;
-/// 千漉Mini attention头数
-pub const QIANLU_MINI_HEADS: u32 = 6;
-/// 千漉Mini KV头数 (GQA)
-pub const QIANLU_MINI_KV_HEADS: u32 = 2;
-/// 千漉Mini 词表大小
-pub const QIANLU_MINI_VOCAB: u32 = 5000;
-/// 千漉Mini 上下文长度
-pub const QIANLU_MINI_CONTEXT_LEN: u32 = 256;
-/// 千漉Mini INT4模型大小上限 (MB)
-pub const QIANLU_MINI_MODEL_SIZE_MB: f64 = 5.0;
-/// 千漉Mini RAM预算上限 (KB)
-pub const QIANLU_MINI_RAM_BUDGET_KB: u32 = 768;
-/// 千漉Mini 单次推理时间上限 (ms)
-pub const QIANLU_MINI_INFERENCE_MAX_MS: f64 = 200.0;
-/// 千漉Mini 手势识别准确率下限
-pub const QIANLU_MINI_ACCURACY_MIN: f64 = 0.90;
-/// 千漉Mini 默认量化方式
-pub const QIANLU_MINI_DEFAULT_QUANT: QuantBits = QuantBits::Int4;
+/// 锻言Mini Transformer层数
+pub const DUANYAN_MINI_LAYERS: u32 = 6;
+/// 锻言Mini hidden维度
+pub const DUANYAN_MINI_HIDDEN: u32 = 384;
+/// 锻言Mini attention头数
+pub const DUANYAN_MINI_HEADS: u32 = 6;
+/// 锻言Mini KV头数 (GQA)
+pub const DUANYAN_MINI_KV_HEADS: u32 = 2;
+/// 锻言Mini 词表大小
+pub const DUANYAN_MINI_VOCAB: u32 = 5000;
+/// 锻言Mini 上下文长度
+pub const DUANYAN_MINI_CONTEXT_LEN: u32 = 256;
+/// 锻言Mini INT4模型大小上限 (MB)
+pub const DUANYAN_MINI_MODEL_SIZE_MB: f64 = 5.0;
+/// 锻言Mini RAM预算上限 (KB)
+pub const DUANYAN_MINI_RAM_BUDGET_KB: u32 = 768;
+/// 锻言Mini 单次推理时间上限 (ms)
+pub const DUANYAN_MINI_INFERENCE_MAX_MS: f64 = 200.0;
+/// 锻言Mini 手势识别准确率下限
+pub const DUANYAN_MINI_ACCURACY_MIN: f64 = 0.90;
+/// 锻言Mini 默认量化方式
+pub const DUANYAN_MINI_DEFAULT_QUANT: QuantBits = QuantBits::Int4;
 
 /// 性能红线阈值 (v5.1)
 pub const RED_LINE_FLASH_OVERHEAD_PCT: f64 = 20.0;  // Flash ≤ +20%
@@ -50,14 +50,14 @@ pub const RED_LINE_RAM_OVERHEAD_PCT: f64 = 25.0;    // RAM ≤ +25%
 pub const RED_LINE_SPEED_OVERHEAD_PCT: f64 = 30.0;  // Speed ≤ +30%
 pub const RED_LINE_IRQ_OVERHEAD_US: f64 = 2.0;       // IRQ额外延迟 ≤ 2μs
 
-/// 创建符合千漉Mini正式规格的模型
-pub fn create_qianlu_mini_official() -> QianluModel {
-    let mut model = QianluModel::create_demo(QIANLU_MINI_LAYERS, QIANLU_MINI_HIDDEN);
-    model.header.n_heads = QIANLU_MINI_HEADS;
-    model.header.n_kv_heads = QIANLU_MINI_KV_HEADS;
-    model.header.context_len = QIANLU_MINI_CONTEXT_LEN;
-    model.header.vocab_size = QIANLU_MINI_VOCAB;
-    model.header.quant_bits = QIANLU_MINI_DEFAULT_QUANT as u32;
+/// 创建符合锻言Mini正式规格的模型
+pub fn create_duanyan_mini_official() -> DuanyanModel {
+    let mut model = DuanyanModel::create_demo(DUANYAN_MINI_LAYERS, DUANYAN_MINI_HIDDEN);
+    model.header.n_heads = DUANYAN_MINI_HEADS;
+    model.header.n_kv_heads = DUANYAN_MINI_KV_HEADS;
+    model.header.context_len = DUANYAN_MINI_CONTEXT_LEN;
+    model.header.vocab_size = DUANYAN_MINI_VOCAB;
+    model.header.quant_bits = DUANYAN_MINI_DEFAULT_QUANT as u32;
     model
 }
 
@@ -150,7 +150,7 @@ impl QuantBits {
 // 文件头
 // =============================================================================
 
-/// .qianlu 文件头 (48 bytes)
+/// .duanyan 文件头 (48 bytes)
 #[derive(Debug, Clone)]
 pub struct ModelHeader {
     pub version: u32,
@@ -306,17 +306,17 @@ impl LayerRecord {
 }
 
 // =============================================================================
-// QianluModel
+// DuanyanModel
 // =============================================================================
 
-/// 完整的千漉Mini模型
+/// 完整的锻言Mini模型
 #[derive(Debug, Clone)]
-pub struct QianluModel {
+pub struct DuanyanModel {
     pub header: ModelHeader,
     pub layers: Vec<LayerRecord>,
 }
 
-impl QianluModel {
+impl DuanyanModel {
     pub fn new() -> Self {
         Self {
             header: ModelHeader::new(),
@@ -408,7 +408,7 @@ impl QianluModel {
             .unwrap_or("unknown");
 
         let mut s = String::new();
-        s.push_str(&format!("=== 千漉Mini 模型信息 ===\n"));
+        s.push_str(&format!("=== 锻言Mini 模型信息 ===\n"));
         s.push_str(&format!("格式版本:   {}\n", self.header.version));
         s.push_str(&format!("量化精度:   {}\n", quant));
         s.push_str(&format!("参数数量:   {} ({:.1}M)\n", self.header.n_params, self.header.n_params as f64 / 1e6));
@@ -562,27 +562,27 @@ fn xavier_init(n: usize, fan_in: u32, fan_out: u32, seed: &mut u32) -> Vec<f32> 
     (0..n).map(|_| xorshift32(seed) * limit).collect()
 }
 
-/// 生成真实架构的 gesture-10m-int4.qianlu 模型
+/// 生成真实架构的 gesture-10m-int4.duanyan 模型
 ///
 /// - 6层Transformer, 384维hidden, 6头attention, GQA(2 KV heads)
 /// - Xavier uniform 初始化权重
 /// - 输出层: 384 → 10 (手势分类)
 /// - INT4 量化
-pub fn generate_gesture_model() -> QianluModel {
-    let n_layers = QIANLU_MINI_LAYERS;
-    let hidden = QIANLU_MINI_HIDDEN;
-    let n_heads = QIANLU_MINI_HEADS;
-    let n_kv_heads = QIANLU_MINI_KV_HEADS;
+pub fn generate_gesture_model() -> DuanyanModel {
+    let n_layers = DUANYAN_MINI_LAYERS;
+    let hidden = DUANYAN_MINI_HIDDEN;
+    let n_heads = DUANYAN_MINI_HEADS;
+    let n_kv_heads = DUANYAN_MINI_KV_HEADS;
     let ffn_dim = hidden * 4;
-    let target = QIANLU_MINI_DEFAULT_QUANT;
+    let target = DUANYAN_MINI_DEFAULT_QUANT;
 
-    let mut model = QianluModel::new();
+    let mut model = DuanyanModel::new();
     model.header.n_layers = n_layers;
     model.header.hidden_dim = hidden;
     model.header.n_heads = n_heads;
     model.header.n_kv_heads = n_kv_heads;
-    model.header.context_len = QIANLU_MINI_CONTEXT_LEN;
-    model.header.vocab_size = QIANLU_MINI_VOCAB;
+    model.header.context_len = DUANYAN_MINI_CONTEXT_LEN;
+    model.header.vocab_size = DUANYAN_MINI_VOCAB;
     model.header.quant_bits = target as u32;
 
     let mut total_params: u32 = 0;
@@ -651,11 +651,11 @@ pub fn generate_gesture_model() -> QianluModel {
 /// 产出可直接用 ESP-IDF 编译运行的 .c 文件, 验证:
 /// - 单次推理 < 200ms
 /// - 手势准确率 >= 90%
-pub fn generate_esp32_benchmark(model: &QianluModel) -> String {
+pub fn generate_esp32_benchmark(model: &DuanyanModel) -> String {
     let mut c = String::with_capacity(8192);
 
-    c.push_str("/*\n * gesture_benchmark.c — ESP32-S3 千漉Mini 推理性能验证\n");
-    c.push_str(" * Auto-generated by SNARjs\n *\n");
+    c.push_str("/*\n * gesture_benchmark.c — ESP32-S3 锻言Mini 推理性能验证\n");
+    c.push_str(" * Auto-generated by HardyScript\n *\n");
     c.push_str(" * 编译: idf.py build\n * 运行: idf.py -p COM<n> flash monitor\n */\n\n");
 
     c.push_str("#include <stdio.h>\n");
@@ -667,7 +667,7 @@ pub fn generate_esp32_benchmark(model: &QianluModel) -> String {
     c.push_str("#include \"freertos/FreeRTOS.h\"\n");
     c.push_str("#include \"freertos/task.h\"\n\n");
 
-    c.push_str("// ========== 千漉Mini 规格常量 ==========\n");
+    c.push_str("// ========== 锻言Mini 规格常量 ==========\n");
     c.push_str(&format!("#define QL_LAYERS      {}\n", model.header.n_layers));
     c.push_str(&format!("#define QL_HIDDEN      {}\n", model.header.hidden_dim));
     c.push_str(&format!("#define QL_HEADS       {}\n", model.header.n_heads));
@@ -679,9 +679,9 @@ pub fn generate_esp32_benchmark(model: &QianluModel) -> String {
     c.push_str("\n");
 
     c.push_str("// ========== 性能红线 ==========\n");
-    c.push_str(&format!("#define RED_LINE_INFERENCE_MS  {:.0}\n", QIANLU_MINI_INFERENCE_MAX_MS));
-    c.push_str(&format!("#define RED_LINE_ACCURACY_MIN  {:.2}\n", QIANLU_MINI_ACCURACY_MIN));
-    c.push_str(&format!("#define RED_LINE_RAM_KB        {}\n", QIANLU_MINI_RAM_BUDGET_KB));
+    c.push_str(&format!("#define RED_LINE_INFERENCE_MS  {:.0}\n", DUANYAN_MINI_INFERENCE_MAX_MS));
+    c.push_str(&format!("#define RED_LINE_ACCURACY_MIN  {:.2}\n", DUANYAN_MINI_ACCURACY_MIN));
+    c.push_str(&format!("#define RED_LINE_RAM_KB        {}\n", DUANYAN_MINI_RAM_BUDGET_KB));
     c.push_str("\n");
 
     // gesture labels
@@ -703,21 +703,21 @@ pub fn generate_esp32_benchmark(model: &QianluModel) -> String {
     c.push_str("\n");
 
     // inference function stub
-    c.push_str("// ========== 推理引擎 (需替换为真实 qianlu_infer 实现) ==========\n");
+    c.push_str("// ========== 推理引擎 (需替换为真实 duanyan_infer 实现) ==========\n");
     c.push_str("typedef struct {\n");
     c.push_str("    float probs[QL_CLASSES];\n");
     c.push_str("    int64_t inference_us;\n");
     c.push_str("} InferResult;\n\n");
 
     c.push_str("// 模拟推理: 加载模型 → 前向传播 → softmax → 计时\n");
-    c.push_str("// TODO: 替换为真实 qianlu_runtime 推理调用\n");
+    c.push_str("// TODO: 替换为真实 duanyan_runtime 推理调用\n");
     c.push_str("InferResult run_inference(const uint8_t* model_data, const float* input_features) {\n");
     c.push_str("    InferResult result = {0};\n");
     c.push_str("    int64_t t0 = esp_timer_get_time();\n\n");
     c.push_str("    // --- 真实推理将在此处调用 ---\n");
-    c.push_str("    // qianlu_ctx_t ctx;\n");
-    c.push_str("    // qianlu_load(&ctx, model_data, MODEL_WEIGHT_BYTES);\n");
-    c.push_str("    // qianlu_forward(&ctx, input_features);\n");
+    c.push_str("    // duanyan_ctx_t ctx;\n");
+    c.push_str("    // duanyan_load(&ctx, model_data, MODEL_WEIGHT_BYTES);\n");
+    c.push_str("    // duanyan_forward(&ctx, input_features);\n");
     c.push_str("    // memcpy(result.probs, ctx.output, sizeof(float) * QL_CLASSES);\n\n");
     c.push_str("    // 模拟: 生成伪概率分布 (第3类概率最高)\n");
     c.push_str("    float sum = 0;\n");
@@ -737,7 +737,7 @@ pub fn generate_esp32_benchmark(model: &QianluModel) -> String {
     c.push_str("#define N_ROUNDS  100\n\n");
     c.push_str("void app_main(void) {\n");
     c.push_str("    printf(\"\\n========================================\\n\");\n");
-    c.push_str("    printf(\"千漉Mini ESP32-S3 Benchmark\\n\");\n");
+    c.push_str("    printf(\"锻言Mini ESP32-S3 Benchmark\\n\");\n");
     c.push_str("    printf(\"========================================\\n\");\n");
     c.push_str(&format!("    printf(\"模型: gesture-10m-int4 ({}M params, {:.2}MB)\\n\", QL_PARAMS / 1000000, MODEL_FILE_SIZE_MB);\n", model.header.n_params / 1_000_000, total_weight_bytes as f64 / (1024.0 * 1024.0)));
     c.push_str("    printf(\"规格: %d层, %d维, %d头\\n\", QL_LAYERS, QL_HIDDEN, QL_HEADS);\n\n");
@@ -815,7 +815,7 @@ pub struct VerifyResult {
 impl VerifyResult {
     pub fn display(&self) -> String {
         let mut s = String::new();
-        s.push_str(&format!("=== 千漉Mini 模型验证 ===\n"));
+        s.push_str(&format!("=== 锻言Mini 模型验证 ===\n"));
         s.push_str(&format!("状态:       {}\n", if self.valid { "✅ 有效" } else { "❌ 无效" }));
         s.push_str(&format!("版本:       {}\n", self.version));
         s.push_str(&format!("声明层数:   {}\n", self.n_layers));
@@ -951,7 +951,7 @@ struct GgufTensorInfo {
 
 /// GGUF 转换结果
 pub struct ConvertResult {
-    pub model: QianluModel,
+    pub model: DuanyanModel,
     pub source_format: String,
     pub tensors_found: u32,
     pub tensors_converted: u32,
@@ -973,8 +973,8 @@ const GGUF_TYPE_UINT64: u32 = 10;
 const GGUF_TYPE_INT64: u32 = 11;
 const GGUF_TYPE_FLOAT64: u32 = 12;
 
-/// 从 GGUF 文件转换为 .qianlu 模型
-pub fn convert_gguf_to_qianlu(
+/// 从 GGUF 文件转换为 .duanyan 模型
+pub fn convert_gguf_to_duanyan(
     input_path: &Path,
     target_quant: QuantBits,
 ) -> Result<ConvertResult, String> {
@@ -1061,8 +1061,8 @@ pub fn convert_gguf_to_qianlu(
     // 数据起始位置 (对齐到32字节)
     let data_start = (pos + 31) & !31;
 
-    // 构建 .qianlu 模型
-    let mut model = QianluModel::new();
+    // 构建 .duanyan 模型
+    let mut model = DuanyanModel::new();
     model.header.n_layers = n_layers;
     model.header.hidden_dim = hidden_dim;
     model.header.n_heads = n_heads;
@@ -1239,7 +1239,7 @@ fn extract_u32(metadata: &std::collections::HashMap<String, GgufValue>, key: &st
     })
 }
 
-/// 将 GGUF 张量名映射到 .qianlu 层类型
+/// 将 GGUF 张量名映射到 .duanyan 层类型
 fn map_gguf_name_to_layer(name: &str, arch: &str) -> Option<(u32, LayerType)> {
     // 提取层序号: "blk.0.attn_q.weight" -> 0
     let layer_idx = if let Some(blk_pos) = name.find("blk.") {
@@ -1423,7 +1423,7 @@ fn quantize_weights(weights: &[f32], target: QuantBits) -> (Vec<u8>, f32) {
             (data, scale)
         }
         QuantBits::Int4 => {
-            let (packed, scale) = QianluModel::quantize_int4(weights);
+            let (packed, scale) = DuanyanModel::quantize_int4(weights);
             (packed, scale)
         }
     }
@@ -1514,12 +1514,12 @@ mod tests {
 
     #[test]
     fn test_model_write_read_roundtrip() {
-        let model = QianluModel::create_demo(2, 32);
+        let model = DuanyanModel::create_demo(2, 32);
         let dir = std::env::temp_dir();
-        let path = dir.join("test_roundtrip.qianlu");
+        let path = dir.join("test_roundtrip.duanyan");
         model.write_to_file(&path).unwrap();
 
-        let model2 = QianluModel::read_from_file(&path).unwrap();
+        let model2 = DuanyanModel::read_from_file(&path).unwrap();
         assert_eq!(model2.header.n_layers, 2);
         assert_eq!(model2.header.hidden_dim, 32);
         assert_eq!(model2.layers.len(), 2 * 5 + 1); // 5 layers/block * 2 blocks + output
@@ -1530,12 +1530,12 @@ mod tests {
 
     #[test]
     fn test_model_verify() {
-        let model = QianluModel::create_demo(1, 16);
+        let model = DuanyanModel::create_demo(1, 16);
         let dir = std::env::temp_dir();
-        let path = dir.join("test_verify.qianlu");
+        let path = dir.join("test_verify.duanyan");
         model.write_to_file(&path).unwrap();
 
-        let result = QianluModel::verify(&path).unwrap();
+        let result = DuanyanModel::verify(&path).unwrap();
         assert!(result.valid);
         assert_eq!(result.n_layers, 1);
         assert_eq!(result.actual_layers, 6); // 5 + output
@@ -1545,9 +1545,9 @@ mod tests {
     #[test]
     fn test_invalid_magic() {
         let dir = std::env::temp_dir();
-        let path = dir.join("test_bad_magic.qianlu");
+        let path = dir.join("test_bad_magic.duanyan");
         std::fs::write(&path, b"NOTAMODEL").unwrap();
-        let result = QianluModel::read_from_file(&path);
+        let result = DuanyanModel::read_from_file(&path);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("magic"));
         std::fs::remove_file(&path).ok();
@@ -1556,9 +1556,9 @@ mod tests {
     #[test]
     fn test_quantize_dequantize_int4() {
         let weights = vec![0.5, -0.3, 1.0, -0.8, 0.2, -0.1];
-        let (packed, scale) = QianluModel::quantize_int4(&weights);
+        let (packed, scale) = DuanyanModel::quantize_int4(&weights);
         let mut out = vec![0.0f32; weights.len()];
-        QianluModel::dequantize_int4(&packed, &mut out, scale);
+        DuanyanModel::dequantize_int4(&packed, &mut out, scale);
 
         // INT4 量化有损，允许一定误差
         for (orig, quant) in weights.iter().zip(out.iter()) {
@@ -1569,16 +1569,16 @@ mod tests {
 
     #[test]
     fn test_quantize_empty() {
-        let (packed, scale) = QianluModel::quantize_int4(&[]);
+        let (packed, scale) = DuanyanModel::quantize_int4(&[]);
         assert!(packed.is_empty());
         assert_eq!(scale, 1.0);
     }
 
     #[test]
     fn test_info_string() {
-        let model = QianluModel::create_demo(1, 16);
+        let model = DuanyanModel::create_demo(1, 16);
         let info = model.info_string();
-        assert!(info.contains("千漉Mini"));
+        assert!(info.contains("锻言Mini"));
         assert!(info.contains("FP32"));
         assert!(info.contains("资源估算"));
     }
@@ -1614,18 +1614,18 @@ mod tests {
     }
 
     #[test]
-    fn test_qianlu_mini_spec_constants() {
+    fn test_duanyan_mini_spec_constants() {
         // 确认v5.1规格常量已正确定义
-        assert_eq!(QIANLU_MINI_LAYERS, 6);
-        assert_eq!(QIANLU_MINI_HIDDEN, 384);
-        assert_eq!(QIANLU_MINI_HEADS, 6);
-        assert_eq!(QIANLU_MINI_KV_HEADS, 2);
-        assert_eq!(QIANLU_MINI_VOCAB, 5000);
-        assert_eq!(QIANLU_MINI_CONTEXT_LEN, 256);
-        assert_eq!(QIANLU_MINI_RAM_BUDGET_KB, 768);
-        assert!((QIANLU_MINI_INFERENCE_MAX_MS - 200.0).abs() < f64::EPSILON);
-        assert!((QIANLU_MINI_ACCURACY_MIN - 0.90).abs() < f64::EPSILON);
-        assert_eq!(QIANLU_MINI_DEFAULT_QUANT, QuantBits::Int4);
+        assert_eq!(DUANYAN_MINI_LAYERS, 6);
+        assert_eq!(DUANYAN_MINI_HIDDEN, 384);
+        assert_eq!(DUANYAN_MINI_HEADS, 6);
+        assert_eq!(DUANYAN_MINI_KV_HEADS, 2);
+        assert_eq!(DUANYAN_MINI_VOCAB, 5000);
+        assert_eq!(DUANYAN_MINI_CONTEXT_LEN, 256);
+        assert_eq!(DUANYAN_MINI_RAM_BUDGET_KB, 768);
+        assert!((DUANYAN_MINI_INFERENCE_MAX_MS - 200.0).abs() < f64::EPSILON);
+        assert!((DUANYAN_MINI_ACCURACY_MIN - 0.90).abs() < f64::EPSILON);
+        assert_eq!(DUANYAN_MINI_DEFAULT_QUANT, QuantBits::Int4);
     }
 
     #[test]
@@ -1637,14 +1637,14 @@ mod tests {
     }
 
     #[test]
-    fn test_create_qianlu_mini_official() {
-        let model = create_qianlu_mini_official();
-        assert_eq!(model.header.n_layers, QIANLU_MINI_LAYERS);
-        assert_eq!(model.header.hidden_dim, QIANLU_MINI_HIDDEN);
-        assert_eq!(model.header.n_heads, QIANLU_MINI_HEADS);
-        assert_eq!(model.header.n_kv_heads, QIANLU_MINI_KV_HEADS);
-        assert_eq!(model.header.vocab_size, QIANLU_MINI_VOCAB);
-        assert_eq!(model.header.context_len, QIANLU_MINI_CONTEXT_LEN);
+    fn test_create_duanyan_mini_official() {
+        let model = create_duanyan_mini_official();
+        assert_eq!(model.header.n_layers, DUANYAN_MINI_LAYERS);
+        assert_eq!(model.header.hidden_dim, DUANYAN_MINI_HIDDEN);
+        assert_eq!(model.header.n_heads, DUANYAN_MINI_HEADS);
+        assert_eq!(model.header.n_kv_heads, DUANYAN_MINI_KV_HEADS);
+        assert_eq!(model.header.vocab_size, DUANYAN_MINI_VOCAB);
+        assert_eq!(model.header.context_len, DUANYAN_MINI_CONTEXT_LEN);
     }
 
     // GGUF 转换器测试
@@ -1763,11 +1763,11 @@ mod tests {
     fn test_generate_gesture_model_structure() {
         let m = generate_gesture_model();
         // 6层 × 5个LayerRecord + 1个Output = 31
-        assert_eq!(m.layers.len(), (QIANLU_MINI_LAYERS * 5 + 1) as usize);
-        assert_eq!(m.header.n_layers, QIANLU_MINI_LAYERS);
-        assert_eq!(m.header.hidden_dim, QIANLU_MINI_HIDDEN);
-        assert_eq!(m.header.n_heads, QIANLU_MINI_HEADS);
-        assert_eq!(m.header.quant_bits, QIANLU_MINI_DEFAULT_QUANT as u32);
+        assert_eq!(m.layers.len(), (DUANYAN_MINI_LAYERS * 5 + 1) as usize);
+        assert_eq!(m.header.n_layers, DUANYAN_MINI_LAYERS);
+        assert_eq!(m.header.hidden_dim, DUANYAN_MINI_HIDDEN);
+        assert_eq!(m.header.n_heads, DUANYAN_MINI_HEADS);
+        assert_eq!(m.header.quant_bits, DUANYAN_MINI_DEFAULT_QUANT as u32);
     }
 
     #[test]
@@ -1781,9 +1781,9 @@ mod tests {
     #[test]
     fn test_generate_gesture_model_roundtrip() {
         let m = generate_gesture_model();
-        let tmp = std::env::temp_dir().join("test_gesture_model.qianlu");
+        let tmp = std::env::temp_dir().join("test_gesture_model.duanyan");
         m.write_to_file(&tmp).unwrap();
-        let m2 = QianluModel::read_from_file(&tmp).unwrap();
+        let m2 = DuanyanModel::read_from_file(&tmp).unwrap();
         assert_eq!(m.header.n_layers, m2.header.n_layers);
         assert_eq!(m.header.n_params, m2.header.n_params);
         assert_eq!(m.layers.len(), m2.layers.len());
@@ -1798,7 +1798,7 @@ mod tests {
         assert!(c_code.contains("RED_LINE_INFERENCE_MS"));
         assert!(c_code.contains("app_main"));
         assert!(c_code.contains("gesture_benchmark"));
-        assert!(c_code.contains(&format!("#define QL_LAYERS      {}", QIANLU_MINI_LAYERS)));
+        assert!(c_code.contains(&format!("#define QL_LAYERS      {}", DUANYAN_MINI_LAYERS)));
     }
 
     #[test]

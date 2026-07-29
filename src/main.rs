@@ -1,8 +1,8 @@
-//! SNAR - The Snare Compiler
+//! Hardy - The HardyScript Compiler
 //!
 //! 捕猎主题命令行: JavaScript/TypeScript → COUNPRE64 机器码
 //!
-//! 🪤 "在代码的丛林中，SNAR 是无形的陷阱"
+//! 🪤 "在代码的丛林中，Hardy 是无形的陷阱"
 
 use std::env;
 use std::fs;
@@ -42,15 +42,15 @@ mod ci;
 mod async_transform;  // Phase v1.5
 
 const BANNER: &str = r#"
-   ____  _   _    _    ____  
-  / ___|| \ | |  / \  |  _ \ 
-  \___ \|  \| | / _ \ | |_) |
-   ___) | |\  |/ ___ \|  _ < 
-  |____/|_| \_/_/   \_\_| \_\  v{VERSION}
-  
-  🪤 The Snare Compiler — 一套代码，通吃一切硬件
+  _   _    _    ____  ____  __   __
+ | | | |  / \  |  _ \|  _ \ \ \ / /
+ | |_| | / _ \ | |_) | | | | \ V / 
+ |  _  |/ ___ \|  _ <| |_| |  | |  
+ |_| |_/_/   \_\_| \_\____/   |_|   v{VERSION}
+ 
+  🔧 HardyScript — 一套代码，通吃一切硬件
   JavaScript/TypeScript → COUNPRE64 / ESP32 / Arduino / STM32 / 树莓派
-  🧠 千漉Mini 端侧AI推理 (.qianlu 模型 → ESP32 逐层推理)
+  🧠 锻言Mini 端侧AI推理 (.duanyan 模型 → ESP32 逐层推理)
 "#;
 
 fn main() {
@@ -83,7 +83,7 @@ fn main() {
         "monitor" => cmd_monitor(&args[2..]),
         // Phase C 新命令
         "compat"  => cmd_compat(&args[2..]),
-        // Phase F: 千漉Mini AI
+        // Phase F: 锻言Mini AI
         "model"   => cmd_model(&args[2..]),
         // Phase H: 团队开发
         "workspace" => cmd_workspace(&args[2..]),
@@ -104,12 +104,12 @@ fn main() {
 }
 
 // =============================================================================
-// snar build - 编译（打造武器）
+// hardy build - 编译（打造武器）
 // =============================================================================
 fn cmd_build(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar build: 请指定猎物源码");
-        eprintln!("用法: snar build <input.js|.ts> [-o output.hex] [--asm] [-O] [--compat] [--async] [--target esp32|arduino-avr|arduino-arm|stm32|rpi|counpre64] [--board arduino-uno]");
+        eprintln!("hardy build: 请指定猎物源码");
+        eprintln!("用法: hardy build <input.js|.ts> [-o output.hex] [--asm] [-O] [--compat] [--async] [--target esp32|arduino-avr|arduino-arm|stm32|rpi|counpre64] [--board arduino-uno]");
         process::exit(1);
     }
 
@@ -379,12 +379,12 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
 }
 
 // =============================================================================
-// snar hunt - 运行（捕猎执行）: build + flash
+// hardy hunt - 运行（捕猎执行）: build + flash
 // =============================================================================
 fn cmd_hunt(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar hunt: 请指定猎物");
-        eprintln!("用法: snar hunt <input.js|.ts> [--port COM3]");
+        eprintln!("hardy hunt: 请指定猎物");
+        eprintln!("用法: hardy hunt <input.js|.ts> [--port COM3]");
         process::exit(1);
     }
 
@@ -400,17 +400,17 @@ fn cmd_hunt(args: &[String]) {
     // 提示烧录
     let hex_file = args[0].replace(".ts", ".hex").replace(".js", ".hex");
     println!("\n🎯 猎物已就绪: {}", hex_file);
-    println!("   → 使用 'snar lock' 锁定硬件目标");
+    println!("   → 使用 'hardy lock' 锁定硬件目标");
     println!("   → 或手动: Gowin Programmer → Load '{}'", hex_file);
 }
 
 // =============================================================================
-// snar track - 追踪（调试输出汇编）
+// hardy track - 追踪（调试输出汇编）
 // =============================================================================
 fn cmd_track(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar track: 请指定追踪目标");
-        eprintln!("用法: snar track <input.js|.ts>");
+        eprintln!("hardy track: 请指定追踪目标");
+        eprintln!("用法: hardy track <input.js|.ts>");
         process::exit(1);
     }
 
@@ -446,12 +446,12 @@ fn cmd_track(args: &[String]) {
 }
 
 // =============================================================================
-// snar scan - 侦查（扫描代码，报告统计）
+// hardy scan - 侦查（扫描代码，报告统计）
 // =============================================================================
 fn cmd_scan(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar scan: 请指定侦查目标");
-        eprintln!("用法: snar scan <input.js|.ts>");
+        eprintln!("hardy scan: 请指定侦查目标");
+        eprintln!("用法: hardy scan <input.js|.ts>");
         process::exit(1);
     }
 
@@ -579,14 +579,14 @@ fn cmd_scan(args: &[String]) {
 }
 
 // =============================================================================
-// snar lock - 锁定硬件（烧录提示）
+// hardy lock - 锁定硬件（烧录提示）
 // =============================================================================
 fn cmd_lock(args: &[String]) {
     let hex_file = if !args.is_empty() {
         args[0].clone()
     } else {
-        eprintln!("snar lock: 请指定 .hex 文件");
-        eprintln!("用法: snar lock <file.hex> [--port COM3]");
+        eprintln!("hardy lock: 请指定 .hex 文件");
+        eprintln!("用法: hardy lock <file.hex> [--port COM3]");
         process::exit(1);
     };
 
@@ -606,12 +606,12 @@ fn cmd_lock(args: &[String]) {
 }
 
 // =============================================================================
-// snar flash - 烧录到硬件（发射弹药）
+// hardy flash - 烧录到硬件（发射弹药）
 // =============================================================================
 fn cmd_flash(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar flash: 请指定猎物源码或 .hex 文件");
-        eprintln!("用法: snar flash <input.js|.ts|.hex> [--target gowin|stm32|esp32|arduino|rpi] [--board arduino-uno] [--port COM3] [--rom]");
+        eprintln!("hardy flash: 请指定猎物源码或 .hex 文件");
+        eprintln!("用法: hardy flash <input.js|.ts|.hex> [--target gowin|stm32|esp32|arduino|rpi] [--board arduino-uno] [--port COM3] [--rom]");
         process::exit(1);
     }
 
@@ -683,7 +683,7 @@ fn cmd_flash(args: &[String]) {
 
         if emit_rom {
             let rom_path = base_dir.join(format!("{}_rom.v", stem));
-            firmware::emit_verilog_rom(&instructions, &rom_path, "snarjs_rom")
+            firmware::emit_verilog_rom(&instructions, &rom_path, "hardyscript_rom")
                 .unwrap_or_else(|e| eprintln!("⚠️  生成 ROM 失败: {}", e));
             println!("📦 Verilog ROM: {}", rom_path.display());
         }
@@ -717,12 +717,12 @@ fn cmd_flash(args: &[String]) {
 }
 
 // =============================================================================
-// snar bite - 单步调试（撕咬执行）
+// hardy bite - 单步调试（撕咬执行）
 // =============================================================================
 fn cmd_bite(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar bite: 请指定目标");
-        eprintln!("用法: snar bite <input.js|.ts>");
+        eprintln!("hardy bite: 请指定目标");
+        eprintln!("用法: hardy bite <input.js|.ts>");
         process::exit(1);
     }
 
@@ -756,12 +756,12 @@ fn cmd_bite(args: &[String]) {
 
 
 // =============================================================================
-// snar run - 执行（原生执行引擎）
+// hardy run - 执行（原生执行引擎）
 // =============================================================================
 fn cmd_run(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar run: 请指定执行目标");
-        eprintln!("用法: snar run <input.js|.ts> [-O] [--hw]");
+        eprintln!("hardy run: 请指定执行目标");
+        eprintln!("用法: hardy run <input.js|.ts> [-O] [--hw]");
         eprintln!("  --hw  启用硬件模拟模式 (GPIO/UART/PWM/Timer)");
         process::exit(1);
     }
@@ -816,7 +816,7 @@ fn cmd_run(args: &[String]) {
 }
 
 // =============================================================================
-// snar prey - 猎物列表
+// hardy prey - 猎物列表
 // =============================================================================
 fn cmd_prey(args: &[String]) {
     let dir = if !args.is_empty() { &args[0] } else { "." };
@@ -851,12 +851,12 @@ fn cmd_prey(args: &[String]) {
 
 
 // =============================================================================
-// snar debug - 调试（交互式调试器）
+// hardy debug - 调试（交互式调试器）
 // =============================================================================
 fn cmd_debug(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar debug: 请指定调试目标");
-        eprintln!("用法: snar debug <input.js|.ts> [-O]");
+        eprintln!("hardy debug: 请指定调试目标");
+        eprintln!("用法: hardy debug <input.js|.ts> [-O]");
         process::exit(1);
     }
 
@@ -914,7 +914,7 @@ fn cmd_debug(args: &[String]) {
 }
 
 // =============================================================================
-// snar board - 开发板管理
+// hardy board - 开发板管理
 // =============================================================================
 fn cmd_board(args: &[String]) {
     let subcmd = if args.is_empty() { "list" } else { args[0].as_str() };
@@ -922,23 +922,23 @@ fn cmd_board(args: &[String]) {
         "list" => board::cmd_board_list(),
         "info" => {
             if args.len() < 2 {
-                eprintln!("snar board info: 请指定开发板名称");
-                eprintln!("用法: snar board info <name>");
+                eprintln!("hardy board info: 请指定开发板名称");
+                eprintln!("用法: hardy board info <name>");
                 process::exit(1);
             }
             board::cmd_board_info(&args[1]);
         }
         "set" => {
             if args.len() < 2 {
-                eprintln!("snar board set: 请指定默认开发板");
-                eprintln!("用法: snar board set <name>");
-                eprintln!("示例: snar board set arduino-mega");
+                eprintln!("hardy board set: 请指定默认开发板");
+                eprintln!("用法: hardy board set <name>");
+                eprintln!("示例: hardy board set arduino-mega");
                 process::exit(1);
             }
             board::cmd_board_set(&args[1]);
         }
         _ => {
-            eprintln!("snar board: 未知子命令 '{}'", subcmd);
+            eprintln!("hardy board: 未知子命令 '{}'", subcmd);
             eprintln!("可用子命令: list, info, set");
             process::exit(1);
         }
@@ -946,11 +946,11 @@ fn cmd_board(args: &[String]) {
 }
 
 // =============================================================================
-// snar new - 创建新项目模板生成 =============================================================================
+// hardy new - 创建新项目模板生成 =============================================================================
 fn cmd_new(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar new: 请指定项目名称");
-        eprintln!("用法: snar new <name> [--template blank|blinky|uart|button] [--board esp32|arduino-uno|counpre64]");
+        eprintln!("hardy new: 请指定项目名称");
+        eprintln!("用法: hardy new <name> [--template blank|blinky|uart|button] [--board esp32|arduino-uno|counpre64]");
         eprintln!();
         project::list_templates();
         process::exit(1);
@@ -994,7 +994,7 @@ fn cmd_new(args: &[String]) {
         Ok(()) => {
             println!("✅ 项目创建创建: {}", name);
             println!("   📁 {}/", name);
-            println!("   ├── snar.json");
+            println!("   ├── hardy.json");
             println!("   ├── .gitignore");
             println!("   └── src/");
             println!("       └── main.js");
@@ -1002,7 +1002,7 @@ fn cmd_new(args: &[String]) {
                 println!("   🎯 目标板子: {}", b);
             }
             println!();
-            println!("🪤  cd {} && snar build src/main.js", name);
+            println!("🪤  cd {} && hardy build src/main.js", name);
         }
         Err(e) => {
             eprintln!("❌ {}", e);
@@ -1012,7 +1012,7 @@ fn cmd_new(args: &[String]) {
 }
 
 // =============================================================================
-// snar monitor - 串口监视器
+// hardy monitor - 串口监视器
 // =============================================================================
 fn cmd_monitor(args: &[String]) {
     let mut config = monitor::MonitorConfig::default();
@@ -1046,13 +1046,13 @@ fn cmd_monitor(args: &[String]) {
 }
 
 // =============================================================================
-// snar init - 在当前目录初始化 snar 项目
+// hardy init - 在当前目录初始化 hardy 项目
 // =============================================================================
 fn cmd_init(_args: &[String]) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::Path::new(".").to_path_buf());
 
-    if cwd.join("snar.json").exists() {
-        eprintln!("⚠️  snar.json 已存在，跳过初始化");
+    if cwd.join("hardy.json").exists() {
+        eprintln!("⚠️  hardy.json 已存在，跳过初始化");
         return;
     }
 
@@ -1081,15 +1081,15 @@ fn cmd_init(_args: &[String]) {
         process::exit(1);
     }
 
-    if let Err(e) = std::fs::write(cwd.join("snar.json"), &config) {
-        eprintln!("❌ 写入 snar.json 失败: {}", e);
+    if let Err(e) = std::fs::write(cwd.join("hardy.json"), &config) {
+        eprintln!("❌ 写入 hardy.json 失败: {}", e);
         process::exit(1);
     }
 
-    let main_js = r#"// SNARjs 项目入口
-// 使用 snar:hw 硬件API
+    let main_js = r#"// HardyScript 项目入口
+// 使用 hardy:hw 硬件API
 
-import { GPIO, Timer } from "snar:hw";
+import { GPIO, Timer } from "hardy:hw";
 
 let led = GPIO.output(13);
 
@@ -1112,24 +1112,24 @@ while (true) {
         let _ = std::fs::write(cwd.join(".gitignore"), gitignore);
     }
 
-    println!("✅ 已初始化 SNARjs 项目: {}", project_name);
-    println!("   📄 snar.json");
+    println!("✅ 已初始化 HardyScript 项目: {}", project_name);
+    println!("   📄 hardy.json");
     println!("   📄 src/main.js");
     println!("   📄 .gitignore");
     println!();
-    println!("🪤  snar build src/main.js");
+    println!("🪤  hardy build src/main.js");
 }
 
 // =============================================================================
-// snar compat - Espruino/Moddable 兼容分析
+// hardy compat - Espruino/Moddable 兼容分析
 // =============================================================================
 fn cmd_compat(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar compat: 请指定分析目标");
-        eprintln!("用法: snar compat <input.js> [--convert]");
+        eprintln!("hardy compat: 请指定分析目标");
+        eprintln!("用法: hardy compat <input.js> [--convert]");
         eprintln!();
         println!("  分析源码中的 Espruino/Moddable 旧式 API");
-        println!("  --convert  输出转换后的 SNAR 标准代码");
+        println!("  --convert  输出转换后的 Hardy 标准代码");
         process::exit(1);
     }
 
@@ -1172,12 +1172,12 @@ fn cmd_compat(args: &[String]) {
     println!("  共检测 {} 处兼容性问题", total);
 
     if do_convert && total > 0 {
-        println!("\n--- 🔄 转换后的 SNAR 标准代码 ---");
+        println!("\n--- 🔄 转换后的 Hardy 标准代码 ---");
         let converted = compat::transform_moddable_import(&result.source).0;
         println!("{}", converted);
     } else if total > 0 {
         println!("  💡 使用 --convert 查看转换后代码");
-        println!("  💡 或: snar build {} --compat", input_file);
+        println!("  💡 或: hardy build {} --compat", input_file);
     }
 }
 
@@ -1301,40 +1301,40 @@ fn board_to_target_kind(board: &str) -> Option<flasher::TargetKind> {
 }
 
 // =============================================================================
-// snar model - 千漉Mini AI 模型管理 (Phase F)
+// hardy model - 锻言Mini AI 模型管理 (Phase F)
 // =============================================================================
 fn cmd_model(args: &[String]) {
     if args.is_empty() {
-        eprintln!("snar model: 请指定子命令");
-        eprintln!("用法: snar model <convert|verify|info|deploy|list>");
+        eprintln!("hardy model: 请指定子命令");
+        eprintln!("用法: hardy model <convert|verify|info|deploy|list>");
         process::exit(1);
     }
 
     match args[0].as_str() {
         "verify" => {
             if args.len() < 2 {
-                eprintln!("用法: snar model verify <model.qianlu>");
+                eprintln!("用法: hardy model verify <model.duanyan>");
                 process::exit(1);
             }
             let path = Path::new(&args[1]);
-            match model::QianluModel::verify(path) {
+            match model::DuanyanModel::verify(path) {
                 Ok(result) => print!("{}", result.display()),
                 Err(e) => { eprintln!("❌ 验证失败: {}", e); process::exit(1); }
             }
         }
         "info" => {
             if args.len() < 2 {
-                eprintln!("用法: snar model info <model.qianlu>");
+                eprintln!("用法: hardy model info <model.duanyan>");
                 process::exit(1);
             }
             let path = Path::new(&args[1]);
-            match model::QianluModel::read_from_file(path) {
+            match model::DuanyanModel::read_from_file(path) {
                 Ok(m) => print!("{}", m.info_string()),
                 Err(e) => { eprintln!("❌ 读取失败: {}", e); process::exit(1); }
             }
         }
         "convert" => {
-            // snar model convert --input <f> --output <f> [--quant int4|fp32] [--official]
+            // hardy model convert --input <f> --output <f> [--quant int4|fp32] [--official]
             let mut input = String::new();
             let mut output = String::new();
             let mut quant_str = "int4".to_string();
@@ -1351,7 +1351,7 @@ fn cmd_model(args: &[String]) {
                 i += 1;
             }
             if input.is_empty() || output.is_empty() {
-                eprintln!("用法: snar model convert --input <f.gguf|f.bin> --output <f.qianlu> [--quant int4|int8|fp16|fp32] [--official]");
+                eprintln!("用法: hardy model convert --input <f.gguf|f.bin> --output <f.duanyan> [--quant int4|int8|fp16|fp32] [--official]");
                 eprintln!("  --official  用千灌Mini官方规格 (6层/384维/6头/5000词表) 创建模型模板");
                 process::exit(1);
             }
@@ -1370,12 +1370,12 @@ fn cmd_model(args: &[String]) {
             let is_gguf = input.to_lowercase().ends_with(".gguf");
 
             if is_gguf {
-                // === GGUF → .qianlu 真实转换 ===
-                println!("🧠 GGUF → .qianlu 真实转换");
+                // === GGUF → .duanyan 真实转换 ===
+                println!("🧠 GGUF → .duanyan 真实转换");
                 println!("   输入: {} (GGUF)", input);
                 println!("   量化: {}", target_quant.display_name());
 
-                match model::convert_gguf_to_qianlu(input_path, target_quant) {
+                match model::convert_gguf_to_duanyan(input_path, target_quant) {
                     Ok(result) => {
                         println!("   源格式: {}", result.source_format);
                         println!("   张量: {}/{} 已转换", result.tensors_converted, result.tensors_found);
@@ -1397,7 +1397,7 @@ fn cmd_model(args: &[String]) {
             } else if official {
                 // === 官方规格模型模板 ===
                 println!("🧠 创建千灌Mini官方规格模型模板");
-                let mut m = model::create_qianlu_mini_official();
+                let mut m = model::create_duanyan_mini_official();
                 // 用量化方式重写层数据
                 let quant = target_quant;
                 for layer in &mut m.layers {
@@ -1415,8 +1415,8 @@ fn cmd_model(args: &[String]) {
                         let meta = fs::metadata(output_path).unwrap();
                         println!("   输出: {} ({} bytes)", output, meta.len());
                         println!("   规格: {}层/hidden={}/heads={}/vocab={}",
-                            model::QIANLU_MINI_LAYERS, model::QIANLU_MINI_HIDDEN,
-                            model::QIANLU_MINI_HEADS, model::QIANLU_MINI_VOCAB);
+                            model::DUANYAN_MINI_LAYERS, model::DUANYAN_MINI_HIDDEN,
+                            model::DUANYAN_MINI_HEADS, model::DUANYAN_MINI_VOCAB);
                         println!("✅ 官方规格模型模板创建完成");
                     }
                     Err(e) => { eprintln!("❌ 写入失败: {}", e); process::exit(1); }
@@ -1427,7 +1427,7 @@ fn cmd_model(args: &[String]) {
                     Ok(data) => {
                         println!("🧠 模型转换: {} → {}", input, output);
                         println!("   输入: {} bytes, 量化: {}", data.len(), quant_str);
-                        let demo = model::QianluModel::create_demo(1, 16);
+                        let demo = model::DuanyanModel::create_demo(1, 16);
                         match demo.write_to_file(output_path) {
                             Ok(()) => {
                                 let meta = fs::metadata(output_path).unwrap();
@@ -1442,7 +1442,7 @@ fn cmd_model(args: &[String]) {
             }
         }
         "generate" => {
-            // snar model generate --output <f.qianlu> [--benchmark <f.c>]
+            // hardy model generate --output <f.duanyan> [--benchmark <f.c>]
             let mut output = String::new();
             let mut bench_out = String::new();
             let mut i = 1;
@@ -1455,16 +1455,16 @@ fn cmd_model(args: &[String]) {
                 i += 1;
             }
             if output.is_empty() {
-                eprintln!("用法: snar model generate --output <gesture-10m-int4.qianlu> [--benchmark <benchmark.c>]");
-                eprintln!("  生成真实架构的千漉Mini手势识别模型 (Xavier初始化 + INT4量化)");
+                eprintln!("用法: hardy model generate --output <gesture-10m-int4.duanyan> [--benchmark <benchmark.c>]");
+                eprintln!("  生成真实架构的锻言Mini手势识别模型 (Xavier初始化 + INT4量化)");
                 eprintln!("  --benchmark  同时生成 ESP32-S3 benchmark C 代码");
                 process::exit(1);
             }
 
-            println!("🧠 生成千漉Mini手势识别模型");
+            println!("🧠 生成锻言Mini手势识别模型");
             println!("   规格: {}层/{}维/{}头/{}类手势",
-                model::QIANLU_MINI_LAYERS, model::QIANLU_MINI_HIDDEN,
-                model::QIANLU_MINI_HEADS, model::GESTURE_CLASSES);
+                model::DUANYAN_MINI_LAYERS, model::DUANYAN_MINI_HIDDEN,
+                model::DUANYAN_MINI_HEADS, model::GESTURE_CLASSES);
             println!("   手势: {}", model::GESTURE_LABELS.join(", "));
             println!("   量化: INT4");
 
@@ -1481,12 +1481,12 @@ fn cmd_model(args: &[String]) {
 
                     // 检查是否符合规格
                     let size_mb = meta.len() as f64 / (1024.0 * 1024.0);
-                    if size_mb <= model::QIANLU_MINI_MODEL_SIZE_MB {
-                        println!("   ✅ 模型大小 {:.2}MB ≤ 预算 {:.1}MB", size_mb, model::QIANLU_MINI_MODEL_SIZE_MB);
+                    if size_mb <= model::DUANYAN_MINI_MODEL_SIZE_MB {
+                        println!("   ✅ 模型大小 {:.2}MB ≤ 预算 {:.1}MB", size_mb, model::DUANYAN_MINI_MODEL_SIZE_MB);
                     } else {
-                        println!("   ❌ 模型大小 {:.2}MB > 预算 {:.1}MB!", size_mb, model::QIANLU_MINI_MODEL_SIZE_MB);
+                        println!("   ❌ 模型大小 {:.2}MB > 预算 {:.1}MB!", size_mb, model::DUANYAN_MINI_MODEL_SIZE_MB);
                     }
-                    println!("✅ gesture-10m-int4.qianlu 生成完成");
+                    println!("✅ gesture-10m-int4.duanyan 生成完成");
 
                     // 生成 benchmark C 代码
                     if !bench_out.is_empty() {
@@ -1501,7 +1501,7 @@ fn cmd_model(args: &[String]) {
             }
         }
         "benchmark" => {
-            // snar model benchmark --model <f.qianlu> --output <benchmark.c>
+            // hardy model benchmark --model <f.duanyan> --output <benchmark.c>
             let mut model_path = String::new();
             let mut output = String::new();
             let mut i = 1;
@@ -1514,8 +1514,8 @@ fn cmd_model(args: &[String]) {
                 i += 1;
             }
             if model_path.is_empty() || output.is_empty() {
-                eprintln!("用法: snar model benchmark --model <f.qianlu> --output <benchmark.c>");
-                eprintln!("  从 .qianlu 模型文件生成 ESP32-S3 benchmark C 代码");
+                eprintln!("用法: hardy model benchmark --model <f.duanyan> --output <benchmark.c>");
+                eprintln!("  从 .duanyan 模型文件生成 ESP32-S3 benchmark C 代码");
                 process::exit(1);
             }
 
@@ -1523,7 +1523,7 @@ fn cmd_model(args: &[String]) {
             println!("🧠 生成 ESP32-S3 benchmark 代码");
             println!("   模型: {}", model_path);
 
-            match model::QianluModel::read_from_file(mp) {
+            match model::DuanyanModel::read_from_file(mp) {
                 Ok(m) => {
                     let c_code = model::generate_esp32_benchmark(&m);
                     match fs::write(&output, &c_code) {
@@ -1539,9 +1539,9 @@ fn cmd_model(args: &[String]) {
             }
         }
         "deploy" => {
-            // snar model deploy <file> --sd <path>
+            // hardy model deploy <file> --sd <path>
             if args.len() < 2 {
-                eprintln!("用法: snar model deploy <model.qianlu> --sd <path>");
+                eprintln!("用法: hardy model deploy <model.duanyan> --sd <path>");
                 process::exit(1);
             }
             let model_path = Path::new(&args[1]);
@@ -1552,7 +1552,7 @@ fn cmd_model(args: &[String]) {
                 i += 1;
             }
             if sd_path.is_empty() {
-                eprintln!("用法: snar model deploy <model.qianlu> --sd <path>");
+                eprintln!("用法: hardy model deploy <model.duanyan> --sd <path>");
                 process::exit(1);
             }
             let sd_dir = Path::new(&sd_path);
@@ -1570,13 +1570,13 @@ fn cmd_model(args: &[String]) {
             }
         }
         "list" => {
-            // snar model list --prebuilt
+            // hardy model list --prebuilt
             let show_prebuilt = args.iter().any(|a| a == "--prebuilt");
             if !show_prebuilt {
-                println!("用法: snar model list --prebuilt");
+                println!("用法: hardy model list --prebuilt");
                 println!();
             }
-            println!("=== 官方预训练千漉Mini模型 ===");
+            println!("=== 官方预训练锻言Mini模型 ===");
             println!();
             println!("{:<28} {:<10} {:<16} {}", "模型名", "类型", "参数/量化", "应用场景");
             println!("{}", "-".repeat(72));
@@ -1584,7 +1584,7 @@ fn cmd_model(args: &[String]) {
                 println!("{:<28} {:<10} {:<16} {}", m.name, m.desc, m.params, m.use_case);
             }
             println!();
-            println!("下载: snar pack install <model-name>");
+            println!("下载: hardy pack install <model-name>");
         }
         _ => {
             eprintln!("未知子命令 '{}'", args[0]);
@@ -1598,48 +1598,48 @@ fn print_usage() {
     println!("猎术手册:");
     println!();
     println!("  编译与运行:");
-    println!("  snar build <file>                          锻造武器 (编译为 .hex)");
-    println!("  snar build <file> --target esp32            C 代码生成 (ESP-IDF 项目)");
-    println!("  snar build <file> --target arduino-avr      Arduino sketch 生成");
-    println!("  snar build <file> --target stm32            STM32 HAL 项目生成");
-    println!("  snar build <file> --target rpi              树莓派项目生成");
-    println!("  snar run   <file>                          原生执行 (直接运行输出)");
-    println!("  snar run   <file> --hw                     硬件模拟模式 (GPIO/UART/PWM)");
-    println!("  snar debug <file>                          调试模式 (单步/断点/寄存器)");
-    println!("  snar hunt  <file>                          设阱捕获 (编译+部署)");
-    println!("  snar track <file>                          追踪指令 (查看汇编)");
-    println!("  snar scan  <file>                          侦查目标 (代码分析+资源估算)");
+    println!("  hardy build <file>                          锻造武器 (编译为 .hex)");
+    println!("  hardy build <file> --target esp32            C 代码生成 (ESP-IDF 项目)");
+    println!("  hardy build <file> --target arduino-avr      Arduino sketch 生成");
+    println!("  hardy build <file> --target stm32            STM32 HAL 项目生成");
+    println!("  hardy build <file> --target rpi              树莓派项目生成");
+    println!("  hardy run   <file>                          原生执行 (直接运行输出)");
+    println!("  hardy run   <file> --hw                     硬件模拟模式 (GPIO/UART/PWM)");
+    println!("  hardy debug <file>                          调试模式 (单步/断点/寄存器)");
+    println!("  hardy hunt  <file>                          设阱捕获 (编译+部署)");
+    println!("  hardy track <file>                          追踪指令 (查看汇编)");
+    println!("  hardy scan  <file>                          侦查目标 (代码分析+资源估算)");
     println!();
     println!("  烧录:");
-    println!("  snar flash <file> --port COM3              烧录到指定串口");
-    println!("  snar flash <file> --board esp32             按板子类型自动选工具");
-    println!("  snar flash <file> --board arduino-nano      avrdude 上传");
-    println!("  snar flash <file> --board stm32f103         st-flash");
-    println!("  snar flash <file> --board counpre64         Gowin 烧录");
+    println!("  hardy flash <file> --port COM3              烧录到指定串口");
+    println!("  hardy flash <file> --board esp32             按板子类型自动选工具");
+    println!("  hardy flash <file> --board arduino-nano      avrdude 上传");
+    println!("  hardy flash <file> --board stm32f103         st-flash");
+    println!("  hardy flash <file> --board counpre64         Gowin 烧录");
     println!();
     println!("  板子管理:");
-    println!("  snar board list                            列出已知开发板");
-    println!("  snar board info <name>                     开发板详情");
-    println!("  snar board set <name>                      设置默认目标板");
-    println!("  snar monitor --port COM3                   串口监视器");
-    println!("  snar monitor --port COM3 --baud 115200     指定波特率");
+    println!("  hardy board list                            列出已知开发板");
+    println!("  hardy board info <name>                     开发板详情");
+    println!("  hardy board set <name>                      设置默认目标板");
+    println!("  hardy monitor --port COM3                   串口监视器");
+    println!("  hardy monitor --port COM3 --baud 115200     指定波特率");
     println!();
     println!("  项目管理:");
-    println!("  snar new <name> --board esp32              新建项目 (指定板子)");
-    println!("  snar init                                  当前目录初始化 snar 项目");
-    println!("  snar compat <file>                         Espruino/Moddable 兼容分析");
+    println!("  hardy new <name> --board esp32              新建项目 (指定板子)");
+    println!("  hardy init                                  当前目录初始化 hardy 项目");
+    println!("  hardy compat <file>                         Espruino/Moddable 兼容分析");
     println!();
-    println!("  千漉Mini AI:");
-    println!("  snar model convert --input <f> --output <f>  模型转换 (GGUF/NPY → .qianlu)");
-    println!("  snar model verify <model.qianlu>             验证模型文件");
-    println!("  snar model info <model.qianlu>               模型详情");
-    println!("  snar model deploy <f> --sd <path>            部署到SD卡");
-    println!("  snar model list --prebuilt                   官方预训练模型");
+    println!("  锻言Mini AI:");
+    println!("  hardy model convert --input <f> --output <f>  模型转换 (GGUF/NPY → .duanyan)");
+    println!("  hardy model verify <model.duanyan>             验证模型文件");
+    println!("  hardy model info <model.duanyan>               模型详情");
+    println!("  hardy model deploy <f> --sd <path>            部署到SD卡");
+    println!("  hardy model list --prebuilt                   官方预训练模型");
     println!();
     println!("  其他:");
-    println!("  snar lock  <hex>                           锁定硬件 (烧录指引)");
-    println!("  snar bite  <file>                          撕咬执行 (逐条解析)");
-    println!("  snar prey  [dir]                           猎物列表 (列出源码)");
+    println!("  hardy lock  <hex>                           锁定硬件 (烧录指引)");
+    println!("  hardy bite  <file>                          撕咬执行 (逐条解析)");
+    println!("  hardy prey  [dir]                           猎物列表 (列出源码)");
     println!();
     println!("选项:");
     println!("  -o <file>     输出文件");
@@ -1653,20 +1653,20 @@ fn print_usage() {
     println!("支持: .js (JavaScript) | .ts (TypeScript, 自动剥离类型)");
     println!();
     println!("示例:");
-    println!("  snar build hello.js --target esp32");
-    println!("  snar build blink.js --target arduino-avr --board arduino-uno");
-    println!("  snar build app.js --target stm32 -O");
-    println!("  snar build app.js --target rpi");
-    println!("  snar run   helloworld.js");
-    println!("  snar flash hello.hex --board arduino-nano --port COM3");
-    println!("  snar new my-app --board esp32 -t blinky");
-    println!("  snar init");
-    println!("  snar board list");
-    println!("  snar model info gesture-10m-int4.qianlu");
-    println!("  snar model list --prebuilt");
-    println!("  snar monitor --port COM3 --baud 115200");
+    println!("  hardy build hello.js --target esp32");
+    println!("  hardy build blink.js --target arduino-avr --board arduino-uno");
+    println!("  hardy build app.js --target stm32 -O");
+    println!("  hardy build app.js --target rpi");
+    println!("  hardy run   helloworld.js");
+    println!("  hardy flash hello.hex --board arduino-nano --port COM3");
+    println!("  hardy new my-app --board esp32 -t blinky");
+    println!("  hardy init");
+    println!("  hardy board list");
+    println!("  hardy model info gesture-10m-int4.duanyan");
+    println!("  hardy model list --prebuilt");
+    println!("  hardy monitor --port COM3 --baud 115200");
     println!();
-    println!("猎包子命令: snar pack help");
+    println!("猎包子命令: hardy pack help");
 }
 
 // =============================================================================
@@ -1690,8 +1690,8 @@ fn cmd_workspace(args: &[String]) {
             match workspace::workspace_init(&cwd, &name, monorepo) {
                 Ok(ws) => {
                     println!("✅ Workspace '{}' 初始化完成", ws.name);
-                    println!("  配置文件: snar.workspace.json");
-                    println!("  .snar/ 目录已创建");
+                    println!("  配置文件: hardy.workspace.json");
+                    println!("  .hardy/ 目录已创建");
                     if monorepo {
                         println!("  packages/shared/ 共享库已创建");
                     }
@@ -1705,7 +1705,7 @@ fn cmd_workspace(args: &[String]) {
         Some("build") => {
             let build_all = args.iter().any(|a| a == "--all");
             if !build_all {
-                eprintln!("用法: snar workspace build --all");
+                eprintln!("用法: hardy workspace build --all");
                 process::exit(1);
             }
             let mut ws = workspace::WorkspaceConfig::load(&cwd).unwrap_or_else(|e| {
@@ -1767,7 +1767,7 @@ fn cmd_workspace(args: &[String]) {
         }
         Some("add") => {
             if args.len() < 2 {
-                eprintln!("用法: snar workspace add <name> [--path <dir>] [--board <board>]");
+                eprintln!("用法: hardy workspace add <name> [--path <dir>] [--board <board>]");
                 process::exit(1);
             }
             let name = &args[1];
@@ -1831,9 +1831,9 @@ fn cmd_workspace(args: &[String]) {
             }
         }
         _ => {
-            println!("SNAR Workspace - 多项目管理");
+            println!("Hardy Workspace - 多项目管理");
             println!();
-            println!("用法: snar workspace <subcommand>");
+            println!("用法: hardy workspace <subcommand>");
             println!();
             println!("子命令:");
             println!("  init [--monorepo]          初始化 workspace");
@@ -1942,7 +1942,7 @@ fn cmd_git_cli(args: &[String]) {
                 i += 1;
             }
             if msg.is_empty() {
-                eprintln!("用法: snar git commit -m \"message\"");
+                eprintln!("用法: hardy git commit -m \"message\"");
                 process::exit(1);
             }
             match git_ops::git_commit(&cwd, &msg) {
@@ -1986,7 +1986,7 @@ fn cmd_git_cli(args: &[String]) {
         }
         Some("checkout") => {
             if args.len() < 2 {
-                eprintln!("用法: snar git checkout <branch>");
+                eprintln!("用法: hardy git checkout <branch>");
                 process::exit(1);
             }
             match git_ops::git_checkout(&cwd, &args[1]) {
@@ -2007,13 +2007,13 @@ fn cmd_git_cli(args: &[String]) {
                     Err(e) => eprintln!("❌ {}", e),
                 }
             } else {
-                eprintln!("用法: snar git hooks install");
+                eprintln!("用法: hardy git hooks install");
             }
         }
         _ => {
-            println!("SNAR Git - 版本控制集成");
+            println!("Hardy Git - 版本控制集成");
             println!();
-            println!("用法: snar git <subcommand>");
+            println!("用法: hardy git <subcommand>");
             println!();
             println!("子命令:");
             println!("  status             仓库状态");
@@ -2071,7 +2071,7 @@ fn cmd_lint(args: &[String]) {
     }
 
     if show_rules {
-        println!("SNAR Lint 规则列表:");
+        println!("Hardy Lint 规则列表:");
         println!("{:-<70}", "");
         for rule in &config.rules {
             let sev = config.effective_severity(&rule.id);
@@ -2253,7 +2253,7 @@ fn cmd_ci(args: &[String]) {
                 });
             }
             if !github && !gitlab {
-                println!("用法: snar ci template --github | --gitlab");
+                println!("用法: hardy ci template --github | --gitlab");
             }
         }
         Some("archive") => {
@@ -2269,9 +2269,9 @@ fn cmd_ci(args: &[String]) {
             }
         }
         _ => {
-            println!("SNAR CI/CD - 持续集成管线");
+            println!("Hardy CI/CD - 持续集成管线");
             println!();
-            println!("用法: snar ci <subcommand>");
+            println!("用法: hardy ci <subcommand>");
             println!();
             println!("子命令:");
             println!("  build --all                   CI模式编译");

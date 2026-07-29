@@ -1,6 +1,6 @@
-// SNARjs 硬件示例: LED 闪烁
+// HardyScript 硬件示例: LED 闪烁
 // 使用 GPIO API 控制 Pin 13 (板载 LED)
-// 运行: snar run examples/blink.js --hw
+// 运行: hardy run examples/blink.js --hw
 
 let LED = 13;
 GPIO.output(LED);

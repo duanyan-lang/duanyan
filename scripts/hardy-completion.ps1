@@ -1,7 +1,7 @@
-# SNARjs PowerShell Tab 补全脚本
+# HardyScript PowerShell Tab 补全脚本
 # Phase B: 命令行增强
 
-# 用法: 在 PowerShell 中运行 .\scripts\snar-completion.ps1 或添加到 $PROFILE
+# 用法: 在 PowerShell 中运行 .\scripts\hardy-completion.ps1 或添加到 $PROFILE
 
 $script:snarCommands = @(
     'build'
@@ -42,7 +42,7 @@ function Get-SnarCompletions {
     $snarIndex = -1
     
     for ($i = 0; $i -lt $elements.Count; $i++) {
-        if ($elements[$i].Value -eq 'snar') {
+        if ($elements[$i].Value -eq 'hardy') {
             $snarIndex = $i
             break
         }
@@ -116,7 +116,7 @@ function Get-SnarCompletions {
     return @()
 }
 
-Register-ArgumentCompleter -Native -CommandName 'snar' -ScriptBlock {
+Register-ArgumentCompleter -Native -CommandName 'hardy' -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
     
     Get-SnarCompletions -wordToComplete $wordToComplete -commandAst $commandAst | ForEach-Object {
@@ -124,4 +124,4 @@ Register-ArgumentCompleter -Native -CommandName 'snar' -ScriptBlock {
     }
 }
 
-Write-Host "SNARjs Tab 补全已加载! 输入 'snar ' 后按 Tab 键尝试补全。" -ForegroundColor Green
+Write-Host "HardyScript Tab 补全已加载! 输入 'hardy ' 后按 Tab 键尝试补全。" -ForegroundColor Green

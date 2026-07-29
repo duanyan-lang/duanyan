@@ -1,9 +1,9 @@
-//! .snarrc 配置文件解析
+//! .hardyrc 配置文件解析
 //!
 //! 支持项目级别的 Registry 配置:
 //! ```ini
-//! registry=https://packages.snar.dev
-//! token=snar_xxxxxxxxxxxx
+//! registry=https://packages.hardy.dev
+//! token=hardy_xxxxxxxxxxxx
 //! scope=@my-team
 //! ```
 
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-/// .snarrc 配置
+/// .hardyrc 配置
 #[derive(Debug, Clone)]
 pub struct SnarRc {
     pub registry: String,
@@ -32,18 +32,18 @@ impl Default for SnarRc {
 }
 
 impl SnarRc {
-    /// 从目录加载 .snarrc (查找当前目录 -> 父目录 -> 用户目录)
+    /// 从目录加载 .hardyrc (查找当前目录 -> 父目录 -> 用户目录)
     pub fn load(dir: &Path) -> Self {
         // 查找顺序: 当前目录 -> 父目录 -> HOME
         let candidates = vec![
-            dir.join(".snarrc"),
-            dir.join("_snarrc"),
+            dir.join(".hardyrc"),
+            dir.join("_hardyrc"),
         ];
 
         // 向上查找
         let mut current = dir.to_path_buf();
         loop {
-            let rc_path = current.join(".snarrc");
+            let rc_path = current.join(".hardyrc");
             if rc_path.exists() {
                 if let Ok(content) = fs::read_to_string(&rc_path) {
                     return Self::parse(&content);
@@ -54,7 +54,7 @@ impl SnarRc {
 
         // 检查 HOME 目录
         if let Some(home) = std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()) {
-            let home_rc = Path::new(&home).join(".snarrc");
+            let home_rc = Path::new(&home).join(".hardyrc");
             if home_rc.exists() {
                 if let Ok(content) = fs::read_to_string(&home_rc) {
                     return Self::parse(&content);
@@ -65,7 +65,7 @@ impl SnarRc {
         Self::default()
     }
 
-    /// 解析 .snarrc 内容 (INI 格式)
+    /// 解析 .hardyrc 内容 (INI 格式)
     pub fn parse(content: &str) -> Self {
         let mut rc = Self::default();
         let mut extra = HashMap::new();
@@ -93,7 +93,7 @@ impl SnarRc {
         rc
     }
 
-    /// 序列化为 .snarrc 格式
+    /// 序列化为 .hardyrc 格式
     pub fn to_string_repr(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("registry={}\n", self.registry));
@@ -111,16 +111,16 @@ impl SnarRc {
 
     /// 保存到目录
     pub fn save(&self, dir: &Path) -> Result<(), String> {
-        let path = dir.join(".snarrc");
+        let path = dir.join(".hardyrc");
         fs::write(&path, self.to_string_repr())
-            .map_err(|e| format!("写入 .snarrc 失败: {}", e))
+            .map_err(|e| format!("写入 .hardyrc 失败: {}", e))
     }
 }
 
-/// 获取有效的 registry URL (合并 .snarrc 和环境变量)
+/// 获取有效的 registry URL (合并 .hardyrc 和环境变量)
 pub fn get_effective_registry_url(dir: &Path) -> String {
-    // 优先级: 环境变量 > .snarrc > 默认值
-    if let Ok(url) = std::env::var("SNAR_REGISTRY") {
+    // 优先级: 环境变量 > .hardyrc > 默认值
+    if let Ok(url) = std::env::var("HARDY_REGISTRY") {
         return url;
     }
     let rc = SnarRc::load(dir);
@@ -132,21 +132,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_snarrc() {
+    fn test_parse_hardyrc() {
         let content = r#"
-# SNAR Registry 配置
-registry=https://packages.snar.dev
-token=snar_abc123
+# Hardy Registry 配置
+registry=https://packages.hardy.dev
+token=hardy_abc123
 scope=@my-team
 "#;
         let rc = SnarRc::parse(content);
-        assert_eq!(rc.registry, "https://packages.snar.dev");
-        assert_eq!(rc.token, Some("snar_abc123".to_string()));
+        assert_eq!(rc.registry, "https://packages.hardy.dev");
+        assert_eq!(rc.token, Some("hardy_abc123".to_string()));
         assert_eq!(rc.scope, Some("@my-team".to_string()));
     }
 
     #[test]
-    fn test_default_snarrc() {
+    fn test_default_hardyrc() {
         let rc = SnarRc::default();
         assert_eq!(rc.registry, "http://localhost:7890");
         assert!(rc.token.is_none());

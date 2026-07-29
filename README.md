@@ -1,8 +1,8 @@
-# SNARjs - JavaScript 编译器
+# HardyScript - JavaScript 编译器
 
 ## 项目概述
 
-SNARjs 是 OPENSNAR 生态系统的 JavaScript 编译器，为智能数卡提供 JS 运行时支持。
+HardyScript 是 OPENSNAR 生态系统的 JavaScript 编译器，为智能数卡提供 JS 运行时支持。
 
 **核心特性**：
 - ✅ 编译 JavaScript/TypeScript 为 **COUNPRE64 机器码**
@@ -14,7 +14,7 @@ SNARjs 是 OPENSNAR 生态系统的 JavaScript 编译器，为智能数卡提供
 ## 目录结构
 
 ```
-SNARjs/
+HardyScript/
 ├── src/              
 │   ├── compiler/     # 编译器核心
 │   ├── parser/       # JS/TS 解析器
@@ -30,7 +30,7 @@ SNARjs/
 
 ### 编译
 ```bash
-cd c:\OPENSNAR\SNARjs
+cd c:\OPENSNAR\HardyScript
 cargo +nightly-x86_64-pc-windows-gnu build --release -Zbuild-std
 ```
 
@@ -41,7 +41,7 @@ cargo test
 
 ## COUNPRE64 指令集
 
-SNARjs 生成 **COUNPRE64 自主指令集**机器码：
+HardyScript 生成 **COUNPRE64 自主指令集**机器码：
 
 ### 特性
 - **16 个通用寄存器** (x0-x15)
@@ -78,7 +78,7 @@ ADD  x3, x1, x2      # c = a + b
 OPENSNAR/
 ├── SNARcore/    ← 核心运行时（执行 COUNPRE64 机器码）
 ├── tianwu/      ← AI 大模型
-└── SNARjs/      ← JS 编译器（生成 COUNPRE64 机器码）✨
+└── HardyScript/      ← JS 编译器（生成 COUNPRE64 机器码）✨
 ```
 
 ## 编译流程

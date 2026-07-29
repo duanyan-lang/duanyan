@@ -685,7 +685,7 @@ impl Compiler {
     // =========================================================================
 
     fn compile_call(&mut self, name: &str, args: &[Expr], rd: u8) -> Result<(), String> {
-        // Phase C.3: 硬件 API 静态链接 — 拦截 snar:hw 调用
+        // Phase C.3: 硬件 API 静态链接 — 拦截 hardy:hw 调用
         if let Some(hw_call) = self.try_compile_hw_call(name, args, rd)? {
             return Ok(());
         }
@@ -721,7 +721,7 @@ impl Compiler {
 
     // =========================================================================
     // Phase C.3: 硬件 API 静态链接
-    // 拦截 snar:hw 调用，生成内存映射 I/O 指令
+    // 拦截 hardy:hw 调用，生成内存映射 I/O 指令
     // =========================================================================
 
     fn try_compile_hw_call(&mut self, name: &str, args: &[Expr], rd: u8) -> Result<Option<()>, String> {
