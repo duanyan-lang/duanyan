@@ -65,6 +65,7 @@ pub enum TokenKind {
     Le,         // <= Phase 9
     Ge,         // >= Phase 9
     Colon,      // :  Phase 10: 对象属性
+    At,         // @  Phase 3: 注解 (@realtime, @interrupt, @priority)
 
     // 结束
     Eof,

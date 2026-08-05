@@ -8,6 +8,14 @@ pub use ast::*;  // Phase 6: SourceStatement, SourceFunction
 
 use crate::lexer::{Token, TokenKind, TemplatePart};
 
+/// Phase 3.1: 注解信息
+#[derive(Debug, Clone)]
+struct Annotation {
+    name: String,
+    value: Option<u32>,       // 数值参数 (wcet_limit / priority / period_us)
+    str_value: Option<String>, // 字符串参数 (timer name)
+}
+
 /// 解析 Token 流为 AST
 pub fn parse(tokens: &[Token]) -> Result<Program, String> {
     let mut parser = Parser::new(tokens);
@@ -76,6 +84,39 @@ impl<'a> Parser<'a> {
                     let stmt = self.parse_export()?;
                     statements.push(SourceStatement { stmt, line });
                 }
+                // Phase 3.1: @realtime / @interrupt / @priority 注解
+                TokenKind::At => {
+                    let annotations = self.parse_annotations()?;
+                    // 注解后必须是 function 或 async function
+                    let mut func = if *self.peek() == TokenKind::Async {
+                        self.advance(); // consume 'async'
+                        let mut f = self.parse_function()?;
+                        f.is_async = true;
+                        f
+                    } else if *self.peek() == TokenKind::Function {
+                        self.parse_function()?
+                    } else {
+                        return Err(format!("行{}: 注解后必须是函数声明", line));
+                    };
+                    // 应用注解
+                    for ann in &annotations {
+                        match ann.name.as_str() {
+                            "realtime" => {
+                                func.is_realtime = true;
+                                func.wcet_limit_us = ann.value;
+                            }
+                            "interrupt" => {
+                                func.interrupt_timer = ann.str_value.clone();
+                                func.interrupt_period_us = ann.value;
+                            }
+                            "priority" => {
+                                func.priority = ann.value.map(|v| v as u8);
+                            }
+                            _ => {}
+                        }
+                    }
+                    functions.push(SourceFunction { func, line });
+                }
                 _ => {
                     let stmt = self.parse_statement()?;
                     statements.push(SourceStatement { stmt, line });
@@ -102,7 +143,58 @@ impl<'a> Parser<'a> {
         
         let body = self.parse_block()?;
         
-        Ok(Function { name, params, body, is_async: false })
+        Ok(Function { name, params, body, is_async: false, is_realtime: false, wcet_limit_us: None, interrupt_timer: None, interrupt_period_us: None, priority: None })
+    }
+
+    /// Phase 3.1: 解析注解序列 (@realtime, @interrupt, @priority)
+    fn parse_annotations(&mut self) -> Result<Vec<Annotation>, String> {
+        let mut annotations = Vec::new();
+        while *self.peek() == TokenKind::At {
+            self.advance(); // consume '@'
+            let name = match self.peek().clone() {
+                TokenKind::Ident(n) => { self.advance(); n }
+                _ => {
+                    let tok = &self.tokens[self.pos];
+                    return Err(format!("行{} 列{}: @ 后期望注解名", tok.line, tok.col));
+                }
+            };
+            let mut ann = Annotation { name, value: None, str_value: None };
+            // 解析可选参数 (...)
+            if *self.peek() == TokenKind::LParen {
+                self.advance(); // consume '('
+                // 解析参数列表
+                loop {
+                    match self.peek().clone() {
+                        TokenKind::RParen => { self.advance(); break; }
+                        TokenKind::Number(n) => {
+                            self.advance();
+                            ann.value = Some(n as u32);
+                        }
+                        TokenKind::StringLit(s) => {
+                            self.advance();
+                            ann.str_value = Some(s);
+                        }
+                        TokenKind::Ident(key) => {
+                            self.advance();
+                            // key: value 形式 (period_us: 100)
+                            if *self.peek() == TokenKind::Colon {
+                                self.advance(); // consume ':'
+                                if let TokenKind::Number(v) = self.peek().clone() {
+                                    self.advance();
+                                    if key == "period_us" {
+                                        ann.value = Some(v as u32);
+                                    }
+                                }
+                            }
+                        }
+                        TokenKind::Comma => { self.advance(); }
+                        _ => { self.advance(); } // skip unknown
+                    }
+                }
+            }
+            annotations.push(ann);
+        }
+        Ok(annotations)
     }
 
     fn parse_params(&mut self) -> Result<Vec<String>, String> {
@@ -148,6 +240,13 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Import => self.parse_import(),
             TokenKind::Export => self.parse_export(),
+            // Phase 1.4: await expr; 作为语句 (async 函数内)
+            TokenKind::Await => {
+                self.advance(); // consume 'await'
+                let expr = self.parse_unary()?;
+                self.expect(&TokenKind::Semi)?;
+                Ok(Statement::Expr(Expr::Await { expr: Box::new(expr) }))
+            }
             // Phase v1.5: async function 在语句位置
             TokenKind::Async => {
                 self.advance(); // consume 'async'
@@ -1318,5 +1417,54 @@ mod tests {
             }
             _ => panic!("期望 Let"),
         }
+    }
+
+    // Phase 3.1: @realtime 注解解析测试
+    #[test]
+    fn test_parse_realtime_annotation() {
+        let tokens = tokenize("@realtime\nfunction motorCtrl() { let x = 1; }").unwrap();
+        let program = parse(&tokens).unwrap();
+        assert_eq!(program.functions.len(), 1);
+        let func = &program.functions[0].func;
+        assert!(func.is_realtime, "应标记为 realtime");
+        assert_eq!(func.wcet_limit_us, None, "无参数时 WCET 为 None");
+        assert_eq!(func.name, "motorCtrl");
+    }
+
+    #[test]
+    fn test_parse_realtime_with_wcet() {
+        let tokens = tokenize("@realtime(1000)\nfunction readEncoder() { return 0; }").unwrap();
+        let program = parse(&tokens).unwrap();
+        let func = &program.functions[0].func;
+        assert!(func.is_realtime);
+        assert_eq!(func.wcet_limit_us, Some(1000), "WCET 应为 1000us");
+    }
+
+    #[test]
+    fn test_parse_interrupt_annotation() {
+        let src = "@interrupt(\"TIM2\", period_us: 100)\nfunction controlLoop() { let x = 1; }";
+        let tokens = tokenize(src).unwrap();
+        let program = parse(&tokens).unwrap();
+        let func = &program.functions[0].func;
+        assert_eq!(func.interrupt_timer, Some("TIM2".to_string()));
+        assert_eq!(func.interrupt_period_us, Some(100));
+    }
+
+    #[test]
+    fn test_parse_priority_annotation() {
+        let tokens = tokenize("@priority(0)\n@realtime\nfunction highest() { let x = 1; }").unwrap();
+        let program = parse(&tokens).unwrap();
+        let func = &program.functions[0].func;
+        assert_eq!(func.priority, Some(0), "优先级应为 0");
+        assert!(func.is_realtime, "应标记为 realtime");
+    }
+
+    #[test]
+    fn test_parse_realtime_async() {
+        let tokens = tokenize("@realtime\nasync function rt_async() { let x = 1; }").unwrap();
+        let program = parse(&tokens).unwrap();
+        let func = &program.functions[0].func;
+        assert!(func.is_realtime);
+        assert!(func.is_async, "应标记为 async");
     }
 }

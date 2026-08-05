@@ -1,0 +1,60 @@
+=== 编译阶段: Source (JavaScript) ===
+说明: 你写的 JavaScript 代码，和浏览器里一样
+
+```javascript
+let x = 42;
+```
+
+=== 编译阶段: Lexer → Token Stream ===
+说明: 把代码拆成一个个'单词'(Token): 关键字、数字、运算符
+
+Token 流:
+  [ 0] let             → KEYWORD
+  [ 1] x               → IDENTIFIER
+  [ 2] =               → OPERATOR
+  [ 3] 42;             → LITERAL_NUM
+
+=== 编译阶段: Parser → AST ===
+说明: 把 Token 组装成语法树(AST)，表达代码的逻辑结构
+
+AST (简化):
+  Program
+    ├─ VarDecl: let x = 42;
+
+=== 编译阶段: IR Generation ===
+说明: 转成中间表示(IR)，和具体硬件无关的通用指令
+
+IR (三地址码):
+  t0 = translate(let x = 42;)
+
+=== 编译阶段: Optimization Passes ===
+说明: 删除无用代码、常量折叠、循环优化
+
+优化 Pass:
+  [1] Dead Code Elimination → 删除未使用变量
+  [2] Constant Folding → 编译期计算常量表达式
+  [3] Loop Unrolling → 展开小循环
+  [4] Register Allocation → 分配物理寄存器
+  [5] WCET Annotation → 标注最坏执行路径
+
+=== 编译阶段: Code Generation (C/ASM) ===
+说明: 翻译成目标 C 代码或汇编，针对具体芯片
+
+生成的 C 代码 (片段):
+```c
+void app_main(void) {
+    /* 由 HardyScript 自动生成 */
+    /* 所有变量: 栈上分配, 无 malloc */
+    /* 所有循环: 有界, WCET 可计算 */
+}
+```
+
+=== 编译阶段: Linker → Binary ===
+说明: 把所有代码拼在一起，生成可烧录的 .bin/.hex
+
+输出文件:
+  app.bin  → 可烧录二进制 (裸机)
+  app.map  → 内存映射 (Flash/RAM 分布)
+  app.lst  → 反汇编清单 (调试用)
+  app.wcet → WCET 分析报告
+

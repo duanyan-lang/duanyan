@@ -167,90 +167,111 @@ impl Flasher for MockFlasher {
     }
 }
 
-/// ESP32 flasher: invokes esptool.py or prints manual instructions.
+/// ESP32 flasher: 使用 espflash 原生烧录（零外部依赖，不需要 Python/esptool/ESP-IDF）
 pub struct Esp32Flasher {
-    esptool: Option<PathBuf>,
     port: Option<String>,
 }
 
 impl Esp32Flasher {
     pub fn new(port: Option<String>) -> Self {
-        let esptool = Self::detect_esptool();
-        Self { esptool, port }
+        Self { port }
     }
 
-    fn detect_esptool() -> Option<PathBuf> {
-        // Try common esptool locations
-        let candidates = [
-            "esptool.py",
-            "esptool",
-            r"C:\Espressif\frameworks\esp-idf\tools\esptool_py\esptool.py",
-        ];
-        for c in &candidates {
-            let p = PathBuf::from(c);
-            if p.exists() {
-                return Some(p);
-            }
+    /// 自动检测 ESP 设备串口
+    fn detect_port(&self) -> Result<String, String> {
+        if let Some(p) = &self.port {
+            return Ok(p.clone());
         }
-        // Try `python -m esptool` via `where` on Windows
-        if cfg!(target_os = "windows") {
-            if let Ok(output) = Command::new("where").arg("esptool.py").output() {
-                if output.status.success() {
-                    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !path.is_empty() {
-                        return Some(PathBuf::from(path.lines().next().unwrap_or("")));
-                    }
+        // 扫描串口，找 ESP 设备 (CH340/CP2102/ESP USB-JTAG)
+        let esp_vids: [u16; 4] = [0x10C4, 0x1A86, 0x303A, 0x0403];
+        let ports = serialport::available_ports()
+            .map_err(|e| format!("串口扫描失败: {}", e))?;
+        for p in &ports {
+            if let serialport::SerialPortType::UsbPort(info) = &p.port_type {
+                if esp_vids.contains(&info.vid) {
+                    return Ok(p.port_name.clone());
                 }
             }
         }
-        None
+        // 回退: 返回第一个可用串口
+        ports.first()
+            .map(|p| p.port_name.clone())
+            .ok_or_else(|| "未检测到任何串口设备".to_string())
     }
 }
 
 impl Flasher for Esp32Flasher {
     fn name(&self) -> &str {
-        "ESP32 (esptool)"
+        "ESP32 (espflash 原生)"
     }
 
     fn flash(&self, artifact: &FirmwareArtifact) -> Result<FlashResult, String> {
-        let port = self.port.as_deref().unwrap_or("COM3");
+        use espflash::connection::{Connection, ResetAfterOperation, ResetBeforeOperation};
+        use espflash::flasher::Flasher as EspFlasher;
+        use espflash::target::DefaultProgressCallback;
+        use std::time::Duration;
+
+        let port_name = self.detect_port()?;
         let bin_path = artifact.bin_path.as_ref()
             .or(Some(&artifact.hex_path))
             .unwrap();
 
-        if let Some(esptool) = &self.esptool {
-            let output = Command::new(esptool)
-                .args(&[
-                    "--chip", "esp32",
-                    "--port", port,
-                    "write_flash",
-                    "0x10000",
-                ])
-                .arg(bin_path)
-                .output()
-                .map_err(|e| format!("启动 esptool 失败: {}", e))?;
+        let data = fs::read(bin_path)
+            .map_err(|e| format!("读取固件失败 {}: {}", bin_path.display(), e))?;
 
-            Ok(FlashResult {
-                success: output.status.success(),
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            })
-        } else {
-            let msg = format!(
-                "未找到 esptool.py。请手动烧录:\n\
-                 1. 安装 ESP-IDF: https://docs.espressif.com/projects/esp-idf/\n\
-                 2. cd <ESP-IDF项目目录>\n\
-                 3. idf.py build\n\
-                 4. idf.py -p {} flash monitor\n\
-                 或: python -m esptool --chip esp32 --port {} write_flash 0x10000 {}",
-                port, port, bin_path.display()
-            );
-            Ok(FlashResult {
-                success: true,
-                stdout: msg,
-                stderr: String::new(),
-            })
+        if data.is_empty() {
+            return Err("固件文件为空".to_string());
         }
+
+        // 打开串口 (Windows: open_native 返回 COMPort)
+        let serial = serialport::new(&port_name, 115_200)
+            .timeout(Duration::from_secs(3))
+            .open_native()
+            .map_err(|e| format!("无法打开串口 {}: {}", port_name, e))?;
+
+        let port_info = serialport::UsbPortInfo {
+            vid: 0x1A86,
+            pid: 0x7523,
+            serial_number: None,
+            manufacturer: None,
+            product: None,
+        };
+
+        let connection = Connection::new(
+            serial,
+            port_info,
+            ResetAfterOperation::HardReset,
+            ResetBeforeOperation::DefaultReset,
+            115_200,
+        );
+
+        // 连接芯片 (use_stub=true, verify=true, skip=false, chip=None auto-detect, baud=460800)
+        let mut flasher = EspFlasher::connect(connection, true, true, false, None, Some(460_800))
+            .map_err(|e| format!("连接 ESP32 失败: {}", e))?;
+
+        // 禁用看门狗
+        let _ = flasher.disable_watchdog();
+
+        // 烧录到地址 0x0 (bare-metal) 或 artifact.entry_address
+        let address = if artifact.entry_address > 0 {
+            artifact.entry_address
+        } else {
+            0x0
+        };
+
+        let mut progress = DefaultProgressCallback::default();
+        flasher
+            .write_bin_to_flash(address, &data, &mut progress)
+            .map_err(|e| format!("烧录失败: {}", e))?;
+
+        Ok(FlashResult {
+            success: true,
+            stdout: format!(
+                "✅ 烧录成功: {} → {} @ 0x{:X} ({} bytes, espflash 原生)",
+                bin_path.display(), port_name, address, data.len()
+            ),
+            stderr: String::new(),
+        })
     }
 }
 

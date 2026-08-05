@@ -39,6 +39,11 @@ impl Optimizer {
             name: func.name.clone(),
             params: func.params.clone(),
             is_async: func.is_async,
+            is_realtime: func.is_realtime,
+            wcet_limit_us: func.wcet_limit_us,
+            interrupt_timer: func.interrupt_timer.clone(),
+            interrupt_period_us: func.interrupt_period_us,
+            priority: func.priority,
             body: {
                 let optimized: Vec<SourceStatement> = func.body.iter()
                     .map(|ss| SourceStatement { stmt: self.optimize_statement(&ss.stmt), line: ss.line })

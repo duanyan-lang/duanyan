@@ -192,6 +192,15 @@ pub fn builtin_rules() -> Vec<LintRule> {
         LintRule { id: "promise-unhandled".into(), description: "Promise 返回值必须 await 或 .catch".into(), severity: Severity::Warning, fixable: false },
         LintRule { id: "async-stack-depth".into(), description: "async 函数嵌套不超过 5 层 (MCU 栈限制)".into(), severity: Severity::Warning, fixable: false },
         LintRule { id: "async-heap-budget".into(), description: "所有 async 上下文结构体总大小不超过 4KB".into(), severity: Severity::Error, fixable: false },
+        // Phase 2.5: 零 malloc 保证规则
+        LintRule { id: "no-dynamic-alloc".into(), description: "禁止动态内存分配 (new/Array(n)/字符串拼接)".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "array-bounds-static".into(), description: "编译期可确定的数组越界访问".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "pool-budget-exceeded".into(), description: "内存池预算超出 (对象/数组过多)".into(), severity: Severity::Warning, fixable: false },
+        // Phase 4.5: WCET 实时安全规则
+        LintRule { id: "wcet-exceeded".into(), description: "WCET 超过 @realtime 注解的上限".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "unbounded-loop-in-realtime".into(), description: "@realtime 中循环上界不可知".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "float-in-realtime".into(), description: "@realtime 中使用浮点".into(), severity: Severity::Warning, fixable: false },
+        LintRule { id: "deep-call-chain".into(), description: "调用链超过 5 层".into(), severity: Severity::Warning, fixable: false },
     ]
 }
 
@@ -606,6 +615,44 @@ pub fn lint_file(file_path: &Path, source: &str, config: &LintConfig) -> LintRes
         }
     }
 
+    // Phase 2.5: 零 malloc 保证检查
+    // no-dynamic-alloc: 检测 new / Array(n) / 字符串拼接
+    if !config.is_rule_disabled("no-dynamic-alloc") {
+        for (line_idx, line) in lines.iter().enumerate() {
+            let line_num = (line_idx + 1) as u32;
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") { continue; }
+            // 检测 new 关键字
+            if trimmed.contains("new ") && (trimmed.contains("new Array") || trimmed.contains("new Object") || trimmed.contains("new String")) {
+                let severity = config.effective_severity("no-dynamic-alloc");
+                diagnostics.push(LintDiagnostic {
+                    rule_id: "no-dynamic-alloc".into(),
+                    severity,
+                    message: "禁止动态内存分配: 使用对象字面量或数组字面量替代 new".into(),
+                    file: file_name.clone(),
+                    line: line_num,
+                    column: 1,
+                    suggestion: Some("使用 {} 或 [] 字面量，编译期确定大小".into()),
+                    fix: None,
+                });
+            }
+            // 检测 Array(n) 动态长度数组
+            if trimmed.contains("Array(") && !trimmed.contains("// Array") {
+                let severity = config.effective_severity("no-dynamic-alloc");
+                diagnostics.push(LintDiagnostic {
+                    rule_id: "no-dynamic-alloc".into(),
+                    severity,
+                    message: "禁止动态长度数组: 使用编译期已知长度的数组字面量".into(),
+                    file: file_name.clone(),
+                    line: line_num,
+                    column: 1,
+                    suggestion: Some("使用 [0, 0, 0, ...] 定长初始化".into()),
+                    fix: None,
+                });
+            }
+        }
+    }
+
     // 统计
     let error_count = diagnostics.iter().filter(|d| d.severity == Severity::Error).count() as u32;
     let warning_count = diagnostics.iter().filter(|d| d.severity == Severity::Warning).count() as u32;
@@ -892,7 +939,35 @@ mod tests {
     #[test]
     fn test_builtin_rules_count() {
         let rules = builtin_rules();
-        // 原始15条 + 新增4条 = 19条
-        assert_eq!(rules.len(), 24);
+        // 原始15条 + v5.1 4条 + async 5条 + Phase 2.5 3条 + Phase 4.5 4条 = 31条
+        assert_eq!(rules.len(), 31);
+    }
+
+    // Phase 2.5: 零 malloc lint 测试
+    #[test]
+    fn test_lint_no_dynamic_alloc_new() {
+        let config = LintConfig::default_config();
+        let source = "let arr = new Array(10);\n";
+        let result = lint_file(Path::new("test.js"), source, &config);
+        assert!(result.diagnostics.iter().any(|d| d.rule_id == "no-dynamic-alloc"),
+            "应检测 new Array");
+    }
+
+    #[test]
+    fn test_lint_no_dynamic_alloc_array_fn() {
+        let config = LintConfig::default_config();
+        let source = "let buf = Array(256);\n";
+        let result = lint_file(Path::new("test.js"), source, &config);
+        assert!(result.diagnostics.iter().any(|d| d.rule_id == "no-dynamic-alloc"),
+            "应检测 Array(n)");
+    }
+
+    #[test]
+    fn test_lint_no_dynamic_alloc_pass() {
+        let config = LintConfig::default_config();
+        let source = "let arr = [1, 2, 3, 4, 5];\nlet obj = { x: 10, y: 20 };\n";
+        let result = lint_file(Path::new("test.js"), source, &config);
+        assert!(!result.diagnostics.iter().any(|d| d.rule_id == "no-dynamic-alloc"),
+            "字面量不应触发 no-dynamic-alloc");
     }
 }

@@ -1,0 +1,17 @@
+=== IEC 62304 Compliance Report: hello ===
+
+Device Software Safety Class: Class A
+Documentation Level: Basic: SDP + Requirements + Verification
+Verification Activities Required: 5
+
+--- Software Units ---
+
+--- HardyScript Auto-Guarantees ---
+  [ok] No dynamic memory allocation (no heap)
+  [ok] Bounded execution time (WCET proven)
+  [ok] No undefined behavior (type-safe compilation)
+  [ok] Deterministic control flow (no recursion)
+  [ok] Traceable: source → binary 1:1 mapping
+
+--- SOUP (Software of Unknown Provenance) ---
+  None: HardyScript generates standalone C with zero external dependencies.

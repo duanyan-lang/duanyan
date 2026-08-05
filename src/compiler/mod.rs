@@ -1274,6 +1274,11 @@ impl Compiler {
                     params: params.clone(),
                     body: func_body,
                     is_async: false,
+                    is_realtime: false,
+                    wcet_limit_us: None,
+                    interrupt_timer: None,
+                    interrupt_period_us: None,
+                    priority: None,
                 };
                 // 记录函数信息
                 let addr = self.current_addr();

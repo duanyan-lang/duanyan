@@ -29,6 +29,12 @@ pub struct Function {
     pub params: Vec<String>,
     pub body: Vec<SourceStatement>,
     pub is_async: bool,  // Phase v1.5: async function
+    // Phase 3.1: 实时注解
+    pub is_realtime: bool,
+    pub wcet_limit_us: Option<u32>,
+    pub interrupt_timer: Option<String>,    // @interrupt("TIM2", ...)
+    pub interrupt_period_us: Option<u32>,   // @interrupt(..., period_us: 100)
+    pub priority: Option<u8>,               // @priority(0)
 }
 
 /// 语句

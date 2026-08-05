@@ -28,6 +28,27 @@ pub mod git_ops;
 pub mod lint;
 pub mod ci;
 pub mod async_transform;  // Phase v1.5: async/await 状态机变换
+pub mod scheduler;        // Phase 1.3: 多任务调度器 (setInterval → FreeRTOS)
+pub mod escape_analysis;  // Phase 2.1: 逃逸分析引擎
+pub mod memory_pool;      // Phase 2.2: 静态内存池生成器
+pub mod realtime_check;   // Phase 3.2: @realtime 编译器强制检查
+pub mod cfg;              // Phase 4.1: 控制流图构建
+pub mod wcet;             // Phase 4.2+4.3: WCET 分析引擎
+pub mod wcet_advanced;    // Phase W1: WCET 精度提升 (外设延迟+中断干扰+循环推断)
+pub mod rt_scheduler;     // Phase W2: 实时调度内核 (RMS/EDF+可调度性+优先级反转)
+pub mod can_deterministic; // Phase W3: 汽车通信确定性 (CAN调度+E2E延迟+看门狗)
+pub mod memory_determinism; // Phase W4: 内存与缓存确定性 (栈证明+Cache+DMA+MPU)
+pub mod certification;    // Phase W5: 认证级输出 (MISRA C+ASIL+MC/DC+追踪矩阵)
+pub mod industrial_control; // Phase IC: 工业控制 (IEC61131/EtherCAT/SIL3/运动控制)
+pub mod automotive;         // Phase AD: 自动驾驶 (CAN FD/混合关键性/Fail-Op/AUTOSAR)
+pub mod hardy_rtos;         // Phase RT: 嵌入式RTOS (微内核/IPC/BSP/形式化验证)
+pub mod avionics;           // Phase AV: 航空电子 (DO-178C/ARINC653/浮点确定/TMR)
+pub mod medical;            // Phase MD: 医疗器械 (IEC 62304/ISO 14971/故障安全)
+pub mod railway;            // Phase RW: 轨道交通 (EN 50128 SIL-4/联锁/安全通信)
+pub mod semiconductor;      // Phase SE: 半导体设备 (纳米定位/振动抑制/对准)
+pub mod education;          // Phase EDU: 教育平台 (课程/编译可视化/实验)
+pub mod robotics;           // Phase RB: 具身机器人 (运动学/力控/传感融合/安全协作)
+pub mod language_intelligence; // DUANYAN 语言智能引擎 (诊断/补全/悬停/行业规则)
 
 use std::path::Path;
 

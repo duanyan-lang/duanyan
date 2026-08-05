@@ -14,6 +14,8 @@ name = "hardyscript"
 path = "src/lib.rs"
 
 [dependencies]
+espflash = { version = "4", features = ["serialport"] }
+serialport = "4.2"
 
 [profile.release]
 opt-level = 2

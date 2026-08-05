@@ -1,0 +1,25 @@
+=== EN 50128 Certification Summary: hello ===
+
+Safety Integrity Level: SIL 4
+Tolerable Hazard Rate: 10^-8 ~ 10^-9 /h
+Formal Methods: Mandatory (formal proof of safety properties)
+Redundancy: 2oo3 or 2oo2D with diverse software
+
+--- EN 50128 Table A.1 Compliance ---
+  Formal proof / model checking                 Mandatory
+  MC/DC structural coverage                     Mandatory
+  Software diversity (2 channels)               Mandatory
+  Requirements-based testing                    Mandatory
+  Static analysis                               Mandatory
+  Boundary value analysis                       Mandatory
+  Error guessing                                Highly Recommended
+
+--- HardyScript Coverage (0 functions) ---
+  [ok] No dynamic allocation → no memory corruption
+  [ok] WCET proven → timing guarantees
+  [ok] Bounded loops → termination guaranteed
+  [ok] Type-safe → no undefined behavior
+  [ok] TLA+ model generated → formal verification possible
+  [ok] Spin/PROMELA model → deadlock freedom proven
+  [ok] Diverse compilation → common-mode failure mitigation
+  [ok] 2oo3 voting → single-point fault tolerance

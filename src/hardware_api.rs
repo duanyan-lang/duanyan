@@ -69,6 +69,8 @@ pub enum HardwareModule {
     Ai,
     /// hardy:sensor - 传感器
     Sensor,
+    /// hardy:motor - 电机/舵机控制
+    Motor,
 }
 
 impl HardwareModule {
@@ -78,6 +80,7 @@ impl HardwareModule {
             "hardy:esp32" => Some(Self::Esp32),
             "hardy:ai" => Some(Self::Ai),
             "hardy:sensor" => Some(Self::Sensor),
+            "hardy:motor" => Some(Self::Motor),
             _ => None,
         }
     }
@@ -132,6 +135,17 @@ pub enum HardwareCall {
     BrainInit { path: String },
     /// Brain.classify(input, labels) — 分类推理
     BrainClassify { n_labels: u8 },
+    // Phase 1.2: Motor/Servo API
+    /// Servo.attach(pin, min_us, max_us)
+    ServoAttach { pin: u8, min_us: u16, max_us: u16 },
+    /// Servo.write(pin, angle) — 0-180度
+    ServoWrite { pin: u8, angle: u8 },
+    /// Motor.init(in1, in2, ena)
+    MotorInit { in1: u8, in2: u8, ena: u8 },
+    /// Motor.setSpeed(motor_id, speed) — -255~255
+    MotorSetSpeed { motor_id: u8, speed: i16 },
+    /// Motor.brake(motor_id)
+    MotorBrake { motor_id: u8 },
 }
 
 /// 解析硬件API调用（编译器使用）
@@ -145,6 +159,16 @@ pub fn resolve_hardware_call(call_name: &str, args: &[i64]) -> Option<HardwareCa
         "Timer.delay" if args.len() >= 1 => Some(HardwareCall::TimerDelay { ms: args[0] as u32 }),
         "PWM.duty" if args.len() >= 2 => Some(HardwareCall::PwmDuty { pin: args[0] as u8, duty: args[1] as u16 }),
         "ADC.read" if args.len() >= 1 => Some(HardwareCall::AdcRead { channel: args[0] as u8 }),
+        // Phase 1.2: Servo/Motor
+        "Servo.attach" if args.len() >= 1 => {
+            let min_us = if args.len() >= 2 { args[1] as u16 } else { 500 };
+            let max_us = if args.len() >= 3 { args[2] as u16 } else { 2500 };
+            Some(HardwareCall::ServoAttach { pin: args[0] as u8, min_us, max_us })
+        }
+        "Servo.write" if args.len() >= 2 => Some(HardwareCall::ServoWrite { pin: args[0] as u8, angle: args[1] as u8 }),
+        "Motor.init" if args.len() >= 3 => Some(HardwareCall::MotorInit { in1: args[0] as u8, in2: args[1] as u8, ena: args[2] as u8 }),
+        "Motor.setSpeed" if args.len() >= 2 => Some(HardwareCall::MotorSetSpeed { motor_id: args[0] as u8, speed: args[1] as i16 }),
+        "Motor.brake" if args.len() >= 1 => Some(HardwareCall::MotorBrake { motor_id: args[0] as u8 }),
         _ => None,
     }
 }
@@ -167,6 +191,11 @@ pub fn hardware_call_to_description(call: &HardwareCall) -> String {
         HardwareCall::AdcRead { channel } => format!("ADC read channel {}", channel),
         HardwareCall::BrainInit { path } => format!("Brain.init: {}", path),
         HardwareCall::BrainClassify { n_labels } => format!("Brain.classify: {} labels", n_labels),
+        HardwareCall::ServoAttach { pin, min_us, max_us } => format!("Servo.attach pin {} ({}-{}us)", pin, min_us, max_us),
+        HardwareCall::ServoWrite { pin, angle } => format!("Servo.write pin {} → {}°", pin, angle),
+        HardwareCall::MotorInit { in1, in2, ena } => format!("Motor.init in1={} in2={} ena={}", in1, in2, ena),
+        HardwareCall::MotorSetSpeed { motor_id, speed } => format!("Motor.setSpeed #{} → {}", motor_id, speed),
+        HardwareCall::MotorBrake { motor_id } => format!("Motor.brake #{}", motor_id),
     }
 }
 
@@ -179,6 +208,7 @@ mod tests {
         assert_eq!(HardwareModule::from_import_source("hardy:hw"), Some(HardwareModule::Core));
         assert_eq!(HardwareModule::from_import_source("hardy:esp32"), Some(HardwareModule::Esp32));
         assert_eq!(HardwareModule::from_import_source("hardy:ai"), Some(HardwareModule::Ai));
+        assert_eq!(HardwareModule::from_import_source("hardy:motor"), Some(HardwareModule::Motor));
         assert_eq!(HardwareModule::from_import_source("unknown"), None);
     }
 
@@ -201,5 +231,41 @@ mod tests {
         assert_eq!(counpre64_map::TIMER_BASE, 0x300);
         assert_eq!(counpre64_map::PWM_BASE, 0x400);
         assert_eq!(counpre64_map::ADC_BASE, 0x500);
+    }
+
+    #[test]
+    fn test_resolve_servo_attach() {
+        let call = resolve_hardware_call("Servo.attach", &[13, 500, 2500]);
+        assert_eq!(call, Some(HardwareCall::ServoAttach { pin: 13, min_us: 500, max_us: 2500 }));
+    }
+
+    #[test]
+    fn test_resolve_servo_attach_defaults() {
+        let call = resolve_hardware_call("Servo.attach", &[12]);
+        assert_eq!(call, Some(HardwareCall::ServoAttach { pin: 12, min_us: 500, max_us: 2500 }));
+    }
+
+    #[test]
+    fn test_resolve_servo_write() {
+        let call = resolve_hardware_call("Servo.write", &[13, 90]);
+        assert_eq!(call, Some(HardwareCall::ServoWrite { pin: 13, angle: 90 }));
+    }
+
+    #[test]
+    fn test_resolve_motor_init() {
+        let call = resolve_hardware_call("Motor.init", &[2, 3, 5]);
+        assert_eq!(call, Some(HardwareCall::MotorInit { in1: 2, in2: 3, ena: 5 }));
+    }
+
+    #[test]
+    fn test_resolve_motor_set_speed() {
+        let call = resolve_hardware_call("Motor.setSpeed", &[0, 200]);
+        assert_eq!(call, Some(HardwareCall::MotorSetSpeed { motor_id: 0, speed: 200 }));
+    }
+
+    #[test]
+    fn test_resolve_motor_brake() {
+        let call = resolve_hardware_call("Motor.brake", &[0]);
+        assert_eq!(call, Some(HardwareCall::MotorBrake { motor_id: 0 }));
     }
 }

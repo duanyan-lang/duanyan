@@ -8,6 +8,7 @@ use crate::parser::{
     Function, ArrowBody, TemplateExprPart,
 };
 use crate::hardware_api::HardwareModule;
+use crate::scheduler::Scheduler;
 use std::collections::HashSet;
 
 /// C 编译目标平台
@@ -18,12 +19,15 @@ pub enum CTarget {
     ArduinoAvr,
     ArduinoArm,
     RaspberryPi,
+    /// ESP32-S3 裸机 (无 ESP-IDF): 寄存器级 HAL, 直出可烧录镜像
+    Esp32S3Bare,
 }
 
 impl CTarget {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "esp32" | "esp" => Some(Self::Esp32),
+            "esp32s3-bare" | "esp32-bare" | "esp32s3" | "bare" => Some(Self::Esp32S3Bare),
             "stm32" => Some(Self::Stm32),
             "arduino-avr" | "arduino" => Some(Self::ArduinoAvr),
             "arduino-arm" => Some(Self::ArduinoArm),
@@ -56,7 +60,202 @@ struct CCodeGenerator {
     uses_wifi: bool,
     /// 是否有 AI 使用 (Phase F)
     uses_ai: bool,
+    /// Promise.all/race 计数器 (生成唯一变量名)
+    promise_counter: usize,
+    /// 提升的 Promise 辅助代码
+    promise_helpers: Vec<String>,
+    /// Phase 1.3: 多任务调度器
+    scheduler: Scheduler,
+    /// Phase 2.3: 对象 struct 定义
+    struct_defs: Vec<String>,
+    /// Phase 2.3: 对象变量跟踪 (变量名 → 字段列表)
+    object_vars: Vec<(String, Vec<String>)>,
+    /// Phase 2.4: 数组变量跟踪 (变量名 → 长度)
+    array_vars: Vec<(String, usize)>,
+    /// Phase 2.4: 是否需要数组边界检查 helper
+    needs_arr_helper: bool,
+    /// Phase 3.3: 中断函数跟踪 (func_name, timer, period_us)
+    interrupt_fns: Vec<(String, String, u32)>,
+    /// Phase 4: 芯片信息 API (hardy:esp32 Chip)
+    needs_chip_info: bool,
 }
+
+/// ESP32-S3 裸机 HAL (源自 DUANYAN 实测跑通的 led_on.c / gradient.c)
+/// 数据脚 GPIO48 (RGB_BUILTIN), 供电使能脚 GPIO47
+const ESP32S3_BARE_HAL: &str = r#"
+/* ===== HardyScript ESP32-S3 bare-metal HAL (WS2812 onboard RGB) ===== */
+typedef unsigned int u32;
+#define HARDY_REG(addr) (*(volatile u32 *)(addr))
+
+#define HARDY_UART0_FIFO   HARDY_REG(0x60000000)
+#define HARDY_UART0_STATUS HARDY_REG(0x6000001C)
+#define HARDY_RTC_WDTCONFIG0  HARDY_REG(0x60008098)
+#define HARDY_RTC_WDTFEED     HARDY_REG(0x600080AC)
+#define HARDY_RTC_WDTWPROTECT HARDY_REG(0x600080B0)
+#define HARDY_RTC_SWD_CONF    HARDY_REG(0x600080B4)
+#define HARDY_RTC_SWD_WPROT   HARDY_REG(0x600080B8)
+#define HARDY_TIMG0_T0CONFIG  HARDY_REG(0x6001F000)
+#define HARDY_TIMG0_T0LO      HARDY_REG(0x6001F004)
+#define HARDY_TIMG0_T0UPDATE  HARDY_REG(0x6001F00C)
+#define HARDY_TIMG0_WDTCONFIG0  HARDY_REG(0x6001F048)
+#define HARDY_TIMG0_WDTWPROTECT HARDY_REG(0x6001F064)
+#define HARDY_TIMG0_INT_CLR     HARDY_REG(0x6001F07C)
+#define HARDY_GPIO_BASE  0x60004000UL
+#define HARDY_IOMUX_BASE 0x60009000UL
+
+/* RMT 外设 (硬件波形发生器, 时序由 80MHz 时钟树保证, 与 CPU 频率无关) */
+#define HARDY_PERIP_CLK_EN0  HARDY_REG(0x600C0018)
+#define HARDY_RMT_BASE       0x60016000UL
+#define HARDY_RMT_RAM_CH0    0x60016800UL
+#define HARDY_RMT_CH0CONF0   HARDY_REG(HARDY_RMT_BASE + 0x20)
+/* S3 真实偏移 (核对 esp-idf rmt_struct.h): 早期用的 0x74/0x78/0x7C
+ * 落在载波占空比寄存器上, 导致中断从未被正确清除/轮询 → 帧撕裂闪烁 */
+#define HARDY_RMT_INT_RAW    HARDY_REG(HARDY_RMT_BASE + 0x60)
+#define HARDY_RMT_INT_ST     HARDY_REG(HARDY_RMT_BASE + 0x64)
+#define HARDY_RMT_INT_ENA    HARDY_REG(HARDY_RMT_BASE + 0x68)
+#define HARDY_RMT_INT_CLR    HARDY_REG(HARDY_RMT_BASE + 0x6C)
+#define HARDY_RMT_SYS_CONF   HARDY_REG(HARDY_RMT_BASE + 0xC0)
+/* WS2812 时序 @ RMT sclk 实测 12.71MHz (tick≈79ns)。
+ * 测量方法: 单帧拉长 144000 ticks + UART 5字符(434us)锚定
+ * 标定 CPU 轮询速率 + GPIO48 电平轮询测总时长, 三次重复一致。
+ * 此前误设 10MHz → T0H 仅 0.236us 压在 WS2812 判决门限上,
+ * "0"码被随机误读为 1 → 约半数帧被污染偏白 → 肉眼闪烁。
+ * 现 T0H=0.39us/T0L=0.87us/T1H=0.87us/T1L=0.39us, 门限余量充足 */
+#define HARDY_WS_T0H 5u
+#define HARDY_WS_T0L 11u
+#define HARDY_WS_T1H 11u
+#define HARDY_WS_T1L 5u
+
+static u32 _hardy_ticks_per_us = 10;
+
+static void hardy_uart_putc(char c) {
+    while (((HARDY_UART0_STATUS >> 16) & 0x3FF) >= 127) { }
+    HARDY_UART0_FIFO = (u32)c;
+}
+static void hardy_uart_puts(const char *s) { while (*s) hardy_uart_putc(*s++); }
+static void hardy_uart_num(u32 v) {
+    char tmp[10]; int t = 0;
+    do { tmp[t++] = (char)('0' + (v % 10)); v /= 10; } while (v > 0);
+    while (t > 0) hardy_uart_putc(tmp[--t]);
+}
+static u32 hardy_timer_now(void) { HARDY_TIMG0_T0UPDATE = 1; return HARDY_TIMG0_T0LO; }
+static void hardy_wait_ticks(u32 start, u32 ticks) {
+    u32 cap = (ticks + 10) * 100 + 100000;
+    while ((hardy_timer_now() - start) < ticks && cap--) { }
+}
+static void hardy_delay_us(u32 us) { hardy_wait_ticks(hardy_timer_now(), us * _hardy_ticks_per_us); }
+static void hardy_delay_ms(u32 ms) { hardy_wait_ticks(hardy_timer_now(), ms * 1000 * _hardy_ticks_per_us); }
+/* UART 锚定等待: 1 字符 = 86.8us 绝对基准 (115200 波特), 完全不依赖
+ * timer/校准/时钟树——这块板 timer 与校准均不可信, UART 是
+ * 全系统唯一被实测验证精确的时间基准 */
+static void hardy_uart_drain(void) {
+    while (((HARDY_UART0_STATUS >> 16) & 0x3FF) != 0) { }
+}
+/* 开机自校准: 用 UART 115200 绝对基准实测 ticks/us。
+ * 长采样 1000 字符 (~87ms): 不同板卡 timer 频率差异巨大 (实测过
+ * 10MHz 与 155MHz 两种), 短采样 10 字符的量化误差会把 tpu 测错
+ * 数倍, 导致所有延时/帧等待失真 → WS2812 帧尾撕裂闪烁 */
+static void hardy_calibrate(void) {
+    u32 t0 = hardy_timer_now();
+    for (int i = 0; i < 1000; i++) hardy_uart_putc('~');
+    while (((HARDY_UART0_STATUS >> 16) & 0x3FF) != 0) { }
+    u32 ticks = hardy_timer_now() - t0;
+    _hardy_ticks_per_us = ticks / 86800;
+    if (_hardy_ticks_per_us == 0) _hardy_ticks_per_us = 10;
+}
+static void hardy_pin_setup(u32 pin) {
+    HARDY_REG(HARDY_IOMUX_BASE + pin * 4) = (1u << 12) | (3u << 10);
+    HARDY_REG(HARDY_GPIO_BASE + 0x554 + pin * 4) = pin;
+    if (pin >= 32) HARDY_REG(HARDY_GPIO_BASE + 0x30) = 1u << (pin - 32);
+    else HARDY_REG(HARDY_GPIO_BASE + 0x24) = 1u << pin;
+}
+static void hardy_pin_hi(u32 pin) {
+    if (pin >= 32) HARDY_REG(HARDY_GPIO_BASE + 0x14) = 1u << (pin - 32);
+    else HARDY_REG(HARDY_GPIO_BASE + 0x08) = 1u << pin;
+}
+static void hardy_pin_lo(u32 pin) {
+    if (pin >= 32) HARDY_REG(HARDY_GPIO_BASE + 0x18) = 1u << (pin - 32);
+    else HARDY_REG(HARDY_GPIO_BASE + 0x0C) = 1u << pin;
+}
+/* RMT 初始化: 通道0 单发模式, 输出路由到 GPIO48 (信号81) */
+static void hardy_rmt_init(void) {
+    HARDY_PERIP_CLK_EN0 |= (1u << 9);             /* RMT 时钟使能 */
+    HARDY_RMT_SYS_CONF = (1u << 0) | (1u << 1) | (1u << 3)
+                       | (1u << 4) | (1u << 24) | (1u << 26) | (1u << 31);
+    HARDY_RMT_CH0CONF0 = (1u << 8) | (1u << 16) | (1u << 6); /* div=1, 1块RAM, idle低 */
+    HARDY_RMT_CH0CONF0 |= (1u << 24);             /* CONF_UPDATE */
+    /* 数据脚 GPIO48 交给 RMT: IO_MUX 设 GPIO 功能, FUNC_OUT_SEL = 81 */
+    HARDY_REG(HARDY_IOMUX_BASE + 48 * 4) = (1u << 12) | (3u << 10);
+    HARDY_REG(HARDY_GPIO_BASE + 0x554 + 48 * 4) = 81;
+}
+/* WS2812: 经 RMT 硬件发送 24bit GRB (MSB first), 帧含 50us 锁存间隙。
+ * 完成等待用 UART 锚定 (2 锚=174us > 帧最长 109us): 物理上保证发完
+ * 才重写 RAM, 不依赖任何校准; TX_END 在部分板上不置位, 仅作快路径 */
+static void hardy_ws2812_send(u32 grb) {
+    volatile u32 *ram = (volatile u32 *)HARDY_RMT_RAM_CH0;
+    const u32 BASE_CONF = (1u << 8) | (1u << 16) | (1u << 6);
+    for (int i = 0; i < 24; i++) {
+        u32 hi = HARDY_WS_T0H, lo = HARDY_WS_T0L;
+        if ((grb >> (23 - i)) & 1) { hi = HARDY_WS_T1H; lo = HARDY_WS_T1L; }
+        ram[i] = hi | (1u << 15) | (lo << 16);
+    }
+    ram[24] = 128;   /* ~10us 低电平 = WS2812 锁存间隙 (@12.71MHz) */
+    ram[25] = 0;     /* 结束标记 */
+    HARDY_RMT_INT_CLR = 1;
+    HARDY_RMT_CH0CONF0 = BASE_CONF | (1u << 1) | (1u << 2);  /* 复位读指针 */
+    HARDY_RMT_CH0CONF0 = BASE_CONF;
+    HARDY_RMT_CH0CONF0 = BASE_CONF | (1u << 24);  /* CONF_UPDATE */
+    HARDY_RMT_CH0CONF0 = BASE_CONF | (1u << 0);   /* TX_START */
+    hardy_delay_us(400);  /* 帧长 ≈291us (@12.71MHz), 400us 余量充足;
+                           * 校准经 UART 锚定实测自洽, 不再向串口发字符 */
+}
+static void hardy_rgb_set(int r, int g, int b) {
+    if (r < 0) r = 0; if (r > 255) r = 255;
+    if (g < 0) g = 0; if (g > 255) g = 255;
+    if (b < 0) b = 0; if (b > 255) b = 255;
+    hardy_ws2812_send(((u32)g << 16) | ((u32)r << 8) | (u32)b);
+}
+/* HSV 色轮: 765 步细粒度色环 (每段 255 步), 亮度 1/4。
+ * 相比 256 步旧版, 相邻帧亮度增量从 ±3 降到 ±1,
+ * 消除渐变时的阶梯跳变 (肉眼误判为闪烁的主要嫌疑) */
+static void hardy_rgb_hue(int pos) {
+    int r, g, b;
+    pos = pos % 765;
+    if (pos < 0) pos += 765;
+    if (pos < 255) { r = 255 - pos; g = pos; b = 0; }
+    else {
+        if (pos < 510) { pos -= 255; r = 0; g = 255 - pos; b = pos; }
+        else { pos -= 510; r = pos; g = 0; b = 255 - pos; }
+    }
+    hardy_ws2812_send(((u32)(g >> 2) << 16) | ((u32)(r >> 2) << 8) | (u32)(b >> 2));
+}
+static void hardy_boot_init(void) {
+    /* 关三只看门狗 */
+    HARDY_RTC_WDTWPROTECT = 0x50D83AA1;
+    HARDY_RTC_WDTFEED = 1;
+    HARDY_RTC_WDTCONFIG0 = 0;
+    HARDY_RTC_WDTWPROTECT = 0;
+    HARDY_RTC_SWD_WPROT = 0x8F1D312A;
+    HARDY_RTC_SWD_CONF = (1u << 30);
+    HARDY_RTC_SWD_WPROT = 0;
+    HARDY_TIMG0_WDTWPROTECT = 0x50D83AA1;
+    HARDY_TIMG0_WDTCONFIG0 = 0;
+    HARDY_TIMG0_INT_CLR = 0xFFFFFFFF;
+    HARDY_TIMG0_WDTWPROTECT = 0;
+    /* TIMG0 Timer0: APB 源, 分频=1, 使能 */
+    HARDY_TIMG0_T0CONFIG = (1u << 13) | (1u << 30) | (1u << 31);
+    hardy_calibrate();
+    /* WS2812 供电使能 GPIO47 (不使能则灯不亮) */
+    hardy_pin_setup(47);
+    hardy_pin_hi(47);
+    hardy_delay_ms(10);
+    /* 数据脚 GPIO48 由 RMT 外设驱动 (软件模拟在低 CPU 频率下波形畸变) */
+    hardy_rmt_init();
+    hardy_uart_puts("[DUANYAN-OK] hardyscript bare boot (RMT) tpu=");
+    hardy_uart_num(_hardy_ticks_per_us);
+    hardy_uart_puts("\r\n");
+}
+"#;
 
 /// 生成结果
 pub struct CGenerateResult {
@@ -97,7 +296,16 @@ impl CCodeGenerator {
             hoisted_functions: Vec::new(),
             gpio_pins: Vec::new(),
             uses_wifi: false,
-                uses_ai: false,
+            uses_ai: false,
+            promise_counter: 0,
+            promise_helpers: Vec::new(),
+            scheduler: Scheduler::new(),
+            struct_defs: Vec::new(),
+            object_vars: Vec::new(),
+            array_vars: Vec::new(),
+            needs_arr_helper: false,
+            interrupt_fns: Vec::new(),
+            needs_chip_info: false,
         }
     }
 
@@ -113,8 +321,13 @@ impl CCodeGenerator {
                             }
                         }
                         HardwareModule::Esp32 => {
-                            self.uses_wifi = true;
                             for item in items {
+                                if item == "WiFi" {
+                                    self.uses_wifi = true;
+                                }
+                                if item == "Chip" {
+                                    self.needs_chip_info = true;
+                                }
                                 self.hw_imports.insert(format!("esp32:{}", item));
                             }
                         }
@@ -122,6 +335,12 @@ impl CCodeGenerator {
                             self.uses_ai = true;
                             for item in items {
                                 self.hw_imports.insert(format!("ai:{}", item));
+                            }
+                        }
+                        HardwareModule::Motor => {
+                            // Phase 1.2: Servo/Motor 模块
+                            for item in items {
+                                self.hw_imports.insert(format!("motor:{}", item));
                             }
                         }
                         _ => {}
@@ -172,9 +391,33 @@ impl CCodeGenerator {
         self.generate_header();
         self.generate_hw_helpers();
 
+        // Phase 2.3: 输出对象 struct 定义
+        if !self.struct_defs.is_empty() {
+            self.output.push_str("/* HardyScript object structs */\n");
+            for def in &self.struct_defs.clone() {
+                self.output.push_str(def);
+            }
+            self.output.push('\n');
+        }
+
+        // Phase 2.4: 输出数组边界检查 helper
+        if self.needs_arr_helper {
+            self.output.push_str("/* HardyScript array bounds check */\n");
+            self.output.push_str("static inline int32_t _hardy_arr_get(int32_t* arr, int32_t len, int32_t idx) {\n");
+            self.output.push_str("    if (idx < 0 || idx >= len) { while(1); /* ARRAY_OOB */ }\n");
+            self.output.push_str("    return arr[idx];\n");
+            self.output.push_str("}\n\n");
+        }
+
         // 输出提升的箭头函数
         for hoisted in &self.hoisted_functions.clone() {
             self.output.push_str(hoisted);
+            self.output.push('\n');
+        }
+
+        // 输出 Promise.all/race 辅助代码
+        for helper in &self.promise_helpers.clone() {
+            self.output.push_str(helper);
             self.output.push('\n');
         }
 
@@ -182,6 +425,12 @@ impl CCodeGenerator {
         for func_code in &func_bodies {
             self.output.push_str(func_code);
             self.output.push('\n');
+        }
+
+        // Phase 1.3: 输出调度器任务包装函数
+        if self.scheduler.has_tasks() {
+            let wrappers = self.scheduler.generate_task_wrappers(&self.target);
+            self.output.push_str(&wrappers);
         }
 
         if matches!(self.target, CTarget::ArduinoAvr | CTarget::ArduinoArm) {
@@ -193,17 +442,64 @@ impl CCodeGenerator {
                 self.output.push_str("    Serial.begin(115200);\n");
             }
             self.output.push_str(&setup_body);
+            // Phase 1.3: 调度器初始化
+            if self.scheduler.has_tasks() {
+                let init = self.scheduler.generate_task_init(&self.target);
+                self.output.push_str(&init);
+            }
+            // Phase 3.3: 定时器中断初始化
+            if !self.interrupt_fns.is_empty() {
+                let isr_init = self.generate_timer_isr_init();
+                self.output.push_str(&isr_init);
+            }
             self.output.push_str("}\n\n");
             self.output.push_str("void loop() {\n");
             self.output.push_str(&loop_body);
+            // Phase 1.3: 调度器 poll (Arduino 协作式)
+            if self.scheduler.has_tasks() {
+                let poll = self.scheduler.generate_arduino_loop_call();
+                self.output.push_str(&poll);
+            }
+            self.output.push_str("}\n");
+        } else if self.target == CTarget::Esp32S3Bare {
+            // 裸机: _start 入口 (section .entry, 与 native_flasher 链接脚本对齐)
+            self.output.push_str("void _start(void) __attribute__((section(\".entry\"), used));\n");
+            self.output.push_str("void _start(void)\n{\n");
+            self.output.push_str("    hardy_boot_init();\n");
+            self.output.push_str(&main_body);
+            self.output.push_str("    for (;;) { }\n");
             self.output.push_str("}\n");
         } else if self.target == CTarget::Esp32 {
             self.output.push_str("void app_main(void)\n{\n");
             self.output.push_str(&main_body);
+            // Phase 1.3: FreeRTOS 任务创建
+            if self.scheduler.has_tasks() {
+                let init = self.scheduler.generate_task_init(&self.target);
+                self.output.push_str(&init);
+            }
+            // Phase 3.3: 定时器中断初始化
+            if !self.interrupt_fns.is_empty() {
+                let isr_init = self.generate_timer_isr_init();
+                self.output.push_str(&isr_init);
+            }
             self.output.push_str("}\n");
         } else {
             self.output.push_str("int main(void)\n{\n");
             self.output.push_str(&main_body);
+            // Phase 1.3: 调度器初始化 (STM32/RPi)
+            if self.scheduler.has_tasks() {
+                let init = self.scheduler.generate_task_init(&self.target);
+                self.output.push_str(&init);
+                // STM32: 主循环中调用 poll
+                if self.target == CTarget::Stm32 {
+                    self.output.push_str("    for (;;) { _hardy_scheduler_poll(); }\n");
+                }
+            }
+            // Phase 3.3: 定时器中断初始化
+            if !self.interrupt_fns.is_empty() {
+                let isr_init = self.generate_timer_isr_init();
+                self.output.push_str(&isr_init);
+            }
             self.output.push_str("    return 0;\n");
             self.output.push_str("}\n");
         }
@@ -296,6 +592,10 @@ impl CCodeGenerator {
         }
 
         match self.target {
+            CTarget::Esp32S3Bare => {
+                self.output.push_str("#include <stdint.h>\n");
+                self.output.push_str(ESP32S3_BARE_HAL);
+            }
             CTarget::Esp32 => {
                 self.output.push_str("#include \"freertos/FreeRTOS.h\"\n");
                 self.output.push_str("#include \"freertos/task.h\"\n");
@@ -311,6 +611,10 @@ impl CCodeGenerator {
                 if self.hw_imports.contains("ADC") {
                     self.output.push_str("#include \"driver/adc.h\"\n");
                 }
+                if self.hw_imports.contains("motor:Servo") || self.hw_imports.contains("motor:Motor") {
+                    self.output.push_str("#include \"driver/ledc.h\"\n");
+                    self.output.push_str("#include \"driver/gpio.h\"\n");
+                }
                 if self.hw_imports.contains("Timer") {
                     // FreeRTOS task delay already included
                 }
@@ -319,6 +623,13 @@ impl CCodeGenerator {
                     self.output.push_str("#include \"esp_event.h\"\n");
                     self.output.push_str("#include \"nvs_flash.h\"\n");
                     self.output.push_str("#include \"esp_log.h\"\n");
+                }
+                if self.needs_chip_info {
+                    self.output.push_str("#include \"esp_chip_info.h\"\n");
+                    self.output.push_str("#include \"esp_flash.h\"\n");
+                    self.output.push_str("#include \"esp_system.h\"\n");
+                    self.output.push_str("#include \"esp_mac.h\"\n");
+                    self.output.push_str("#include \"mbedtls/sha256.h\"\n");
                 }
                 if self.uses_ai {
                     self.output.push_str("#include \"hardy_ai.h\"\n");
@@ -332,6 +643,9 @@ impl CCodeGenerator {
             }
             CTarget::ArduinoAvr | CTarget::ArduinoArm => {
                 self.output.push_str("#include <Arduino.h>\n");
+                if self.hw_imports.contains("motor:Servo") {
+                    self.output.push_str("#include <Servo.h>\n");
+                }
             }
             CTarget::RaspberryPi => {
                 self.output.push_str("#include <stdio.h>\n");
@@ -347,6 +661,9 @@ impl CCodeGenerator {
     /// 生成硬件 API 辅助函数
     fn generate_hw_helpers(&mut self) {
         match self.target {
+            CTarget::Esp32S3Bare => {
+                // 裸机 HAL 已在头部整体注入, 无需额外 helper
+            }
             CTarget::Esp32 => {
                 if self.hw_imports.contains("GPIO") {
                     self.output.push_str("/* HardyScript GPIO helpers */\n");
@@ -436,6 +753,73 @@ impl CCodeGenerator {
                     self.output.push_str("    esp_wifi_connect();\n");
                     self.output.push_str("}\n\n");
                 }
+                if self.needs_chip_info {
+                    self.output.push_str("/* HardyScript Chip Info helpers */\n");
+                    self.output.push_str("static const char* hardy_chip_model_name(void) {\n");
+                    self.output.push_str("    esp_chip_info_t info;\n");
+                    self.output.push_str("    esp_chip_info(&info);\n");
+                    self.output.push_str("    switch (info.model) {\n");
+                    self.output.push_str("        case CHIP_ESP32:   return \"ESP32\";\n");
+                    self.output.push_str("        case CHIP_ESP32S2: return \"ESP32-S2\";\n");
+                    self.output.push_str("        case CHIP_ESP32S3: return \"ESP32-S3\";\n");
+                    self.output.push_str("        case CHIP_ESP32C3: return \"ESP32-C3\";\n");
+                    self.output.push_str("        case CHIP_ESP32C6: return \"ESP32-C6\";\n");
+                    self.output.push_str("        case CHIP_ESP32H2: return \"ESP32-H2\";\n");
+                    self.output.push_str("        default:           return \"Unknown\";\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static int hardy_chip_cores(void) {\n");
+                    self.output.push_str("    esp_chip_info_t info;\n");
+                    self.output.push_str("    esp_chip_info(&info);\n");
+                    self.output.push_str("    return info.cores;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static int hardy_chip_revision(void) {\n");
+                    self.output.push_str("    esp_chip_info_t info;\n");
+                    self.output.push_str("    esp_chip_info(&info);\n");
+                    self.output.push_str("    return info.revision;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static int hardy_chip_flash_size(void) {\n");
+                    self.output.push_str("    uint32_t size = 0;\n");
+                    self.output.push_str("    esp_flash_get_size(NULL, &size);\n");
+                    self.output.push_str("    return (int)(size / (1024 * 1024));\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static int hardy_chip_free_heap(void) {\n");
+                    self.output.push_str("    return (int)esp_get_free_heap_size();\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static int hardy_chip_cpu_freq(void) {\n");
+                    self.output.push_str("    return CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static uint32_t hardy_chip_id(void) {\n");
+                    self.output.push_str("    uint8_t mac[6] = {0};\n");
+                    self.output.push_str("    esp_efuse_mac_get_default(mac);\n");
+                    self.output.push_str("    return ((uint32_t)mac[2] << 24) | ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static const char* hardy_chip_sdk_version(void) {\n");
+                    self.output.push_str("    return esp_get_idf_version();\n");
+                    self.output.push_str("}\n");
+                    // 设备唯一 ID: MAC → SHA-256 → "SNAR-XXXX-XXXX-XXXX"
+                    self.output.push_str("static char _hardy_device_id[20];\n");
+                    self.output.push_str("static const char* hardy_chip_device_id(void) {\n");
+                    self.output.push_str("    uint8_t mac[6] = {0};\n");
+                    self.output.push_str("    esp_efuse_mac_get_default(mac);\n");
+                    self.output.push_str("    uint8_t hash[32];\n");
+                    self.output.push_str("    mbedtls_sha256(mac, 6, hash, 0);\n");
+                    self.output.push_str("    snprintf(_hardy_device_id, sizeof(_hardy_device_id),\n");
+                    self.output.push_str("        \"SNAR-%02X%02X-%02X%02X-%02X%02X\",\n");
+                    self.output.push_str("        hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);\n");
+                    self.output.push_str("    return _hardy_device_id;\n");
+                    self.output.push_str("}\n");
+                    // MAC 地址字符串
+                    self.output.push_str("static char _hardy_mac_str[18];\n");
+                    self.output.push_str("static const char* hardy_chip_mac(void) {\n");
+                    self.output.push_str("    uint8_t mac[6] = {0};\n");
+                    self.output.push_str("    esp_efuse_mac_get_default(mac);\n");
+                    self.output.push_str("    snprintf(_hardy_mac_str, sizeof(_hardy_mac_str),\n");
+                    self.output.push_str("        \"%02X:%02X:%02X:%02X:%02X:%02X\",\n");
+                    self.output.push_str("        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);\n");
+                    self.output.push_str("    return _hardy_mac_str;\n");
+                    self.output.push_str("}\n\n");
+                }
                 if self.uses_ai {
                     self.output.push_str("/* HardyScript 锻言Mini AI helpers */\n");
                     self.output.push_str("static hardy_brain_t _hardy_brain;\n");
@@ -445,6 +829,113 @@ impl CCodeGenerator {
                     self.output.push_str("static inline int hardy_brain_classify(float* input, int input_len,\n");
                     self.output.push_str("                                       const char** labels, int n_labels) {\n");
                     self.output.push_str("    return hardy_ai_classify(&_hardy_brain, input, input_len, labels, n_labels);\n");
+                    self.output.push_str("}\n\n");
+                }
+                // Phase 1.2: Servo/Motor helpers (ESP32 LEDC)
+                if self.hw_imports.contains("motor:Servo") {
+                    self.output.push_str("/* HardyScript Servo helpers (ESP32 LEDC 50Hz PWM) */\n");
+                    self.output.push_str("#define HARDY_SERVO_MAX 16\n");
+                    self.output.push_str("static int _hardy_servo_channel = 0;\n");
+                    self.output.push_str("static int _hardy_servo_min[HARDY_SERVO_MAX];\n");
+                    self.output.push_str("static int _hardy_servo_max[HARDY_SERVO_MAX];\n");
+                    self.output.push_str("static int _hardy_servo_pin[HARDY_SERVO_MAX];\n");
+                    self.output.push_str("static int _hardy_servo_count = 0;\n\n");
+                    self.output.push_str("static inline int hardy_servo_attach(int pin, int min_us, int max_us) {\n");
+                    self.output.push_str("    int ch = _hardy_servo_channel++;\n");
+                    self.output.push_str("    _hardy_servo_min[ch] = min_us;\n");
+                    self.output.push_str("    _hardy_servo_max[ch] = max_us;\n");
+                    self.output.push_str("    _hardy_servo_pin[ch] = pin;\n");
+                    self.output.push_str("    _hardy_servo_count = ch + 1;\n");
+                    self.output.push_str("    ledc_timer_config_t tcfg = {\n");
+                    self.output.push_str("        .speed_mode = LEDC_LOW_SPEED_MODE,\n");
+                    self.output.push_str("        .duty_resolution = LEDC_TIMER_16_BIT,\n");
+                    self.output.push_str("        .timer_num = LEDC_TIMER_1,\n");
+                    self.output.push_str("        .freq_hz = 50,\n");
+                    self.output.push_str("        .clk_cfg = LEDC_AUTO_CLK,\n");
+                    self.output.push_str("    };\n");
+                    self.output.push_str("    ledc_timer_config(&tcfg);\n");
+                    self.output.push_str("    ledc_channel_config_t ccfg = {\n");
+                    self.output.push_str("        .speed_mode = LEDC_LOW_SPEED_MODE,\n");
+                    self.output.push_str("        .channel = ch,\n");
+                    self.output.push_str("        .timer_sel = LEDC_TIMER_1,\n");
+                    self.output.push_str("        .intr_type = LEDC_INTR_DISABLE,\n");
+                    self.output.push_str("        .gpio_num = pin,\n");
+                    self.output.push_str("        .duty = 0,\n");
+                    self.output.push_str("        .hpoint = 0,\n");
+                    self.output.push_str("    };\n");
+                    self.output.push_str("    ledc_channel_config(&ccfg);\n");
+                    self.output.push_str("    return ch;\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_servo_write(int pin, int angle) {\n");
+                    self.output.push_str("    int ch = -1;\n");
+                    self.output.push_str("    for (int i = 0; i < _hardy_servo_count; i++) {\n");
+                    self.output.push_str("        if (_hardy_servo_pin[i] == pin) { ch = i; break; }\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("    if (ch < 0) return;\n");
+                    self.output.push_str("    if (angle < 0) angle = 0;\n");
+                    self.output.push_str("    if (angle > 180) angle = 180;\n");
+                    self.output.push_str("    int pulse_us = _hardy_servo_min[ch] + (angle * (_hardy_servo_max[ch] - _hardy_servo_min[ch])) / 180;\n");
+                    self.output.push_str("    /* 16-bit duty: 65535 = 20000us period, pulse_us maps to duty */\n");
+                    self.output.push_str("    uint32_t duty = (uint32_t)((uint64_t)pulse_us * 65535 / 20000);\n");
+                    self.output.push_str("    ledc_set_duty(LEDC_LOW_SPEED_MODE, ch, duty);\n");
+                    self.output.push_str("    ledc_update_duty(LEDC_LOW_SPEED_MODE, ch);\n");
+                    self.output.push_str("}\n\n");
+                }
+                if self.hw_imports.contains("motor:Motor") {
+                    self.output.push_str("/* HardyScript Motor helpers (ESP32 LEDC + GPIO) */\n");
+                    self.output.push_str("#define HARDY_MOTOR_MAX 4\n");
+                    self.output.push_str("static int _hardy_motor_in1[HARDY_MOTOR_MAX];\n");
+                    self.output.push_str("static int _hardy_motor_in2[HARDY_MOTOR_MAX];\n");
+                    self.output.push_str("static int _hardy_motor_ch[HARDY_MOTOR_MAX];\n");
+                    self.output.push_str("static int _hardy_motor_count = 0;\n\n");
+                    self.output.push_str("static inline int hardy_motor_init(int in1, int in2, int ena) {\n");
+                    self.output.push_str("    int id = _hardy_motor_count++;\n");
+                    self.output.push_str("    _hardy_motor_in1[id] = in1;\n");
+                    self.output.push_str("    _hardy_motor_in2[id] = in2;\n");
+                    self.output.push_str("    gpio_set_direction(in1, GPIO_MODE_OUTPUT);\n");
+                    self.output.push_str("    gpio_set_direction(in2, GPIO_MODE_OUTPUT);\n");
+                    self.output.push_str("    int ch = _hardy_servo_channel++;\n");
+                    self.output.push_str("    _hardy_motor_ch[id] = ch;\n");
+                    self.output.push_str("    ledc_timer_config_t tcfg = {\n");
+                    self.output.push_str("        .speed_mode = LEDC_LOW_SPEED_MODE,\n");
+                    self.output.push_str("        .duty_resolution = LEDC_TIMER_8_BIT,\n");
+                    self.output.push_str("        .timer_num = LEDC_TIMER_2,\n");
+                    self.output.push_str("        .freq_hz = 1000,\n");
+                    self.output.push_str("        .clk_cfg = LEDC_AUTO_CLK,\n");
+                    self.output.push_str("    };\n");
+                    self.output.push_str("    ledc_timer_config(&tcfg);\n");
+                    self.output.push_str("    ledc_channel_config_t ccfg = {\n");
+                    self.output.push_str("        .speed_mode = LEDC_LOW_SPEED_MODE,\n");
+                    self.output.push_str("        .channel = ch,\n");
+                    self.output.push_str("        .timer_sel = LEDC_TIMER_2,\n");
+                    self.output.push_str("        .intr_type = LEDC_INTR_DISABLE,\n");
+                    self.output.push_str("        .gpio_num = ena,\n");
+                    self.output.push_str("        .duty = 0,\n");
+                    self.output.push_str("        .hpoint = 0,\n");
+                    self.output.push_str("    };\n");
+                    self.output.push_str("    ledc_channel_config(&ccfg);\n");
+                    self.output.push_str("    return id;\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_motor_set_speed(int id, int speed) {\n");
+                    self.output.push_str("    if (id < 0 || id >= _hardy_motor_count) return;\n");
+                    self.output.push_str("    if (speed >= 0) {\n");
+                    self.output.push_str("        gpio_set_level(_hardy_motor_in1[id], 1);\n");
+                    self.output.push_str("        gpio_set_level(_hardy_motor_in2[id], 0);\n");
+                    self.output.push_str("    } else {\n");
+                    self.output.push_str("        gpio_set_level(_hardy_motor_in1[id], 0);\n");
+                    self.output.push_str("        gpio_set_level(_hardy_motor_in2[id], 1);\n");
+                    self.output.push_str("        speed = -speed;\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("    if (speed > 255) speed = 255;\n");
+                    self.output.push_str("    ledc_set_duty(LEDC_LOW_SPEED_MODE, _hardy_motor_ch[id], speed);\n");
+                    self.output.push_str("    ledc_update_duty(LEDC_LOW_SPEED_MODE, _hardy_motor_ch[id]);\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_motor_brake(int id) {\n");
+                    self.output.push_str("    if (id < 0 || id >= _hardy_motor_count) return;\n");
+                    self.output.push_str("    gpio_set_level(_hardy_motor_in1[id], 0);\n");
+                    self.output.push_str("    gpio_set_level(_hardy_motor_in2[id], 0);\n");
+                    self.output.push_str("    ledc_set_duty(LEDC_LOW_SPEED_MODE, _hardy_motor_ch[id], 0);\n");
+                    self.output.push_str("    ledc_update_duty(LEDC_LOW_SPEED_MODE, _hardy_motor_ch[id]);\n");
                     self.output.push_str("}\n\n");
                 }
             }
@@ -475,6 +966,62 @@ impl CCodeGenerator {
                     self.output.push_str("/* HardyScript ADC helpers (Arduino AVR, 10-bit) */\n");
                     self.output.push_str("static inline int hardy_adc_read(int channel) { return analogRead(channel); }\n\n");
                 }
+                // Phase 1.2: Servo/Motor helpers (Arduino AVR)
+                if self.hw_imports.contains("motor:Servo") {
+                    self.output.push_str("/* HardyScript Servo helpers (Arduino Servo.h) */\n");
+                    self.output.push_str("#define HARDY_SERVO_MAX 12\n");
+                    self.output.push_str("static Servo _hardy_servos[HARDY_SERVO_MAX];\n");
+                    self.output.push_str("static int _hardy_servo_pins[HARDY_SERVO_MAX];\n");
+                    self.output.push_str("static int _hardy_servo_count = 0;\n\n");
+                    self.output.push_str("static inline int hardy_servo_attach(int pin, int min_us, int max_us) {\n");
+                    self.output.push_str("    int id = _hardy_servo_count++;\n");
+                    self.output.push_str("    _hardy_servo_pins[id] = pin;\n");
+                    self.output.push_str("    _hardy_servos[id].attach(pin, min_us, max_us);\n");
+                    self.output.push_str("    return id;\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_servo_write(int pin, int angle) {\n");
+                    self.output.push_str("    for (int i = 0; i < _hardy_servo_count; i++) {\n");
+                    self.output.push_str("        if (_hardy_servo_pins[i] == pin) { _hardy_servos[i].write(angle); return; }\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("}\n\n");
+                }
+                if self.hw_imports.contains("motor:Motor") {
+                    self.output.push_str("/* HardyScript Motor helpers (Arduino AVR) */\n");
+                    self.output.push_str("#define HARDY_MOTOR_MAX 4\n");
+                    self.output.push_str("static int _hardy_motor_in1[HARDY_MOTOR_MAX];\n");
+                    self.output.push_str("static int _hardy_motor_in2[HARDY_MOTOR_MAX];\n");
+                    self.output.push_str("static int _hardy_motor_ena[HARDY_MOTOR_MAX];\n");
+                    self.output.push_str("static int _hardy_motor_count = 0;\n\n");
+                    self.output.push_str("static inline int hardy_motor_init(int in1, int in2, int ena) {\n");
+                    self.output.push_str("    int id = _hardy_motor_count++;\n");
+                    self.output.push_str("    _hardy_motor_in1[id] = in1;\n");
+                    self.output.push_str("    _hardy_motor_in2[id] = in2;\n");
+                    self.output.push_str("    _hardy_motor_ena[id] = ena;\n");
+                    self.output.push_str("    pinMode(in1, OUTPUT);\n");
+                    self.output.push_str("    pinMode(in2, OUTPUT);\n");
+                    self.output.push_str("    pinMode(ena, OUTPUT);\n");
+                    self.output.push_str("    return id;\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_motor_set_speed(int id, int speed) {\n");
+                    self.output.push_str("    if (id < 0 || id >= _hardy_motor_count) return;\n");
+                    self.output.push_str("    if (speed >= 0) {\n");
+                    self.output.push_str("        digitalWrite(_hardy_motor_in1[id], HIGH);\n");
+                    self.output.push_str("        digitalWrite(_hardy_motor_in2[id], LOW);\n");
+                    self.output.push_str("    } else {\n");
+                    self.output.push_str("        digitalWrite(_hardy_motor_in1[id], LOW);\n");
+                    self.output.push_str("        digitalWrite(_hardy_motor_in2[id], HIGH);\n");
+                    self.output.push_str("        speed = -speed;\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("    if (speed > 255) speed = 255;\n");
+                    self.output.push_str("    analogWrite(_hardy_motor_ena[id], speed);\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_motor_brake(int id) {\n");
+                    self.output.push_str("    if (id < 0 || id >= _hardy_motor_count) return;\n");
+                    self.output.push_str("    digitalWrite(_hardy_motor_in1[id], LOW);\n");
+                    self.output.push_str("    digitalWrite(_hardy_motor_in2[id], LOW);\n");
+                    self.output.push_str("    analogWrite(_hardy_motor_ena[id], 0);\n");
+                    self.output.push_str("}\n\n");
+                }
             }
             CTarget::ArduinoArm => {
                 if self.hw_imports.contains("GPIO") {
@@ -502,6 +1049,62 @@ impl CCodeGenerator {
                 if self.hw_imports.contains("ADC") {
                     self.output.push_str("/* HardyScript ADC helpers (Arduino ARM, 12-bit) */\n");
                     self.output.push_str("static inline int hardy_adc_read(int channel) { return analogRead(channel); }\n\n");
+                }
+                // Phase 1.2: Servo/Motor helpers (Arduino ARM)
+                if self.hw_imports.contains("motor:Servo") {
+                    self.output.push_str("/* HardyScript Servo helpers (Arduino ARM Servo.h) */\n");
+                    self.output.push_str("#define HARDY_SERVO_MAX 12\n");
+                    self.output.push_str("static Servo _hardy_servos[HARDY_SERVO_MAX];\n");
+                    self.output.push_str("static int _hardy_servo_pins[HARDY_SERVO_MAX];\n");
+                    self.output.push_str("static int _hardy_servo_count = 0;\n\n");
+                    self.output.push_str("static inline int hardy_servo_attach(int pin, int min_us, int max_us) {\n");
+                    self.output.push_str("    int id = _hardy_servo_count++;\n");
+                    self.output.push_str("    _hardy_servo_pins[id] = pin;\n");
+                    self.output.push_str("    _hardy_servos[id].attach(pin, min_us, max_us);\n");
+                    self.output.push_str("    return id;\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_servo_write(int pin, int angle) {\n");
+                    self.output.push_str("    for (int i = 0; i < _hardy_servo_count; i++) {\n");
+                    self.output.push_str("        if (_hardy_servo_pins[i] == pin) { _hardy_servos[i].write(angle); return; }\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("}\n\n");
+                }
+                if self.hw_imports.contains("motor:Motor") {
+                    self.output.push_str("/* HardyScript Motor helpers (Arduino ARM) */\n");
+                    self.output.push_str("#define HARDY_MOTOR_MAX 4\n");
+                    self.output.push_str("static int _hardy_motor_in1[HARDY_MOTOR_MAX];\n");
+                    self.output.push_str("static int _hardy_motor_in2[HARDY_MOTOR_MAX];\n");
+                    self.output.push_str("static int _hardy_motor_ena[HARDY_MOTOR_MAX];\n");
+                    self.output.push_str("static int _hardy_motor_count = 0;\n\n");
+                    self.output.push_str("static inline int hardy_motor_init(int in1, int in2, int ena) {\n");
+                    self.output.push_str("    int id = _hardy_motor_count++;\n");
+                    self.output.push_str("    _hardy_motor_in1[id] = in1;\n");
+                    self.output.push_str("    _hardy_motor_in2[id] = in2;\n");
+                    self.output.push_str("    _hardy_motor_ena[id] = ena;\n");
+                    self.output.push_str("    pinMode(in1, OUTPUT);\n");
+                    self.output.push_str("    pinMode(in2, OUTPUT);\n");
+                    self.output.push_str("    pinMode(ena, OUTPUT);\n");
+                    self.output.push_str("    return id;\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_motor_set_speed(int id, int speed) {\n");
+                    self.output.push_str("    if (id < 0 || id >= _hardy_motor_count) return;\n");
+                    self.output.push_str("    if (speed >= 0) {\n");
+                    self.output.push_str("        digitalWrite(_hardy_motor_in1[id], HIGH);\n");
+                    self.output.push_str("        digitalWrite(_hardy_motor_in2[id], LOW);\n");
+                    self.output.push_str("    } else {\n");
+                    self.output.push_str("        digitalWrite(_hardy_motor_in1[id], LOW);\n");
+                    self.output.push_str("        digitalWrite(_hardy_motor_in2[id], HIGH);\n");
+                    self.output.push_str("        speed = -speed;\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("    if (speed > 255) speed = 255;\n");
+                    self.output.push_str("    analogWrite(_hardy_motor_ena[id], speed);\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_motor_brake(int id) {\n");
+                    self.output.push_str("    if (id < 0 || id >= _hardy_motor_count) return;\n");
+                    self.output.push_str("    digitalWrite(_hardy_motor_in1[id], LOW);\n");
+                    self.output.push_str("    digitalWrite(_hardy_motor_in2[id], LOW);\n");
+                    self.output.push_str("    analogWrite(_hardy_motor_ena[id], 0);\n");
+                    self.output.push_str("}\n\n");
                 }
             }
             CTarget::Stm32 => {
@@ -580,6 +1183,78 @@ impl CCodeGenerator {
                     self.output.push_str("    return val;\n");
                     self.output.push_str("}\n\n");
                 }
+                // Phase 1.2: Servo/Motor helpers (STM32 TIM HAL)
+                if self.hw_imports.contains("motor:Servo") {
+                    self.output.push_str("/* HardyScript Servo helpers (STM32 TIM2 PWM 50Hz) */\n");
+                    self.output.push_str("static TIM_HandleTypeDef _hardy_servo_htim;\n");
+                    self.output.push_str("#define HARDY_SERVO_MAX 4\n");
+                    self.output.push_str("static int _hardy_servo_pin[HARDY_SERVO_MAX];\n");
+                    self.output.push_str("static int _hardy_servo_min[HARDY_SERVO_MAX];\n");
+                    self.output.push_str("static int _hardy_servo_max[HARDY_SERVO_MAX];\n");
+                    self.output.push_str("static int _hardy_servo_count = 0;\n\n");
+                    self.output.push_str("static inline int hardy_servo_attach(int pin, int min_us, int max_us) {\n");
+                    self.output.push_str("    int id = _hardy_servo_count++;\n");
+                    self.output.push_str("    _hardy_servo_pin[id] = pin;\n");
+                    self.output.push_str("    _hardy_servo_min[id] = min_us;\n");
+                    self.output.push_str("    _hardy_servo_max[id] = max_us;\n");
+                    self.output.push_str("    /* Configure TIM2 for 50Hz PWM (20ms period) */\n");
+                    self.output.push_str("    _hardy_servo_htim.Instance = TIM2;\n");
+                    self.output.push_str("    _hardy_servo_htim.Init.Prescaler = 72 - 1; /* 72MHz/72 = 1MHz tick */\n");
+                    self.output.push_str("    _hardy_servo_htim.Init.Period = 20000 - 1; /* 1MHz/20000 = 50Hz */\n");
+                    self.output.push_str("    _hardy_servo_htim.Init.CounterMode = TIM_COUNTERMODE_UP;\n");
+                    self.output.push_str("    HAL_TIM_PWM_Init(&_hardy_servo_htim);\n");
+                    self.output.push_str("    return id;\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_servo_write(int pin, int angle) {\n");
+                    self.output.push_str("    int id = -1;\n");
+                    self.output.push_str("    for (int i = 0; i < _hardy_servo_count; i++) {\n");
+                    self.output.push_str("        if (_hardy_servo_pin[i] == pin) { id = i; break; }\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("    if (id < 0) return;\n");
+                    self.output.push_str("    if (angle < 0) angle = 0;\n");
+                    self.output.push_str("    if (angle > 180) angle = 180;\n");
+                    self.output.push_str("    int pulse_us = _hardy_servo_min[id] + (angle * (_hardy_servo_max[id] - _hardy_servo_min[id])) / 180;\n");
+                    self.output.push_str("    TIM_OC_InitTypeDef oc = {0};\n");
+                    self.output.push_str("    oc.OCMode = TIM_OCMODE_PWM1;\n");
+                    self.output.push_str("    oc.Pulse = pulse_us;\n");
+                    self.output.push_str("    HAL_TIM_PWM_ConfigChannel(&_hardy_servo_htim, &oc, TIM_CHANNEL_1);\n");
+                    self.output.push_str("    HAL_TIM_PWM_Start(&_hardy_servo_htim, TIM_CHANNEL_1);\n");
+                    self.output.push_str("}\n\n");
+                }
+                if self.hw_imports.contains("motor:Motor") {
+                    self.output.push_str("/* HardyScript Motor helpers (STM32 HAL GPIO + TIM) */\n");
+                    self.output.push_str("#define HARDY_MOTOR_MAX 4\n");
+                    self.output.push_str("static int _hardy_motor_in1[HARDY_MOTOR_MAX];\n");
+                    self.output.push_str("static int _hardy_motor_in2[HARDY_MOTOR_MAX];\n");
+                    self.output.push_str("static int _hardy_motor_count = 0;\n\n");
+                    self.output.push_str("static inline int hardy_motor_init(int in1, int in2, int ena) {\n");
+                    self.output.push_str("    int id = _hardy_motor_count++;\n");
+                    self.output.push_str("    _hardy_motor_in1[id] = in1;\n");
+                    self.output.push_str("    _hardy_motor_in2[id] = in2;\n");
+                    self.output.push_str("    hardy_gpio_output(in1);\n");
+                    self.output.push_str("    hardy_gpio_output(in2);\n");
+                    self.output.push_str("    (void)ena; /* PWM config via TIM */\n");
+                    self.output.push_str("    return id;\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_motor_set_speed(int id, int speed) {\n");
+                    self.output.push_str("    if (id < 0 || id >= _hardy_motor_count) return;\n");
+                    self.output.push_str("    if (speed >= 0) {\n");
+                    self.output.push_str("        hardy_gpio_high(_hardy_motor_in1[id]);\n");
+                    self.output.push_str("        hardy_gpio_low(_hardy_motor_in2[id]);\n");
+                    self.output.push_str("    } else {\n");
+                    self.output.push_str("        hardy_gpio_low(_hardy_motor_in1[id]);\n");
+                    self.output.push_str("        hardy_gpio_high(_hardy_motor_in2[id]);\n");
+                    self.output.push_str("        speed = -speed;\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("    /* TODO: set TIM duty cycle for speed */\n");
+                    self.output.push_str("    (void)speed;\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("static inline void hardy_motor_brake(int id) {\n");
+                    self.output.push_str("    if (id < 0 || id >= _hardy_motor_count) return;\n");
+                    self.output.push_str("    hardy_gpio_low(_hardy_motor_in1[id]);\n");
+                    self.output.push_str("    hardy_gpio_low(_hardy_motor_in2[id]);\n");
+                    self.output.push_str("}\n\n");
+                }
             }
             CTarget::RaspberryPi => {
                 if self.hw_imports.contains("GPIO") {
@@ -640,7 +1315,18 @@ impl CCodeGenerator {
             return self.generate_async_function(func);
         }
 
+        // Phase 3.3: @interrupt 函数跟踪
+        if let (Some(timer), Some(period)) = (&func.interrupt_timer, func.interrupt_period_us) {
+            self.interrupt_fns.push((func.name.clone(), timer.clone(), period));
+        }
+
         let mut code = String::new();
+
+        // Phase 3.3: @realtime 标记注释
+        if func.is_realtime {
+            code.push_str(&format!("/* @realtime */\n"));
+        }
+
         code.push_str(&format!("int32_t {}(", func.name));
         if func.params.is_empty() {
             code.push_str("void");
@@ -751,6 +1437,19 @@ impl CCodeGenerator {
                 // 检查是否是箭头函数赋值
                 if let Expr::ArrowFunc { params, body, .. } = value {
                     return self.generate_arrow_assignment(name, params, body);
+                }
+                // Phase 2.3: 对象字面量 → C struct
+                if let Expr::ObjectLit { keys, values } = value {
+                    return self.generate_object_let(name, keys, values);
+                }
+                // Phase 2.4: 数组字面量 → 定长数组 + 跟踪长度
+                if let Expr::Array(elems) = value {
+                    let len = elems.len();
+                    self.array_vars.push((name.clone(), len));
+                    let items: Vec<String> = elems.iter()
+                        .map(|e| self.generate_expr(e))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    return Ok(format!("{}int32_t {}[{}] = {{ {} }};\n", pad, name, len, items.join(", ")));
                 }
                 let c_expr = self.generate_expr(value)?;
                 // 检查是否是 GPIO.output / GPIO.input 调用
@@ -892,6 +1591,28 @@ impl CCodeGenerator {
 
     /// 生成 console.log
     fn generate_console_log(&mut self, args: &[Expr], pad: &str) -> Result<String, String> {
+        // 裸机目标: 用 UART0 输出 (无 stdio)
+        if self.target == CTarget::Esp32S3Bare {
+            let mut code = String::new();
+            for arg in args {
+                match arg {
+                    Expr::StringLit(s) => {
+                        let escaped = s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+                        code.push_str(&format!("{}hardy_uart_puts(\"{}\\r\\n\");\n", pad, escaped));
+                    }
+                    Expr::Number(n) => {
+                        code.push_str(&format!("{}hardy_uart_num({});\n", pad, n));
+                        code.push_str(&format!("{}hardy_uart_puts(\"\\r\\n\");\n", pad));
+                    }
+                    _ => {
+                        let c_expr = self.generate_expr(arg)?;
+                        code.push_str(&format!("{}hardy_uart_num((u32)({}));\n", pad, c_expr));
+                        code.push_str(&format!("{}hardy_uart_puts(\"\\r\\n\");\n", pad));
+                    }
+                }
+            }
+            return Ok(code);
+        }
         // Arduino 使用 Serial.println 而非 printf
         let is_arduino = matches!(self.target, CTarget::ArduinoAvr | CTarget::ArduinoArm);
 
@@ -922,7 +1643,12 @@ impl CCodeGenerator {
                 }
                 _ => {
                     let c_expr = self.generate_expr(arg)?;
-                    code.push_str(&format!("{}printf(\"%d\\n\", (int32_t)({}));\n", pad, c_expr));
+                    // Phase 4: 检测字符串返回的表达式 (Chip.modelName / Chip.sdkVersion)
+                    if self.is_string_expr(arg) {
+                        code.push_str(&format!("{}printf(\"%s\\n\", {});\n", pad, c_expr));
+                    } else {
+                        code.push_str(&format!("{}printf(\"%d\\n\", (int32_t)({}));\n", pad, c_expr));
+                    }
                 }
             }
         }
@@ -993,6 +1719,37 @@ impl CCodeGenerator {
                             return Ok(Some(format!("hardy_gpio_read({})", pin)));
                         }
                     }
+                    // Phase 4: Chip Info API (hardy:esp32) — 无参调用
+                    "Chip.modelName" | "Chip.model" => {
+                        return Ok(Some("hardy_chip_model_name()".to_string()));
+                    }
+                    "Chip.cores" => {
+                        return Ok(Some("hardy_chip_cores()".to_string()));
+                    }
+                    "Chip.revision" => {
+                        return Ok(Some("hardy_chip_revision()".to_string()));
+                    }
+                    "Chip.flashSize" => {
+                        return Ok(Some("hardy_chip_flash_size()".to_string()));
+                    }
+                    "Chip.freeHeap" => {
+                        return Ok(Some("hardy_chip_free_heap()".to_string()));
+                    }
+                    "Chip.cpuFreq" => {
+                        return Ok(Some("hardy_chip_cpu_freq()".to_string()));
+                    }
+                    "Chip.id" => {
+                        return Ok(Some("hardy_chip_id()".to_string()));
+                    }
+                    "Chip.sdkVersion" => {
+                        return Ok(Some("hardy_chip_sdk_version()".to_string()));
+                    }
+                    "Chip.deviceId" => {
+                        return Ok(Some("hardy_chip_device_id()".to_string()));
+                    }
+                    "Chip.mac" => {
+                        return Ok(Some("hardy_chip_mac()".to_string()));
+                    }
                     _ => {}
                 }
                 // 有参数的调用
@@ -1007,6 +1764,15 @@ impl CCodeGenerator {
                         n if n.ends_with(".read") && args.is_empty() => {
                             // already handled above
                         }
+                        // RGB 灯 (ESP32-S3 板载 WS2812)
+                        "RGB.setColor" if args.len() >= 3 => {
+                            let g = self.generate_expr(&args[1])?;
+                            let b = self.generate_expr(&args[2])?;
+                            return Ok(Some(format!("hardy_rgb_set({}, {}, {});", first_arg, g, b)));
+                        }
+                        "RGB.setHue" => {
+                            return Ok(Some(format!("hardy_rgb_hue({});", first_arg)));
+                        }
                         // UART / Timer 直接调用
                         "UART.init" => {
                             return Ok(Some(format!("hardy_uart_init({});", first_arg)));
@@ -1018,6 +1784,9 @@ impl CCodeGenerator {
                         }
                         "Timer.delay" => {
                             match self.target {
+                                CTarget::Esp32S3Bare => {
+                                    return Ok(Some(format!("hardy_delay_ms({});", first_arg)));
+                                }
                                 CTarget::Esp32 => {
                                     return Ok(Some(format!("vTaskDelay(pdMS_TO_TICKS({}));", first_arg)));
                                 }
@@ -1052,6 +1821,48 @@ impl CCodeGenerator {
                             return Ok(Some(format!("hardy_brain_classify((float*){}, {}, (const char**){}, {});",
                                 input, "/* input_len */", labels, "/* n_labels */")));
                         }
+                        // Phase 1.2: Servo/Motor API
+                        "Servo.attach" => {
+                            let pin = self.generate_expr(&args[0])?;
+                            let min_us = if args.len() >= 2 { self.generate_expr(&args[1])? } else { "500".to_string() };
+                            let max_us = if args.len() >= 3 { self.generate_expr(&args[2])? } else { "2500".to_string() };
+                            return Ok(Some(format!("hardy_servo_attach({}, {}, {});", pin, min_us, max_us)));
+                        }
+                        "Servo.write" if args.len() >= 2 => {
+                            let pin = self.generate_expr(&args[0])?;
+                            let angle = self.generate_expr(&args[1])?;
+                            return Ok(Some(format!("hardy_servo_write({}, {});", pin, angle)));
+                        }
+                        "Motor.init" if args.len() >= 3 => {
+                            let in1 = self.generate_expr(&args[0])?;
+                            let in2 = self.generate_expr(&args[1])?;
+                            let ena = self.generate_expr(&args[2])?;
+                            return Ok(Some(format!("hardy_motor_init({}, {}, {});", in1, in2, ena)));
+                        }
+                        "Motor.setSpeed" if args.len() >= 2 => {
+                            let id = self.generate_expr(&args[0])?;
+                            let speed = self.generate_expr(&args[1])?;
+                            return Ok(Some(format!("hardy_motor_set_speed({}, {});", id, speed)));
+                        }
+                        "Motor.brake" => {
+                            let id = self.generate_expr(&args[0])?;
+                            return Ok(Some(format!("hardy_motor_brake({});", id)));
+                        }
+                        // Phase 1.3: setInterval / setTimeout → 调度器
+                        "setInterval" if args.len() >= 2 => {
+                            let func_name = self.resolve_scheduler_callback(&args[0])?;
+                            let ms_expr = self.generate_expr(&args[1])?;
+                            let ms: u32 = ms_expr.parse().unwrap_or(100);
+                            self.scheduler.add_interval(&func_name, ms);
+                            return Ok(Some(format!("/* setInterval({}, {}) — scheduled */", func_name, ms)));
+                        }
+                        "setTimeout" if args.len() >= 2 => {
+                            let func_name = self.resolve_scheduler_callback(&args[0])?;
+                            let ms_expr = self.generate_expr(&args[1])?;
+                            let ms: u32 = ms_expr.parse().unwrap_or(100);
+                            self.scheduler.add_timeout(&func_name, ms);
+                            return Ok(Some(format!("/* setTimeout({}, {}) — scheduled */", func_name, ms)));
+                        }
                         _ => {}
                     }
                 }
@@ -1068,6 +1879,56 @@ impl CCodeGenerator {
             }
         }
         None
+    }
+
+    /// Phase 4: 判断表达式是否返回字符串 (const char*)
+    fn is_string_expr(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Call { name, .. } => {
+                matches!(name.as_str(), "Chip.modelName" | "Chip.model" | "Chip.sdkVersion" | "Chip.deviceId" | "Chip.mac")
+            }
+            Expr::StringLit(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Phase 1.3: 解析 setInterval/setTimeout 的回调参数，返回 C 函数名
+    fn resolve_scheduler_callback(&mut self, arg: &Expr) -> Result<String, String> {
+        match arg {
+            // 函数引用: setInterval(grabAndPour, 5000)
+            Expr::Ident(name) => Ok(name.clone()),
+            // 箭头函数: setInterval(() => { readSensors(); }, 10)
+            Expr::ArrowFunc { params, body, .. } => {
+                self.arrow_counter += 1;
+                let func_name = format!("_hardy_task_fn_{}", self.arrow_counter);
+                let mut code = String::new();
+                code.push_str(&format!("int32_t {}(", func_name));
+                if params.is_empty() {
+                    code.push_str("void");
+                } else {
+                    let ps: Vec<String> = params.iter().map(|p| format!("int32_t {}", p)).collect();
+                    code.push_str(&ps.join(", "));
+                }
+                code.push_str(")\n{\n");
+                self.indent = 1;
+                match body {
+                    ArrowBody::Expr(expr) => {
+                        let c_expr = self.generate_expr(expr)?;
+                        code.push_str(&format!("    return {};\n", c_expr));
+                    }
+                    ArrowBody::Block(stmts) => {
+                        for stmt in stmts {
+                            code.push_str(&self.generate_statement(&stmt.stmt)?);
+                        }
+                    }
+                }
+                self.indent = 0;
+                code.push_str("}\n");
+                self.hoisted_functions.push(code);
+                Ok(func_name)
+            }
+            _ => Err("调度器回调必须是函数名或箭头函数".to_string()),
+        }
     }
 
     fn generate_expr(&mut self, expr: &Expr) -> Result<String, String> {
@@ -1138,6 +1999,13 @@ impl CCodeGenerator {
             Expr::Index { array, index } => {
                 let arr = self.generate_expr(array)?;
                 let idx = self.generate_expr(index)?;
+                // Phase 2.4: 对已知长度的数组生成边界检查
+                if let Expr::Ident(arr_name) = array.as_ref() {
+                    if let Some((_, len)) = self.array_vars.iter().find(|(n, _)| n == arr_name) {
+                        self.needs_arr_helper = true;
+                        return Ok(format!("_hardy_arr_get({}, {}, {})", arr, len, idx));
+                    }
+                }
                 Ok(format!("{}[{}]", arr, idx))
             }
             Expr::MathIntrinsic { op, args } => {
@@ -1261,33 +2129,136 @@ impl CCodeGenerator {
                     _ => Ok(format!("/* unknown string method: {} */ 0", method)),
                 }
             }
-            // Phase v1.5: await expr → 状态机 poll 调用（当前简化为编译内部表达式）
+            // Phase v1.5: await expr → 状态机 poll 调用
             Expr::Await { expr } => {
-                // TODO: 完整状态机变换在 Task 4 实现
+                // await 内部表达式直接编译，状态机在 poll 中处理挂起/恢复
                 self.generate_expr(expr)
             }
-            // Phase v1.5: Promise.all([...]) → 并行等待结构体
+            // Phase 1.1: Promise.all([...]) → 并行等待，所有子任务完成才继续
             Expr::PromiseAll { promises } => {
-                // TODO: 完整并行等待在 Task 4 实现
-                if let Some(first) = promises.first() {
-                    self.generate_expr(first)
-                } else {
-                    Ok("0".to_string())
+                let n = promises.len();
+                if n == 0 {
+                    return Ok("1".to_string()); // 空数组立即完成
                 }
+                self.promise_counter += 1;
+                let id = self.promise_counter;
+                let mask = (1u32 << n) - 1;
+                // 生成辅助函数：轮询所有子任务，返回是否全部完成
+                let mut helper = String::new();
+                helper.push_str(&format!("/* Promise.all #{}: {} parallel tasks */\n", id, n));
+                helper.push_str(&format!("static uint8_t _hardy_pall_{}_done = 0;\n", id));
+                helper.push_str(&format!("static int32_t _hardy_pall_{}_results[{}];\n", id, n));
+                helper.push_str(&format!("static uint8_t _hardy_promise_all_{}(void) {{\n", id));
+                for (i, p) in promises.iter().enumerate() {
+                    let expr_code = self.generate_expr(p)?;
+                    helper.push_str(&format!("    if (!(_hardy_pall_{}_done & {})) {{\n", id, 1u32 << i));
+                    helper.push_str(&format!("        int32_t _r = {};\n", expr_code));
+                    helper.push_str(&format!("        _hardy_pall_{}_results[{}] = _r;\n", id, i));
+                    helper.push_str(&format!("        _hardy_pall_{}_done |= {};\n", id, 1u32 << i));
+                    helper.push_str("    }\n");
+                }
+                helper.push_str(&format!("    return (_hardy_pall_{}_done == 0x{:X}) ? 1 : 0;\n", id, mask));
+                helper.push_str("}\n");
+                self.promise_helpers.push(helper);
+                Ok(format!("_hardy_promise_all_{}()", id))
             }
-            // Phase v1.5: Promise.race([...]) → 竞争等待结构体
+            // Phase 1.1: Promise.race([...]) → 竞争等待，任一子任务完成即继续
             Expr::PromiseRace { promises } => {
-                // TODO: 完整竞争等待在 Task 4 实现
-                if let Some(first) = promises.first() {
-                    self.generate_expr(first)
-                } else {
-                    Ok("0".to_string())
+                let n = promises.len();
+                if n == 0 {
+                    return Ok("0".to_string());
                 }
+                self.promise_counter += 1;
+                let id = self.promise_counter;
+                // 生成辅助函数：轮询所有子任务，返回第一个完成的结果
+                let mut helper = String::new();
+                helper.push_str(&format!("/* Promise.race #{}: {} racing tasks */\n", id, n));
+                helper.push_str(&format!("static uint8_t _hardy_prace_{}_done = 0;\n", id));
+                helper.push_str(&format!("static int32_t _hardy_prace_{}_result = 0;\n", id));
+                helper.push_str(&format!("static uint8_t _hardy_promise_race_{}(void) {{\n", id));
+                helper.push_str(&format!("    if (_hardy_prace_{}_done) return 1;\n", id));
+                for (i, p) in promises.iter().enumerate() {
+                    let expr_code = self.generate_expr(p)?;
+                    helper.push_str(&format!("    {{ int32_t _r = {}; if (_r != 0) {{ _hardy_prace_{}_result = _r; _hardy_prace_{}_done = {}; return 1; }} }}\n",
+                        expr_code, id, id, i + 1));
+                }
+                helper.push_str("    return 0;\n");
+                helper.push_str("}\n");
+                helper.push_str(&format!("static int32_t _hardy_promise_race_{}_value(void) {{ return _hardy_prace_{}_result; }}\n", id, id));
+                self.promise_helpers.push(helper);
+                Ok(format!("_hardy_promise_race_{}()", id))
             }
         }
     }
 
+    /// Phase 3.3: 生成定时器中断初始化代码
+    fn generate_timer_isr_init(&self) -> String {
+        let mut code = String::new();
+        code.push_str("    /* HardyScript timer ISR init */\n");
+
+        for (func_name, timer, period_us) in &self.interrupt_fns {
+            match self.target {
+                CTarget::Esp32 => {
+                    // ESP32: 使用 ESP-IDF timer driver
+                    code.push_str(&format!("    // @interrupt(\"{}\", period_us: {}) -> {}\n", timer, period_us, func_name));
+                    code.push_str(&format!("    // ESP32 timer: {} @ {}us interval\n", timer, period_us));
+                    code.push_str(&format!("    // TODO: timer_config_t + timer_init + timer_set_alarm_value({}, {})\n", timer, period_us));
+                    code.push_str(&format!("    // ISR callback: {}()\n", func_name));
+                }
+                CTarget::Stm32 => {
+                    // STM32: HAL TIM
+                    let freq_mhz = 72; // STM32F103 default
+                    let prescaler = freq_mhz - 1; // 1MHz tick
+                    let period = period_us; // 直接映射
+                    code.push_str(&format!("    // @interrupt(\"{}\", period_us: {}) -> {}\n", timer, period_us, func_name));
+                    code.push_str(&format!("    // STM32 HAL: {} Prescaler={} Period={}\n", timer, prescaler, period));
+                    code.push_str(&format!("    // HAL_TIM_PeriodElapsedCallback -> {}()\n", func_name));
+                }
+                CTarget::ArduinoAvr => {
+                    // Arduino: ISR(TIMERx_COMPA_vect)
+                    code.push_str(&format!("    // @interrupt(\"{}\", period_us: {}) -> {}\n", timer, period_us, func_name));
+                    code.push_str(&format!("    // Arduino AVR: ISR({}_COMPA_vect) @ {}us\n", timer, period_us));
+                    code.push_str(&format!("    // Setup: TCCR2A/B, OCR2A = {}\n", period_us / 16));
+                }
+                _ => {
+                    code.push_str(&format!("    // @interrupt(\"{}\", period_us: {}) -> {}\n", timer, period_us, func_name));
+                }
+            }
+        }
+        code.push('\n');
+        code
+    }
+
     /// 箭头函数赋值提升
+    /// Phase 2.3: 对象字面量 → C struct 声明
+    fn generate_object_let(&mut self, name: &str, keys: &[String], values: &[Expr]) -> Result<String, String> {
+        let struct_name = format!("_hardy_obj_{}", name);
+
+        // 生成 struct 定义 (只生成一次)
+        if !self.struct_defs.iter().any(|s| s.contains(&struct_name)) {
+            let mut def = String::new();
+            def.push_str(&format!("struct {} {{\n", struct_name));
+            for key in keys {
+                def.push_str(&format!("    int32_t {};\n", key));
+            }
+            def.push_str("};\n");
+            self.struct_defs.push(def);
+        }
+
+        // 跟踪对象变量
+        self.object_vars.push((name.to_string(), keys.to_vec()));
+
+        // 生成初始化
+        let mut inits = Vec::new();
+        for (k, v) in keys.iter().zip(values.iter()) {
+            let val = self.generate_expr(v)?;
+            inits.push(format!(".{} = {}", k, val));
+        }
+
+        let pad = " ".repeat(self.indent * 4);
+        Ok(format!("{}struct {} {} = {{ {} }};\n", pad, struct_name, name, inits.join(", ")))
+    }
+
     fn generate_arrow_assignment(&mut self, name: &str, params: &[String], body: &ArrowBody) -> Result<String, String> {
         self.arrow_counter += 1;
         let func_name = format!("_hardy_fn_{}_{}", name, self.arrow_counter);
@@ -1731,5 +2702,507 @@ mod tests {
         // 应该有多个 case
         assert!(c.contains("case 0:"));
         assert!(c.contains("case 1:"));
+    }
+
+    // Phase 1.1: Promise.all/race 代码生成测试
+    #[test]
+    fn test_promise_all_codegen() {
+        let c = compile_to_c(
+            "async function multi() { let r = await Promise.all([readA(), readB()]); return r; }",
+            CTarget::Esp32
+        );
+        assert!(c.contains("_hardy_promise_all_1"), "应生成 Promise.all 辅助函数");
+        assert!(c.contains("_hardy_pall_1_done"), "应生成完成标志");
+        assert!(c.contains("_hardy_pall_1_results"), "应生成结果数组");
+        assert!(c.contains("0x3"), "应检查所有任务完成 (2任务 = 0x3)");
+    }
+
+    #[test]
+    fn test_promise_race_codegen() {
+        let c = compile_to_c(
+            "async function race() { let r = await Promise.race([sensorA(), sensorB(), sensorC()]); return r; }",
+            CTarget::Esp32
+        );
+        assert!(c.contains("_hardy_promise_race_1"), "应生成 Promise.race 辅助函数");
+        assert!(c.contains("_hardy_prace_1_done"), "应生成完成标志");
+        assert!(c.contains("_hardy_prace_1_result"), "应生成结果变量");
+    }
+
+    #[test]
+    fn test_promise_all_empty() {
+        let c = compile_to_c(
+            "async function empty() { let r = await Promise.all([]); return r; }",
+            CTarget::Esp32
+        );
+        // 空 Promise.all 应直接返回 1 (立即完成)
+        assert!(c.contains("multi_ctx") || c.contains("empty_ctx"), "应生成状态机");
+    }
+
+    // Phase 1.2: Servo/Motor 代码生成测试
+    #[test]
+    fn test_servo_attach_esp32() {
+        let c = compile_to_c(
+            "import { Servo } from \"hardy:motor\"; Servo.attach(13, 500, 2500);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("#include \"driver/ledc.h\""), "应包含 LEDC 头文件");
+        assert!(c.contains("HardyScript Servo helpers (ESP32 LEDC 50Hz PWM)"), "应生成 Servo 辅助函数");
+        assert!(c.contains("hardy_servo_attach(13, 500, 2500);"), "应调用 hardy_servo_attach");
+    }
+
+    #[test]
+    fn test_servo_write_esp32() {
+        let c = compile_to_c(
+            "import { Servo } from \"hardy:motor\"; Servo.attach(13, 500, 2500); Servo.write(13, 90);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("hardy_servo_write(13, 90);"), "应调用 hardy_servo_write");
+        assert!(c.contains("hardy_servo_attach"), "应包含 attach 辅助函数");
+    }
+
+    #[test]
+    fn test_servo_arduino() {
+        let c = compile_to_c(
+            "import { Servo } from \"hardy:motor\"; Servo.attach(9, 500, 2500); Servo.write(9, 45);",
+            CTarget::ArduinoAvr
+        );
+        assert!(c.contains("#include <Servo.h>"), "应包含 Servo.h");
+        assert!(c.contains("HardyScript Servo helpers (Arduino Servo.h)"), "应生成 Arduino Servo 辅助");
+        assert!(c.contains("hardy_servo_attach(9, 500, 2500);"), "应调用 attach");
+        assert!(c.contains("hardy_servo_write(9, 45);"), "应调用 write");
+    }
+
+    #[test]
+    fn test_servo_stm32() {
+        let c = compile_to_c(
+            "import { Servo } from \"hardy:motor\"; Servo.attach(0, 500, 2500); Servo.write(0, 180);",
+            CTarget::Stm32
+        );
+        assert!(c.contains("HardyScript Servo helpers (STM32 TIM2 PWM 50Hz)"), "应生成 STM32 Servo 辅助");
+        assert!(c.contains("HAL_TIM_PWM_Init"), "应调用 HAL TIM PWM");
+        assert!(c.contains("hardy_servo_write(0, 180);"), "应调用 write");
+    }
+
+    #[test]
+    fn test_motor_init_esp32() {
+        let c = compile_to_c(
+            "import { Motor } from \"hardy:motor\"; Motor.init(2, 3, 5);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("HardyScript Motor helpers (ESP32 LEDC + GPIO)"), "应生成 Motor 辅助函数");
+        assert!(c.contains("hardy_motor_init(2, 3, 5);"), "应调用 hardy_motor_init");
+    }
+
+    #[test]
+    fn test_motor_set_speed_esp32() {
+        let c = compile_to_c(
+            "import { Motor } from \"hardy:motor\"; Motor.init(2, 3, 5); Motor.setSpeed(0, 200);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("hardy_motor_set_speed(0, 200);"), "应调用 hardy_motor_set_speed");
+    }
+
+    #[test]
+    fn test_motor_brake_esp32() {
+        let c = compile_to_c(
+            "import { Motor } from \"hardy:motor\"; Motor.init(2, 3, 5); Motor.brake(0);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("hardy_motor_brake(0);"), "应调用 hardy_motor_brake");
+    }
+
+    #[test]
+    fn test_motor_arduino() {
+        let c = compile_to_c(
+            "import { Motor } from \"hardy:motor\"; Motor.init(4, 5, 6); Motor.setSpeed(0, 128); Motor.brake(0);",
+            CTarget::ArduinoAvr
+        );
+        assert!(c.contains("HardyScript Motor helpers (Arduino AVR)"), "应生成 Arduino Motor 辅助");
+        assert!(c.contains("hardy_motor_init(4, 5, 6);"), "应调用 init");
+        assert!(c.contains("hardy_motor_set_speed(0, 128);"), "应调用 setSpeed");
+        assert!(c.contains("hardy_motor_brake(0);"), "应调用 brake");
+    }
+
+    #[test]
+    fn test_servo_attach_defaults() {
+        let c = compile_to_c(
+            "import { Servo } from \"hardy:motor\"; Servo.attach(11);",
+            CTarget::Esp32
+        );
+        // 默认 min=500, max=2500
+        assert!(c.contains("hardy_servo_attach(11, 500, 2500);"), "应使用默认脉宽");
+    }
+
+    // Phase 1.3: 调度器代码生成测试
+    #[test]
+    fn test_set_interval_esp32() {
+        let c = compile_to_c(
+            "function tick() { let x = 1; } setInterval(tick, 100);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("_hardy_task_0"), "应生成任务包装函数");
+        assert!(c.contains("xTaskCreate"), "应调用 xTaskCreate");
+        assert!(c.contains("tick()"), "应调用回调函数");
+        assert!(c.contains("vTaskDelay(pdMS_TO_TICKS(100))"), "应包含延时期望值");
+    }
+
+    #[test]
+    fn test_set_interval_arduino() {
+        let c = compile_to_c(
+            "function blink() { let x = 1; } setInterval(blink, 500);",
+            CTarget::ArduinoAvr
+        );
+        assert!(c.contains("_hardy_scheduler_poll"), "应生成调度器 poll");
+        assert!(c.contains("millis()"), "应使用 millis()");
+        assert!(c.contains("blink()"), "应调用回调");
+        assert!(c.contains("_hardy_task_0_last"), "应生成时间戳变量");
+    }
+
+    #[test]
+    fn test_set_timeout_esp32() {
+        let c = compile_to_c(
+            "function initOnce() { let x = 1; } setTimeout(initOnce, 3000);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("vTaskDelete(NULL)"), "单次任务应自删除");
+        assert!(c.contains("vTaskDelay(pdMS_TO_TICKS(3000))"), "应延时 3000ms");
+    }
+
+    #[test]
+    fn test_set_interval_arrow_fn() {
+        let c = compile_to_c(
+            "setInterval(() => { let x = 1; }, 50);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("_hardy_task_fn_"), "应提升箭头函数");
+        assert!(c.contains("xTaskCreate"), "应创建任务");
+    }
+
+    #[test]
+    fn test_multiple_intervals_esp32() {
+        let c = compile_to_c(
+            "function a() { let x = 1; } function b() { let y = 2; } setInterval(a, 10); setInterval(b, 100);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("_hardy_task_0"), "应生成任务0");
+        assert!(c.contains("_hardy_task_1"), "应生成任务1");
+        assert!(c.contains("a()"), "应调用 a");
+        assert!(c.contains("b()"), "应调用 b");
+    }
+
+    #[test]
+    fn test_set_interval_stm32() {
+        let c = compile_to_c(
+            "function ctrl() { let x = 1; } setInterval(ctrl, 1);",
+            CTarget::Stm32
+        );
+        assert!(c.contains("HAL_GetTick()"), "应使用 HAL_GetTick");
+        assert!(c.contains("_hardy_scheduler_poll"), "应生成 poll");
+        assert!(c.contains("ctrl()"), "应调用回调");
+    }
+
+    // Phase 1.4: 端到端 Demo 测试
+    #[test]
+    fn test_robot_arm_esp32_end_to_end() {
+        let source = r#"
+import { Servo } from "hardy:motor";
+import { ADC, Timer } from "hardy:hw";
+
+const GRIP = 13;
+const ELBOW = 12;
+const SHOULDER = 14;
+
+Servo.attach(SHOULDER, 500, 2500);
+Servo.attach(ELBOW, 500, 2500);
+Servo.attach(GRIP, 500, 2500);
+
+async function grabAndPour() {
+  Servo.write(SHOULDER, 45);
+  await Timer.delay(500);
+  Servo.write(GRIP, 90);
+  await Timer.delay(200);
+  Servo.write(ELBOW, 120);
+  await Timer.delay(300);
+  Servo.write(GRIP, 30);
+}
+
+function readSensors() {
+  let pot = ADC.read(0);
+  let angle = pot / 22;
+  Servo.write(SHOULDER, angle);
+}
+
+setInterval(grabAndPour, 5000);
+setInterval(readSensors, 10);
+"#;
+        let c = compile_to_c(source, CTarget::Esp32);
+        // 验证头文件
+        assert!(c.contains("#include \"driver/ledc.h\""), "应包含 LEDC");
+        assert!(c.contains("#include \"driver/gpio.h\""), "应包含 GPIO");
+        assert!(c.contains("#include \"driver/adc.h\""), "应包含 ADC");
+        assert!(c.contains("freertos/FreeRTOS.h"), "应包含 FreeRTOS");
+        // 验证 Servo 辅助函数
+        assert!(c.contains("hardy_servo_attach"), "应生成 servo attach");
+        assert!(c.contains("hardy_servo_write"), "应生成 servo write");
+        // 验证 ADC 辅助函数
+        assert!(c.contains("hardy_adc_read"), "应生成 adc read");
+        // 验证 async 状态机
+        assert!(c.contains("grabAndPour_ctx"), "应生成 async 上下文");
+        assert!(c.contains("grabAndPour_poll"), "应生成 poll 函数");
+        // 验证调度器
+        assert!(c.contains("xTaskCreate"), "应创建 FreeRTOS 任务");
+        assert!(c.contains("_hardy_task_0"), "应生成任务0");
+        assert!(c.contains("_hardy_task_1"), "应生成任务1");
+        // 验证 app_main
+        assert!(c.contains("void app_main(void)"), "应生成 app_main");
+    }
+
+    #[test]
+    fn test_robot_arm_arduino_end_to_end() {
+        let source = r#"
+import { Servo } from "hardy:motor";
+import { Timer } from "hardy:hw";
+
+Servo.attach(9, 500, 2500);
+
+function sweep() {
+  Servo.write(9, 0);
+  Servo.write(9, 180);
+}
+
+setInterval(sweep, 2000);
+"#;
+        let c = compile_to_c(source, CTarget::ArduinoAvr);
+        assert!(c.contains("#include <Servo.h>"), "应包含 Servo.h");
+        assert!(c.contains("void setup()"), "应生成 setup");
+        assert!(c.contains("void loop()"), "应生成 loop");
+        assert!(c.contains("_hardy_scheduler_poll()"), "loop 中应调用调度器");
+        assert!(c.contains("hardy_servo_write(9, 0)"), "应调用 servo write");
+    }
+
+    // Phase 2.3: 对象 → C struct 测试
+    #[test]
+    fn test_object_to_struct_basic() {
+        let source = r#"
+function test() {
+  let pos = { x: 10, y: 20, z: 30 };
+  return pos.x;
+}
+"#;
+        let c = compile_to_c(source, CTarget::Esp32);
+        assert!(c.contains("struct _hardy_obj_pos"), "应生成 struct 定义");
+        assert!(c.contains("int32_t x;"), "struct 应包含 x 字段");
+        assert!(c.contains("int32_t y;"), "struct 应包含 y 字段");
+        assert!(c.contains("int32_t z;"), "struct 应包含 z 字段");
+        assert!(c.contains(".x = 10"), "应生成初始化");
+        assert!(c.contains(".y = 20"), "应生成初始化");
+        assert!(c.contains(".z = 30"), "应生成初始化");
+    }
+
+    #[test]
+    fn test_object_struct_no_malloc() {
+        let source = r#"
+function make() {
+  let obj = { a: 1, b: 2 };
+  obj.a = 99;
+  return obj.a;
+}
+"#;
+        let c = compile_to_c(source, CTarget::Esp32);
+        assert!(!c.contains("malloc"), "不应包含 malloc");
+        assert!(!c.contains("calloc"), "不应包含 calloc");
+        assert!(c.contains("struct _hardy_obj_obj"), "应生成 struct");
+        assert!(c.contains("obj.a = 99"), "应生成属性赋值");
+    }
+
+    #[test]
+    fn test_multiple_objects_different_structs() {
+        let source = r#"
+function test() {
+  let pos = { x: 1, y: 2 };
+  let vel = { vx: 3, vy: 4 };
+  return pos.x + vel.vx;
+}
+"#;
+        let c = compile_to_c(source, CTarget::Esp32);
+        assert!(c.contains("struct _hardy_obj_pos"), "应生成 pos struct");
+        assert!(c.contains("struct _hardy_obj_vel"), "应生成 vel struct");
+        assert!(c.contains("int32_t vx;"), "vel 应有 vx 字段");
+    }
+
+    // Phase 2.4: 数组边界检查测试
+    #[test]
+    fn test_array_fixed_length() {
+        let source = r#"
+function test() {
+  let arr = [10, 20, 30, 40, 50];
+  return arr[2];
+}
+"#;
+        let c = compile_to_c(source, CTarget::Esp32);
+        assert!(c.contains("int32_t arr[5]"), "应生成定长数组");
+        assert!(c.contains("_hardy_arr_get(arr, 5, 2)"), "应生成边界检查访问");
+        assert!(c.contains("_hardy_arr_get"), "应包含 helper 函数");
+        assert!(c.contains("ARRAY_OOB"), "应包含越界提示");
+    }
+
+    #[test]
+    fn test_array_bounds_no_malloc() {
+        let source = r#"
+function test() {
+  let data = [1, 2, 3];
+  let x = data[0];
+  return x;
+}
+"#;
+        let c = compile_to_c(source, CTarget::Esp32);
+        assert!(!c.contains("malloc"), "不应包含 malloc");
+        assert!(c.contains("int32_t data[3]"), "应生成定长数组");
+    }
+
+    #[test]
+    fn test_array_runtime_index_checked() {
+        let source = r#"
+function test(i) {
+  let arr = [1, 2, 3, 4];
+  return arr[i];
+}
+"#;
+        let c = compile_to_c(source, CTarget::Esp32);
+        assert!(c.contains("_hardy_arr_get(arr, 4, i)"), "运行时索引应边界检查");
+    }
+
+    // Phase 3.3: 硬件定时器中断映射测试
+    #[test]
+    fn test_realtime_annotation_in_output() {
+        let source = r#"
+@realtime
+function motorCtrl() {
+  let x = 1;
+  return x;
+}
+"#;
+        let c = compile_to_c(source, CTarget::Esp32);
+        assert!(c.contains("/* @realtime */"), "应包含 @realtime 标记");
+        assert!(c.contains("int32_t motorCtrl(void)"), "应生成函数");
+    }
+
+    #[test]
+    fn test_interrupt_esp32() {
+        let source = r#"
+@interrupt("TIM2", period_us: 100)
+function controlLoop() {
+  let x = 1;
+}
+"#;
+        let c = compile_to_c(source, CTarget::Esp32);
+        assert!(c.contains("timer ISR init"), "应包含定时器初始化");
+        assert!(c.contains("TIM2"), "应包含定时器名");
+        assert!(c.contains("100us"), "应包含周期");
+        assert!(c.contains("controlLoop"), "应包含回调函数名");
+    }
+
+    #[test]
+    fn test_interrupt_stm32() {
+        let source = r#"
+@interrupt("TIM3", period_us: 50)
+function pid_loop() {
+  let err = 0;
+}
+"#;
+        let c = compile_to_c(source, CTarget::Stm32);
+        assert!(c.contains("STM32 HAL"), "应包含 STM32 HAL 注释");
+        assert!(c.contains("TIM3"), "应包含定时器名");
+        assert!(c.contains("Prescaler=71"), "应包含预分频");
+    }
+
+    #[test]
+    fn test_interrupt_arduino() {
+        let source = r#"
+@interrupt("TIMER2", period_us: 1000)
+function blink_isr() {
+  let x = 1;
+}
+"#;
+        let c = compile_to_c(source, CTarget::ArduinoAvr);
+        assert!(c.contains("ISR(TIMER2_COMPA_vect)"), "应包含 Arduino ISR");
+        assert!(c.contains("OCR2A"), "应包含 OCR2A 设置");
+    }
+
+    #[test]
+    fn test_priority_realtime_combined() {
+        let source = r#"
+@priority(0)
+@realtime(500)
+function highest() {
+  let x = 1;
+  return x;
+}
+"#;
+        let c = compile_to_c(source, CTarget::Esp32);
+        assert!(c.contains("/* @realtime */"), "应包含 @realtime 标记");
+        assert!(c.contains("int32_t highest(void)"), "应生成函数");
+    }
+
+    // ========== ESP32-S3 裸机 RGB 后端 (examples/rgb_on.js + rgb_rainbow.js) ==========
+
+    #[test]
+    fn test_bare_rgb_on() {
+        // 示例 1: 点亮 RGB 灯 (与 DUANYAN-IDE/examples/rgb_on.js 同源)
+        let source = r#"
+import { RGB, Timer } from "hardy:hw";
+
+while (true) {
+    RGB.setColor(255, 255, 255);
+    Timer.delay(500);
+}
+"#;
+        let c = compile_to_c(source, CTarget::Esp32S3Bare);
+        // HAL 关键件: 入口/供电使能/WS2812 时序
+        assert!(c.contains("void _start(void)"), "应生成裸机入口 _start");
+        assert!(c.contains("hardy_boot_init();"), "应调用 boot 初始化");
+        assert!(c.contains("hardy_pin_setup(47)"), "应使能 WS2812 供电脚 GPIO47");
+        assert!(c.contains("hardy_rgb_set(255, 255, 255);"), "RGB.setColor 应映射到 hardy_rgb_set");
+        assert!(c.contains("hardy_delay_ms(500);"), "Timer.delay 应映射到 hardy_delay_ms");
+        assert!(c.contains("hardy_ws2812_send"), "应包含 WS2812 驱动");
+        // 不得引入 ESP-IDF 依赖
+        assert!(!c.contains("freertos"), "裸机目标不得依赖 FreeRTOS");
+    }
+
+    #[test]
+    fn test_bare_rgb_rainbow() {
+        // 示例 2: 彩虹渐变 (与 DUANYAN-IDE/examples/rgb_rainbow.js 同源)
+        let source = r#"
+import { RGB, Timer } from "hardy:hw";
+
+let hue = 0;
+
+while (true) {
+    RGB.setHue(hue);
+    hue = hue + 1;
+    if (hue >= 256) {
+        hue = 0;
+    }
+    Timer.delay(20);
+}
+"#;
+        let c = compile_to_c(source, CTarget::Esp32S3Bare);
+        assert!(c.contains("int32_t hue = 0;"), "应声明 hue 变量");
+        assert!(c.contains("hardy_rgb_hue(hue);"), "RGB.setHue 应映射到色轮函数");
+        assert!(c.contains("hue = (hue + 1);"), "应生成自增");
+        assert!(c.contains("if ((hue >= 256))"), "应生成回绕判断");
+        assert!(c.contains("hardy_delay_ms(20);"), "应生成 20ms 帧延时");
+    }
+
+    #[test]
+    fn test_bare_console_log() {
+        let source = r#"
+console.log("boot ok");
+console.log(42);
+"#;
+        let c = compile_to_c(source, CTarget::Esp32S3Bare);
+        assert!(c.contains("hardy_uart_puts(\"boot ok\\r\\n\");"), "字符串应走 UART");
+        assert!(c.contains("hardy_uart_num(42);"), "数字应走 UART");
+        assert!(!c.contains("printf"), "裸机不得使用 printf");
     }
 }

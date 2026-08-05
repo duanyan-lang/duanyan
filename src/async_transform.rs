@@ -374,6 +374,73 @@ fn format_expr_brief(expr: &Expr) -> String {
     }
 }
 
+// =========================================================================
+// Phase 3.4: 无栈协程分析
+// =========================================================================
+
+/// 协程帧信息 (Phase 3.4)
+#[derive(Debug, Clone)]
+pub struct CoroutineFrame {
+    /// 函数名
+    pub func_name: String,
+    /// 帧大小 (bytes) — 编译期确定
+    pub frame_size: usize,
+    /// 状态数
+    pub state_count: usize,
+    /// 是否零动态分配
+    pub zero_alloc: bool,
+    /// 是否支持 @realtime (有界 poll)
+    pub realtime_safe: bool,
+}
+
+/// 分析协程帧大小 (Phase 3.4)
+pub fn analyze_coroutine_frame(func: &Function) -> Result<CoroutineFrame, String> {
+    let sm = transform_to_state_machine(func)?;
+
+    // 帧大小 = state(1) + params(4*N) + ctx_vars
+    let mut frame_size = 1; // state byte
+    frame_size += func.params.len() * 4; // 参数保存
+    for var in &sm.ctx_vars {
+        frame_size += var.size_bytes;
+    }
+    // 对齐到 4 字节
+    frame_size = (frame_size + 3) & !3;
+
+    Ok(CoroutineFrame {
+        func_name: func.name.clone(),
+        frame_size,
+        state_count: sm.state_count,
+        zero_alloc: true,  // 状态机始终零动态分配
+        realtime_safe: func.is_realtime,
+    })
+}
+
+/// 生成协程帧报告 (Phase 3.4)
+pub fn generate_coroutine_report(frames: &[CoroutineFrame]) -> String {
+    let mut report = String::new();
+    report.push_str("=== HardyScript Coroutine Frame Report ===\n\n");
+    report.push_str("Function            Frame(B)  States  ZeroAlloc  RT-Safe\n");
+    report.push_str("───────────────────────────────────────────────────────────\n");
+
+    let mut total_frame = 0usize;
+    for frame in frames {
+        report.push_str(&format!(
+            "{:<20}{:>6}    {:>4}    {:>7}    {:>5}\n",
+            frame.func_name,
+            frame.frame_size,
+            frame.state_count,
+            if frame.zero_alloc { "YES" } else { "NO" },
+            if frame.realtime_safe { "YES" } else { "-" },
+        ));
+        total_frame += frame.frame_size;
+    }
+
+    report.push_str(&format!("\nTotal static coroutine RAM: {} bytes\n", total_frame));
+    report.push_str("Heap allocation: 0 bytes (stackless coroutines)\n");
+
+    report
+}
+
 // === 测试 ===
 #[cfg(test)]
 mod tests {
@@ -579,5 +646,46 @@ async function readSensor() {
         // 5. 事件循环
         let event_loop = generate_c_event_loop("esp32");
         assert!(event_loop.contains("hardy_event_loop_run"));
+    }
+
+    // Phase 3.4: 无栈协程测试
+    #[test]
+    fn test_coroutine_frame_size() {
+        let tokens = tokenize("async function task(a, b) { let x = await delay(100); return x; }").unwrap();
+        let ast = parse(&tokens).unwrap();
+        let func = &ast.functions[0].func;
+
+        let frame = analyze_coroutine_frame(func).unwrap();
+        assert_eq!(frame.func_name, "task");
+        assert!(frame.frame_size > 0, "帧大小应 > 0");
+        assert!(frame.zero_alloc, "应零动态分配");
+        // state(1) + params(2*4=8) + ctx_vars + alignment
+        assert!(frame.frame_size >= 12, "帧应至少包含 state + params");
+    }
+
+    #[test]
+    fn test_coroutine_report() {
+        let tokens = tokenize("async function f1() { await delay(1); } async function f2() { await delay(2); }").unwrap();
+        let ast = parse(&tokens).unwrap();
+
+        let frames: Vec<CoroutineFrame> = ast.functions.iter()
+            .map(|sf| analyze_coroutine_frame(&sf.func).unwrap())
+            .collect();
+
+        let report = generate_coroutine_report(&frames);
+        assert!(report.contains("Coroutine Frame Report"));
+        assert!(report.contains("f1"));
+        assert!(report.contains("f2"));
+        assert!(report.contains("stackless coroutines"));
+    }
+
+    #[test]
+    fn test_coroutine_realtime_safe() {
+        let tokens = tokenize("@realtime async function rt_task() { await delay(1); }").unwrap();
+        let ast = parse(&tokens).unwrap();
+        let func = &ast.functions[0].func;
+
+        let frame = analyze_coroutine_frame(func).unwrap();
+        assert!(frame.realtime_safe, "@realtime 协程应标记为 realtime_safe");
     }
 }

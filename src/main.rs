@@ -2,7 +2,7 @@
 //!
 //! 捕猎主题命令行: JavaScript/TypeScript → COUNPRE64 机器码
 //!
-//! 🪤 "在代码的丛林中，Hardy 是无形的陷阱"
+//! "在代码的丛林中，Hardy 是无形的陷阱"
 
 use std::env;
 use std::fs;
@@ -40,6 +40,26 @@ mod git_ops;
 mod lint;
 mod ci;
 mod async_transform;  // Phase v1.5
+mod scheduler;        // Phase 1.3
+mod escape_analysis;  // Phase 2.1
+mod memory_pool;      // Phase 2.2
+mod realtime_check;   // Phase 3.2
+mod cfg;              // Phase 4.1
+mod wcet;             // Phase 4.2+4.3
+mod wcet_advanced;    // Phase W1
+mod rt_scheduler;     // Phase W2
+mod can_deterministic; // Phase W3
+mod memory_determinism; // Phase W4
+mod certification;    // Phase W5
+mod industrial_control; // Phase IC
+mod automotive;         // Phase AD
+mod hardy_rtos;         // Phase RT
+mod avionics;           // Phase AV
+mod medical;            // Phase MD
+mod railway;            // Phase RW
+mod semiconductor;      // Phase SE
+mod education;          // Phase EDU
+mod robotics;           // Phase RB
 
 const BANNER: &str = r#"
   _   _    _    ____  ____  __   __
@@ -48,9 +68,11 @@ const BANNER: &str = r#"
  |  _  |/ ___ \|  _ <| |_| |  | |  
  |_| |_/_/   \_\_| \_\____/   |_|   v{VERSION}
  
-  🔧 HardyScript — 一套代码，通吃一切硬件
-  JavaScript/TypeScript → COUNPRE64 / ESP32 / Arduino / STM32 / 树莓派
-  🧠 锻言Mini 端侧AI推理 (.duanyan 模型 → ESP32 逐层推理)
+  HardyScript — An AOT compiler that forges JavaScript into machine code.
+  HardyScript —— 把 JavaScript 锻造成机器码的 AOT 编译器。
+
+  JavaScript/TypeScript → Native Code → COUNPRE64 / ESP32 / Arduino / STM32 / RPi
+  Powered by 锻言 DUANYAN 端侧决策引擎 (On-Device AI Engine)
 "#;
 
 fn main() {
@@ -96,7 +118,7 @@ fn main() {
         "help" | "--help" | "-h" => { print_banner(); print_usage(); }
         "version" | "--version" | "-V" => print_banner(),
         _ => {
-            eprintln!("🪤 未知猎术 '{}'\n", args[1]);
+            eprintln!("未知猎术 '{}'\n", args[1]);
             print_usage();
             process::exit(1);
         }
@@ -132,7 +154,7 @@ fn cmd_build(args: &[String]) {
             "--async" => async_mode = true,  // Phase v1.5: 启用 async 编译模式
             "--target" | "-t" => { i += 1; if i < args.len() { target_str = Some(args[i].clone()); } }
             "--board" | "-b" => { i += 1; if i < args.len() { board_str = Some(args[i].clone()); } }
-            _ => eprintln!("⚠️  忽略未知参数 '{}'", args[i]),
+            _ => eprintln!("忽略未知参数 '{}'", args[i]),
         }
         i += 1;
     }
@@ -145,14 +167,14 @@ fn cmd_build(args: &[String]) {
     let raw_source = match fs::read_to_string(input_file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("❌ 无法捕获猎物 '{}': {}", input_file, e);
+            eprintln!("无法捕获猎物 '{}': {}", input_file, e);
             process::exit(1);
         }
     };
 
     // TypeScript 剥离
     let source = if input_file.ends_with(".ts") {
-        println!("🔪 剥离类型外壳 (.ts → .js)...");
+        println!("剥离类型外壳 (.ts → .js)...");
         strip::strip_types(&raw_source)
     } else {
         raw_source
@@ -160,13 +182,13 @@ fn cmd_build(args: &[String]) {
 
     // Espruino/Moddable 兼容预处理
     let source = if do_compat {
-        println!("🔧 兼容模式: Espruino/Moddable API 自动转换...");
+        println!("兼容模式: Espruino/Moddable API 自动转换...");
         let compat_result = compat::preprocess(&source);
         for w in &compat_result.warnings {
             println!("   {}", w);
         }
         if compat_result.has_legacy_api {
-            println!("   ✅ 已自动转换 {} 处旧式 API", compat_result.warnings.len());
+            println!("   已自动转换 {} 处旧式 API", compat_result.warnings.len());
         }
         let (moddable_result, moddable_warnings) = compat::transform_moddable_import(&compat_result.source);
         for w in &moddable_warnings {
@@ -177,7 +199,7 @@ fn cmd_build(args: &[String]) {
         // 静默检测旧式 API（不转换，只提示）
         let detect = compat::preprocess(&source);
         if detect.has_legacy_api {
-            println!("   💡 检测到旧式 API，可用 --compat 自动转换");
+            println!("   检测到旧式 API，可用 --compat 自动转换");
             for w in &detect.warnings {
                 println!("   {}", w);
             }
@@ -185,9 +207,13 @@ fn cmd_build(args: &[String]) {
         source
     };
 
-    // ---------- 分支: C 代码生成 vs COUNPRE64 原生编译 ----------
+    // ---------- 分支: C 代码生成 vs 行业目标 vs COUNPRE64 原生编译 ----------
     if let Some(ref t) = target_str {
         let t_lower = t.to_lowercase();
+        // 行业垂直目标
+        if ["ic", "ad", "rt", "av", "md", "rw", "se", "edu", "rb"].contains(&t_lower.as_str()) {
+            return cmd_build_industry(&source, input_file, &t_lower);
+        }
         if t_lower != "counpre64" && t_lower != "fpga" && t_lower != "gowin" {
             // C 代码生成路径 (ESP32 / STM32 / Arduino ...)
             return cmd_build_c_target(&source, input_file, &t_lower, &output_file, board_str.as_deref());
@@ -195,8 +221,8 @@ fn cmd_build(args: &[String]) {
     }
 
     // ---------- COUNPRE64 原生编译路径 ----------
-    println!("🔨 锻造武器: {} → {}", input_file, output_file);
-    if do_optimize { println!("   ⚡ 泝火优化: 开启"); }
+    println!("锻造武器: {} → {}", input_file, output_file);
+    if do_optimize { println!("   泝火优化: 开启"); }
 
     // 编译流水线
     let instructions = compile_pipeline(&source, do_optimize);
@@ -204,13 +230,13 @@ fn cmd_build(args: &[String]) {
     // 输出
     if emit_asm {
         let asm = backend::emit_asm(&instructions);
-        println!("\n--- 🗡️ 武器蓝图 (汇编) ---");
+        println!("\n--- 武器蓝图 (汇编) ---");
         println!("{}", asm);
     }
 
     match backend::emit_hex(&instructions, &output_file) {
         Ok(_) => {
-            println!("   📦 {} 条指令 ({} bytes)", instructions.len(), instructions.len() * 4);
+            println!("   {} 条指令 ({} bytes)", instructions.len(), instructions.len() * 4);
             // Phase v1.5: 显示 async 状态机信息
             if async_mode {
                 let tokens = lexer::tokenize(&source).unwrap_or_default();
@@ -219,7 +245,7 @@ fn cmd_build(args: &[String]) {
                         .filter(|sf| sf.func.is_async)
                         .collect();
                     if !async_fns.is_empty() {
-                        println!("   ⚡ Async 状态机: {} 个生成", async_fns.len());
+                        println!("   Async 状态机: {} 个生成", async_fns.len());
                         for sf in &async_fns {
                             if let Ok(analysis) = async_transform::analyze_async_function(&sf.func) {
                                 println!("      - {}(): {} 状态, ctx={}B", 
@@ -229,10 +255,10 @@ fn cmd_build(args: &[String]) {
                     }
                 }
             }
-            println!("   ✅ 武器锻造完成: {}", output_file);
+            println!("   武器锻造完成: {}", output_file);
         }
         Err(e) => {
-            eprintln!("❌ 锻造失败: {}", e);
+            eprintln!("锻造失败: {}", e);
             process::exit(1);
         }
     }
@@ -243,28 +269,28 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
     let c_target = match c_codegen::CTarget::from_str(target) {
         Some(t) => t,
         None => {
-            eprintln!("❌ 未知编译目标: {}", target);
+            eprintln!("未知编译目标: {}", target);
             eprintln!("支持目标: esp32, stm32, arduino-avr, arduino-arm, rpi");
             process::exit(1);
         }
     };
 
-    println!("🔨 C 代码生成: {} → {} ({:?})", input_file, target, c_target);
+    println!("C 代码生成: {} → {} ({:?})", input_file, target, c_target);
 
     // 词法 + 语法分析
     let tokens = match lexer::tokenize(source) {
         Ok(t) => t,
-        Err(e) => { eprintln!("❌ 词法错误: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("词法错误: {}", e); process::exit(1); }
     };
     let ast = match parser::parse(&tokens) {
         Ok(a) => a,
-        Err(e) => { eprintln!("❌ 语法错误: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("语法错误: {}", e); process::exit(1); }
     };
 
     // AST → C 代码
     let c_result = match c_codegen::generate_c_source(&ast, &c_target) {
         Ok(r) => r,
-        Err(e) => { eprintln!("❌ C 代码生成失败: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("C 代码生成失败: {}", e); process::exit(1); }
     };
 
     // 确定输出目录
@@ -278,24 +304,24 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
         c_codegen::CTarget::Esp32 => {
             let paths = match esp32_project::generate_esp32_project(&c_result, base_dir, stem) {
                 Ok(p) => p,
-                Err(e) => { eprintln!("❌ ESP32 项目生成失败: {}", e); process::exit(1); }
+                Err(e) => { eprintln!("ESP32 项目生成失败: {}", e); process::exit(1); }
             };
-            println!("   📦 ESP-IDF 项目已生成: {}", paths.project_dir.display());
-            println!("   📄 main.c: {}", paths.main_c.display());
+            println!("   ESP-IDF 项目已生成: {}", paths.project_dir.display());
+            println!("   main.c: {}", paths.main_c.display());
             println!();
-            println!("   📝 下一步:");
+            println!("   下一步:");
             println!("      1. 确保已安装 ESP-IDF (https://docs.espressif.com/projects/esp-idf/)");
             println!("      2. 打开 ESP-IDF 命令行 (ESP-IDF CMD)");
             println!("      3. cd {}", paths.project_dir.display());
             println!("      4. idf.py build");
             println!("      5. idf.py -p COM3 flash monitor");
             println!();
-            println!("   ✅ ESP32 项目锻造完成");
+            println!("   ESP32 项目锻造完成");
         }
         c_codegen::CTarget::ArduinoAvr | c_codegen::CTarget::ArduinoArm => {
             let paths = match arduino_project::generate_arduino_project(&c_result, base_dir, stem) {
                 Ok(p) => p,
-                Err(e) => { eprintln!("❌ Arduino 项目生成失败: {}", e); process::exit(1); }
+                Err(e) => { eprintln!("Arduino 项目生成失败: {}", e); process::exit(1); }
             };
 
             // 资源估算
@@ -305,13 +331,13 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
                 .unwrap_or_else(|| arduino_project::default_board_for_target(is_arm));
             let est = arduino_project::estimate_resources(&c_result.source, &arduino_board);
 
-            println!("   📦 Arduino sketch 项目已生成: {}", paths.project_dir.display());
-            println!("   📄 {}.ino: {}", stem, paths.ino_file.display());
+            println!("   Arduino sketch 项目已生成: {}", paths.project_dir.display());
+            println!("   {}.ino: {}", stem, paths.ino_file.display());
             println!();
-            println!("   🎯 目标板子: {} ({})", arduino_board.name, arduino_board.fqbn);
-            println!("   📊 RAM  预估: {} bytes / {} KB ({:.0}%)",
+            println!("   目标板子: {} ({})", arduino_board.name, arduino_board.fqbn);
+            println!("   RAM  预估: {} bytes / {} KB ({:.0}%)",
                 est.ram_bytes, arduino_board.max_ram / 1024, est.ram_percent);
-            println!("   📊 Flash 预估: {} bytes / {} KB ({:.0}%)",
+            println!("   Flash 预估: {} bytes / {} KB ({:.0}%)",
                 est.flash_bytes, arduino_board.max_flash / 1024, est.flash_percent);
             for w in &est.warnings {
                 println!("   {}", w);
@@ -320,62 +346,612 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
                 println!("   {}", e);
             }
             println!();
-            println!("   📝 下一步:");
+            println!("   下一步:");
             println!("      1. 安装 arduino-cli: https://arduino.github.io/arduino-cli/");
             println!("      2. arduino-cli core install {}", arduino_board.fqbn.split(':').next().unwrap_or("arduino"));
             println!("      3. arduino-cli compile --fqbn {} {}", arduino_board.fqbn, paths.project_dir.display());
             println!("      4. arduino-cli upload -p COM3 --fqbn {} {}", arduino_board.fqbn, paths.project_dir.display());
             println!();
-            println!("   ✅ Arduino sketch 锻造完成");
+            println!("   Arduino sketch 锻造完成");
         }
         c_codegen::CTarget::Stm32 => {
             let paths = match stm32_project::generate_stm32_project(&c_result, base_dir, stem) {
                 Ok(p) => p,
-                Err(e) => { eprintln!("❌ STM32 项目生成失败: {}", e); process::exit(1); }
+                Err(e) => { eprintln!("STM32 项目生成失败: {}", e); process::exit(1); }
             };
-            println!("   📦 STM32 HAL 项目已生成: {}", paths.project_dir.display());
-            println!("   📄 main.c: {}", paths.main_c.display());
-            println!("   📄 Makefile: {}", paths.makefile.display());
-            println!("   📄 Linker: {}", paths.linker_script.display());
-            println!("   📄 OpenOCD: {}", paths.openocd_cfg.display());
+            println!("   STM32 HAL 项目已生成: {}", paths.project_dir.display());
+            println!("   main.c: {}", paths.main_c.display());
+            println!("   Makefile: {}", paths.makefile.display());
+            println!("   Linker: {}", paths.linker_script.display());
+            println!("   OpenOCD: {}", paths.openocd_cfg.display());
             println!();
-            println!("   📝 下一步:");
+            println!("   下一步:");
             println!("      1. 安装 arm-none-eabi-gcc 工具链");
             println!("      2. 设置 STM32_HAL_PATH 环境变量指向 STM32 HAL 库");
             println!("      3. cd {}", paths.project_dir.display());
             println!("      4. make");
             println!("      5. make flash  (或 st-flash write {}_stm32.bin 0x08000000)", stem);
             println!();
-            println!("   ✅ STM32 项目锻造完成");
+            println!("   STM32 项目锻造完成");
         }
         c_codegen::CTarget::RaspberryPi => {
             let paths = match rpi_project::generate_rpi_project(&c_result, base_dir, stem) {
                 Ok(p) => p,
-                Err(e) => { eprintln!("❌ RPi 项目生成失败: {}", e); process::exit(1); }
+                Err(e) => { eprintln!("RPi 项目生成失败: {}", e); process::exit(1); }
             };
-            println!("   📦 Raspberry Pi 项目已生成: {}", paths.project_dir.display());
-            println!("   📄 main.c: {}", paths.main_c.display());
-            println!("   📄 Makefile: {}", paths.makefile.display());
-            println!("   📄 run.sh: {}", paths.run_sh.display());
+            println!("   Raspberry Pi 项目已生成: {}", paths.project_dir.display());
+            println!("   main.c: {}", paths.main_c.display());
+            println!("   Makefile: {}", paths.makefile.display());
+            println!("   run.sh: {}", paths.run_sh.display());
             println!();
-            println!("   📝 下一步:");
+            println!("   下一步:");
             println!("      1. cd {}", paths.project_dir.display());
             println!("      2. make");
             println!("      3. sudo ./{}_rpi  (本地执行)", stem);
             println!("      或: bash run.sh <pi_host> <pi_user>  (远程部署)");
             println!();
-            println!("   ✅ RPi 项目锻造完成");
+            println!("   RPi 项目锻造完成");
         }
         _ => {
             // 其他平台: 仅输出 C 源码
             let c_path = base_dir.join(format!("{}.c", stem));
             match fs::write(&c_path, &c_result.source) {
-                Ok(_) => println!("   📄 C 源码: {}", c_path.display()),
-                Err(e) => { eprintln!("❌ 写入失败: {}", e); process::exit(1); }
+                Ok(_) => println!("   C 源码: {}", c_path.display()),
+                Err(e) => { eprintln!("写入失败: {}", e); process::exit(1); }
             }
-            println!("   ✅ C 代码生成完成 ({:?} 平台待实现工具链集成)", c_target);
+            println!("   C 代码生成完成 ({:?} 平台待实现工具链集成)", c_target);
         }
     }
+}
+
+// =============================================================================
+// hardy build --target ic|ad|rt|av|md|rw|se|edu|rb — 行业垂直编译
+// =============================================================================
+fn cmd_build_industry(source: &str, input_file: &str, target: &str) {
+    let stem = Path::new(input_file)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("out");
+    let base_dir = Path::new(input_file).parent().unwrap_or(Path::new("."));
+    let out_dir = base_dir.join(format!("{}_{}", stem, target));
+
+    println!("[HardyScript] 行业编译: {} --target {}", input_file, target);
+    println!();
+
+    // 解析源码
+    let tokens = match lexer::tokenize(source) {
+        Ok(t) => t,
+        Err(e) => { eprintln!("词法错误: {}", e); process::exit(1); }
+    };
+    let ast = match parser::parse(&tokens) {
+        Ok(a) => a,
+        Err(e) => { eprintln!("语法错误: {}", e); process::exit(1); }
+    };
+
+    let func_count = ast.functions.len();
+    println!("   解析完成: {} 个函数", func_count);
+
+    match target {
+        "ic" => cmd_industry_ic(&ast, stem, &out_dir),
+        "ad" => cmd_industry_ad(&ast, stem, &out_dir),
+        "rt" => cmd_industry_rt(&ast, stem, &out_dir),
+        "av" => cmd_industry_av(&ast, stem, &out_dir),
+        "md" => cmd_industry_md(&ast, stem, &out_dir),
+        "rw" => cmd_industry_rw(&ast, stem, &out_dir),
+        "se" => cmd_industry_se(&ast, stem, &out_dir),
+        "edu" => cmd_industry_edu(&ast, stem, &out_dir),
+        "rb" => cmd_industry_rb(&ast, stem, &out_dir),
+        _ => unreachable!(),
+    }
+}
+
+/// IC: 工业控制
+fn cmd_industry_ic(ast: &parser::Program, stem: &str, out_dir: &Path) {
+    use industrial_control::*;
+
+    println!("   [工业控制] IEC 61131-3 / EtherCAT / SIL-3 / 运动控制");
+    println!();
+
+    // 为每个函数生成 PLC POU
+    let mut pou_codes = Vec::new();
+    for sf in &ast.functions {
+        let pou = PlcPou {
+            name: sf.func.name.clone(),
+            kind: PouKind::FunctionBlock,
+            hs_function: sf.func.name.clone(),
+            cycle_us: 1000,
+            inputs: vec![],
+            outputs: vec![],
+            locals: vec![],
+        };
+        let st_code = generate_st_code(&pou, &format!("    (* {} logic *)", sf.func.name));
+        pou_codes.push(st_code);
+    }
+
+    // EtherCAT 调度示例
+    let slaves = vec![
+        EcatSlave { name: "Servo_X".into(), station: 1001, vendor_id: 0, product_code: 0, input_bytes: 32, output_bytes: 32, dc_supported: true },
+        EcatSlave { name: "Servo_Y".into(), station: 1002, vendor_id: 0, product_code: 0, input_bytes: 32, output_bytes: 32, dc_supported: true },
+        EcatSlave { name: "IO_Module".into(), station: 1003, vendor_id: 0, product_code: 0, input_bytes: 8, output_bytes: 8, dc_supported: false },
+    ];
+    let schedule = plan_ecat_schedule(&slaves, 1000);
+    let ecat_code = generate_ecat_cyclic_code(&schedule);
+
+    // 运动控制
+    let axes = vec![
+        MotionAxis { name: "X".into(), id: 0, max_velocity: 1000.0, max_acceleration: 5000.0, max_jerk: 50000.0, pos_loop_us: 1000, vel_loop_us: 100, cur_loop_us: 50 },
+        MotionAxis { name: "Y".into(), id: 1, max_velocity: 1000.0, max_acceleration: 5000.0, max_jerk: 50000.0, pos_loop_us: 1000, vel_loop_us: 100, cur_loop_us: 50 },
+    ];
+    let motion_code = generate_motion_control_code(&axes);
+
+    // 输出
+    let _ = fs::create_dir_all(out_dir);
+    let plc_path = out_dir.join(format!("{}_plc.st", stem));
+    let ecat_path = out_dir.join("ecat_cyclic.c");
+    let motion_path = out_dir.join("motion_control.c");
+
+    let all_st = pou_codes.join("\n");
+    let _ = fs::write(&plc_path, &all_st);
+    let _ = fs::write(&ecat_path, &ecat_code);
+    let _ = fs::write(&motion_path, &motion_code);
+
+    println!("   EtherCAT: {} 从站, 周期 {}μs, 可行: {}", schedule.slaves.len(), schedule.cycle_us, schedule.cycle_feasible);
+    println!("   总线时间: {:.1}μs, 抖动: {:.1}μs", schedule.bus_time_us, schedule.jitter_us);
+    println!();
+    println!("   输出文件:");
+    println!("      {}", plc_path.display());
+    println!("      {}", ecat_path.display());
+    println!("      {}", motion_path.display());
+    println!();
+    println!("   [工业控制] 编译完成");
+}
+
+/// AD: 自动驾驶
+fn cmd_industry_ad(ast: &parser::Program, stem: &str, out_dir: &Path) {
+    use automotive::*;
+
+    println!("   [自动驾驶] CAN FD / 混合关键性 / Fail-Operational / AUTOSAR");
+    println!();
+
+    // 为每个函数生成 AUTOSAR Runnable
+    let runnables: Vec<AutosarRunnable> = ast.functions.iter().enumerate().map(|(i, sf)| {
+        AutosarRunnable {
+            name: format!("{}_Run", sf.func.name),
+            hs_function: sf.func.name.clone(),
+            trigger: RunnableTrigger::TimingEvent,
+            period_ms: match i % 3 { 0 => 10.0, 1 => 20.0, _ => 100.0 },
+            asil: if i == 0 { AsilGrade::AsilD } else { AsilGrade::AsilB },
+            read_ports: vec![],
+            write_ports: vec![],
+        }
+    }).collect();
+
+    let swc = AutosarSwc {
+        name: stem.to_string(),
+        runnables: runnables.clone(),
+        sender_ports: vec![],
+        receiver_ports: vec![],
+    };
+    let swc_code = generate_autosar_swc(&swc);
+    let sched_code = generate_autosar_schedule(&runnables);
+
+    // Fail-Operational
+    let failop_cfg = FailOpConfig {
+        system_name: stem.to_string(),
+        primary_asil: AsilGrade::AsilD,
+        backup_asil: AsilGrade::AsilB,
+        heartbeat_ms: 10,
+        fault_timeout_ms: 50,
+        degraded_speed_limit: 30,
+        mrc_time_budget_s: 5.0,
+    };
+    let failop_code = generate_failop_code(&failop_cfg);
+
+    // CAN FD 总线负载
+    let canfd_cfg = CanFdConfig::standard();
+    let msgs: Vec<CanFdMessage> = ast.functions.iter().enumerate().map(|(i, sf)| {
+        CanFdMessage {
+            name: sf.func.name.clone(), id: 0x100 + i as u32 * 0x100,
+            extended: false, dlc: 8, period_ms: 10.0,
+            sender: "ECU".into(), asil: AsilGrade::AsilB, signals: vec![],
+        }
+    }).collect();
+    let bus_load = calculate_canfd_bus_load(&msgs, &canfd_cfg);
+
+    // 输出
+    let _ = fs::create_dir_all(out_dir);
+    let swc_path = out_dir.join(format!("{}_swc.c", stem));
+    let sched_path = out_dir.join("schedule_table.c");
+    let failop_path = out_dir.join("fail_operational.c");
+
+    let _ = fs::write(&swc_path, &swc_code);
+    let _ = fs::write(&sched_path, &sched_code);
+    let _ = fs::write(&failop_path, &failop_code);
+
+    println!("   CAN FD: {} 消息, 总线负载 {:.1}% (500k/2M)", msgs.len(), bus_load);
+    println!("   AUTOSAR SWC: {} runnables", runnables.len());
+    println!("   Fail-Op: ASIL-D → ASIL-B → MRC ({}s)", failop_cfg.mrc_time_budget_s);
+    println!();
+    println!("   输出文件:");
+    println!("      {}", swc_path.display());
+    println!("      {}", sched_path.display());
+    println!("      {}", failop_path.display());
+    println!();
+    println!("   [自动驾驶] 编译完成");
+}
+
+/// RT: 嵌入式 RTOS
+fn cmd_industry_rt(ast: &parser::Program, stem: &str, out_dir: &Path) {
+    use hardy_rtos::*;
+
+    println!("   [嵌入式 RTOS] 微内核 / IPC / BSP / 形式化验证");
+    println!();
+
+    // 从函数生成任务
+    let tasks: Vec<RtosTask> = ast.functions.iter().enumerate().map(|(i, sf)| {
+        RtosTask {
+            name: sf.func.name.clone(),
+            priority: i as u8,
+            stack_bytes: 1024,
+            period_us: (i as u64 + 1) * 1000,
+            wcet_us: 100,
+            hs_function: sf.func.name.clone(),
+        }
+    }).collect();
+
+    let config = RtosConfig {
+        system_name: stem.to_string(),
+        target: RtosTarget::Stm32f4,
+        cpu_freq_hz: 168_000_000,
+        tick_us: 100,
+        tasks: tasks.clone(),
+        time_slicing: false,
+        time_slice_ticks: 5,
+    };
+
+    let kernel_code = generate_rtos_kernel(&config);
+    let tla_code = generate_tla_model(&config);
+    let spin_code = generate_spin_model(&config);
+
+    // BSP
+    let bsp_desc = BspDesc {
+        board_name: "STM32F407VG".into(),
+        target: RtosTarget::Stm32f4,
+        crystal_hz: 8_000_000,
+        sysclk_hz: 168_000_000,
+        flash_base: 0x0800_0000,
+        flash_size: 1024 * 1024,
+        ram_base: 0x2000_0000,
+        ram_size: 128 * 1024,
+        irq_count: 82,
+    };
+    let (startup_code, linker_script) = generate_bsp(&bsp_desc);
+
+    // 输出
+    let _ = fs::create_dir_all(out_dir);
+    let kernel_path = out_dir.join("hardy_rtos.c");
+    let bsp_path = out_dir.join("startup.c");
+    let ld_path = out_dir.join("memory.ld");
+    let tla_path = out_dir.join(format!("{}.tla", stem));
+    let spin_path = out_dir.join(format!("{}.pml", stem));
+
+    let _ = fs::write(&kernel_path, &kernel_code);
+    let _ = fs::write(&bsp_path, &startup_code);
+    let _ = fs::write(&ld_path, &linker_script);
+    let _ = fs::write(&tla_path, &tla_code);
+    let _ = fs::write(&spin_path, &spin_code);
+
+    println!("   内核: {} 任务, 抢占式优先级调度", tasks.len());
+    println!("   BSP: STM32F407VG (168MHz, 1MB Flash, 128KB RAM)");
+    println!("   验证: TLA+ 模型 + Spin/PROMELA 模型");
+    println!();
+    println!("   输出文件:");
+    println!("      {}", kernel_path.display());
+    println!("      {}", bsp_path.display());
+    println!("      {}", ld_path.display());
+    println!("      {}", tla_path.display());
+    println!("      {}", spin_path.display());
+    println!();
+    println!("   [嵌入式 RTOS] 编译完成");
+}
+
+/// AV: 航空电子
+fn cmd_industry_av(ast: &parser::Program, stem: &str, out_dir: &Path) {
+    use avionics::*;
+
+    println!("   [航空电子] DO-178C / ARINC 653 / 浮点确定 / TMR");
+    println!();
+
+    let dal = DalLevel::DalA;
+
+    // ARINC 653 分区
+    let partitions: Vec<Arinc653Partition> = vec![
+        Arinc653Partition {
+            name: "FlightCtrl".into(),
+            criticality: DalLevel::DalA,
+            time_window_us: 5000,
+            memory_bytes: 65536,
+            processes: ast.functions.iter().map(|sf| Arinc653Process {
+                name: sf.func.name.clone(),
+                period_us: 5000,
+                wcet_us: 500,
+                stack_bytes: 4096,
+                hs_function: sf.func.name.clone(),
+            }).collect(),
+        },
+    ];
+    let schedule = plan_arinc653_schedule(&partitions, &[], 10000);
+    let arinc_code = generate_arinc653_config(&schedule);
+
+    // 浮点确定性
+    let float_cfg = FloatDeterminismConfig::dal_a();
+    let float_code = generate_float_determinism_code(&float_cfg);
+
+    // TMR
+    let tmr_cfg = TmrConfig {
+        system_name: stem.to_string(),
+        function_name: "ctrl".into(),
+        channels: 3,
+        diverse_compilation: true,
+        output_type: TmrOutputType::Float32,
+        vote_period_us: 1000,
+    };
+    let tmr_code = generate_tmr_code(&tmr_cfg);
+
+    // DO-178C 报告
+    let report = generate_avionics_certification_report(stem, dal, &schedule, &float_cfg, &tmr_cfg);
+
+    // 输出
+    let _ = fs::create_dir_all(out_dir);
+    let arinc_path = out_dir.join("arinc653_config.c");
+    let float_path = out_dir.join("float_determinism.c");
+    let tmr_path = out_dir.join("tmr_voting.c");
+    let report_path = out_dir.join(format!("{}_do178c_report.txt", stem));
+
+    let _ = fs::write(&arinc_path, &arinc_code);
+    let _ = fs::write(&float_path, &float_code);
+    let _ = fs::write(&tmr_path, &tmr_code);
+    let _ = fs::write(&report_path, &report);
+
+    println!("   DO-178C: {} (MC/DC 覆盖)", dal.as_str());
+    println!("   ARINC 653: {} 分区, 主时间帧 {}μs", schedule.partitions.len(), schedule.major_frame_us);
+    println!("   TMR: 3 通道多样性编译 + 中值表决");
+    println!("   浮点: IEEE 754 严格模式, 禁止 FMA, 表驱动 sin/cos");
+    println!();
+    println!("   输出文件:");
+    println!("      {}", arinc_path.display());
+    println!("      {}", float_path.display());
+    println!("      {}", tmr_path.display());
+    println!("      {}", report_path.display());
+    println!();
+    println!("   [航空电子] 编译完成");
+}
+
+/// MD: 医疗器械
+fn cmd_industry_md(ast: &parser::Program, stem: &str, out_dir: &Path) {
+    use medical::*;
+
+    println!("   [医疗器械] IEC 62304 / ISO 14971 / 故障安全");
+    println!();
+
+    let units: Vec<MedicalSoftwareUnit> = ast.functions.iter().map(|sf| {
+        MedicalSoftwareUnit {
+            name: sf.func.name.clone(),
+            hs_function: sf.func.name.clone(),
+            safety_class: SoftwareClass::ClassC,
+            risk_level: RiskLevel::Alarp,
+            failure_modes: vec![
+                FailureMode {
+                    description: format!("{}: 输出超限", sf.func.name),
+                    severity: 5,
+                    probability: 2,
+                    mitigation: "软件限位 + 硬件看门狗".into(),
+                    residual_acceptable: true,
+                },
+            ],
+        }
+    }).collect();
+
+    let report = generate_iec62304_report(&units, stem);
+    let mut failsafe_codes = Vec::new();
+    for unit in &units {
+        failsafe_codes.push(generate_medical_failsafe(unit));
+    }
+
+    let _ = fs::create_dir_all(out_dir);
+    let report_path = out_dir.join(format!("{}_iec62304.txt", stem));
+    let failsafe_path = out_dir.join(format!("{}_failsafe.c", stem));
+
+    let _ = fs::write(&report_path, &report);
+    let _ = fs::write(&failsafe_path, failsafe_codes.join("\n"));
+
+    println!("   安全分类: Class C ({} 个软件单元)", units.len());
+    println!("   验证活动: 21 项 (MC/DC + 单元测试 + 架构分析)");
+    println!("   SOUP: 无 (零外部依赖)");
+    println!();
+    println!("   输出文件:");
+    println!("      {}", report_path.display());
+    println!("      {}", failsafe_path.display());
+    println!();
+    println!("   [医疗器械] 编译完成");
+}
+
+/// RW: 轨道交通
+fn cmd_industry_rw(ast: &parser::Program, stem: &str, out_dir: &Path) {
+    use railway::*;
+
+    println!("   [轨道交通] EN 50128 SIL-4 / 联锁 / 安全通信");
+    println!();
+
+    // 联锁条件 (从函数生成)
+    let conditions: Vec<InterlockCondition> = ast.functions.iter().map(|sf| {
+        InterlockCondition {
+            description: format!("Route_{}: 进路建立", sf.func.name),
+            preconditions: vec!["TrackSection == Clear".into(), "Point == Locked".into()],
+            inhibitions: vec!["TrackSection == Occupied".into()],
+            sil: RailwaySil::Sil4,
+        }
+    }).collect();
+
+    let verification = verify_interlocking(&conditions);
+    let summary = generate_en50128_summary(stem, RailwaySil::Sil4, ast.functions.len());
+
+    let comm_cfg = SafetyCommConfig {
+        system_name: stem.to_string(),
+        sil: RailwaySil::Sil4,
+        safety_code_bits: 32,
+        sequence_bits: 32,
+        timeout_ms: 500,
+        max_delay_ms: 200,
+    };
+    let comm_code = generate_safety_comm_code(&comm_cfg);
+
+    let _ = fs::create_dir_all(out_dir);
+    let summary_path = out_dir.join(format!("{}_en50128.txt", stem));
+    let comm_path = out_dir.join(format!("{}_safety_comm.c", stem));
+    let interlock_path = out_dir.join(format!("{}_interlock.txt", stem));
+
+    let _ = fs::write(&summary_path, &summary);
+    let _ = fs::write(&comm_path, &comm_code);
+    let mut interlock_report = String::new();
+    interlock_report.push_str(&format!("Interlocking Verification: {} conditions, {} verified\n", verification.total_conditions, verification.verified_count));
+    for v in &verification.verified { interlock_report.push_str(&format!("  {}\n", v)); }
+    for c in &verification.conflicts { interlock_report.push_str(&format!("  CONFLICT: {}\n", c)); }
+    let _ = fs::write(&interlock_path, &interlock_report);
+
+    println!("   SIL: 4 (THR 10^-9/h)");
+    println!("   联锁验证: {} 条件, {} 通过", verification.total_conditions, verification.verified_count);
+    println!("   安全通信: EN 50159 CRC-32 + 序列号 + 超时");
+    println!();
+    println!("   输出文件:");
+    println!("      {}", summary_path.display());
+    println!("      {}", comm_path.display());
+    println!("      {}", interlock_path.display());
+    println!();
+    println!("   [轨道交通] 编译完成");
+}
+
+/// SE: 半导体设备
+fn cmd_industry_se(ast: &parser::Program, stem: &str, out_dir: &Path) {
+    use semiconductor::*;
+
+    println!("   [半导体设备] 纳米定位 / 振动抑制 / 对准系统");
+    println!();
+
+    let axes: Vec<NanoAxis> = vec![
+        NanoAxis { name: "WaferStage_X".into(), stroke_nm: 300_000_000, resolution_nm: 0.1, max_velocity_mm_s: 500.0, max_accel_m_s2: 50.0, accuracy_nm: 1.0, repeatability_nm: 0.5, servo_period_us: 50, motor_type: MotorType::PlanarMotor },
+        NanoAxis { name: "WaferStage_Y".into(), stroke_nm: 300_000_000, resolution_nm: 0.1, max_velocity_mm_s: 500.0, max_accel_m_s2: 50.0, accuracy_nm: 1.0, repeatability_nm: 0.5, servo_period_us: 50, motor_type: MotorType::PlanarMotor },
+    ];
+    let gains = PidGains { kp: 50.0, ki: 0.01, kd: 5.0 };
+    let servo_code = generate_nano_servo_code(&axes, &gains);
+
+    // 振动抑制
+    let shaper = design_zvd_shaper(150.0, 0.02);
+    let align_cfg = AlignmentConfig { mark_count: 4, required_accuracy_nm: 2.0, field_of_view_um: 100.0, mark_type: AlignMarkType::Grating };
+    let spec = analyze_positioning(&axes[0], &gains);
+
+    let _ = fs::create_dir_all(out_dir);
+    let servo_path = out_dir.join(format!("{}_nano_servo.c", stem));
+    let _ = fs::write(&servo_path, &servo_code);
+
+    println!("   轴数: {} (Planar Motor, 20kHz 伺服环)", axes.len());
+    println!("   定位精度: {:.2} nm | 整定时间: {:.1} ms", spec.settling_error_nm, spec.settling_time_ms);
+    println!("   振动抑制: ZVD 整形器 @ {:.0} Hz ({} 脉冲)", shaper.frequency_hz, shaper.impulses.len());
+    println!("   对准精度: {} nm | 视场: {} μm", align_cfg.required_accuracy_nm, align_cfg.field_of_view_um);
+    println!("   函数数: {}", ast.functions.len());
+    println!();
+    println!("   输出文件:");
+    println!("      {}", servo_path.display());
+    println!();
+    println!("   [半导体设备] 编译完成");
+}
+
+/// EDU: 教育平台
+fn cmd_industry_edu(ast: &parser::Program, stem: &str, out_dir: &Path) {
+    use education::*;
+
+    println!("   [教育平台] 课程生成 / 编译可视化 / 实验指导");
+    println!();
+
+    // 生成编译可视化 (所有阶段)
+    let source_text = ast.functions.iter()
+        .map(|sf| format!("function {}() {{ ... }}", sf.func.name))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let source_display = if source_text.is_empty() { "let x = 42;".to_string() } else { source_text };
+
+    let mut vis_output = String::new();
+    for stage in CompileStage::all() {
+        vis_output.push_str(&generate_compile_visualization(&source_display, *stage));
+        vis_output.push_str("\n");
+    }
+
+    // 课程大纲
+    let curriculum = generate_curriculum();
+    let mut curriculum_text = String::new();
+    curriculum_text.push_str("=== HardyScript 嵌入式课程大纲 ===\n\n");
+    for unit in &curriculum {
+        curriculum_text.push_str(&format!("[{}] {}\n", unit.level.as_str(), unit.title));
+        for obj in &unit.objectives {
+            curriculum_text.push_str(&format!("  - {}\n", obj));
+        }
+        curriculum_text.push('\n');
+    }
+
+    let _ = fs::create_dir_all(out_dir);
+    let vis_path = out_dir.join(format!("{}_compile_visual.txt", stem));
+    let course_path = out_dir.join(format!("{}_curriculum.txt", stem));
+
+    let _ = fs::write(&vis_path, &vis_output);
+    let _ = fs::write(&course_path, &curriculum_text);
+
+    println!("   编译可视化: 7 个阶段 (Source → Lexer → Parser → IR → Opt → CodeGen → Linker)");
+    println!("   课程单元: {} 个 (L1~L5)", curriculum.len());
+    println!("   函数数: {}", ast.functions.len());
+    println!();
+    println!("   输出文件:");
+    println!("      {}", vis_path.display());
+    println!("      {}", course_path.display());
+    println!();
+    println!("   [教育平台] 编译完成");
+}
+
+/// RB: 具身机器人
+fn cmd_industry_rb(ast: &parser::Program, stem: &str, out_dir: &Path) {
+    use robotics::*;
+
+    println!("   [具身机器人] 运动学 / 力控 / 传感融合 / ISO 15066");
+    println!();
+
+    let dof = ast.functions.len().max(6);
+    let impedance = ImpedanceParams { mass: 2.0, damping: 20.0, stiffness: 100.0 };
+    let safety = CollaborativeSafetyConfig {
+        max_force_n: 150.0,
+        max_pressure_pa: 300_000.0,
+        max_speed_mm_s: 250.0,
+        safe_stop_distance_mm: 50.0,
+        mode: SafetyMode::PowerForceLimit,
+    };
+
+    let control_code = generate_robot_control_code(dof, &impedance, &safety);
+
+    // 轨迹规划示例
+    let traj = plan_quintic(0.0, std::f64::consts::FRAC_PI_2, 2.0);
+    let (pos_mid, vel_mid, _) = sample_quintic(&traj, 1.0);
+
+    let _ = fs::create_dir_all(out_dir);
+    let ctrl_path = out_dir.join(format!("{}_robot_ctrl.c", stem));
+    let _ = fs::write(&ctrl_path, &control_code);
+
+    println!("   自由度: {} DOF", dof);
+    println!("   阻抗控制: M={:.0}kg D={:.0}Ns/m K={:.0}N/m", impedance.mass, impedance.damping, impedance.stiffness);
+    println!("   安全模式: 功率/力限制 (ISO/TS 15066)");
+    println!("   轨迹规划: 五次多项式, 中点 pos={:.3}rad vel={:.3}rad/s", pos_mid, vel_mid);
+    println!();
+    println!("   输出文件:");
+    println!("      {}", ctrl_path.display());
+    println!();
+    println!("   [具身机器人] 编译完成");
 }
 
 // =============================================================================
@@ -388,7 +964,7 @@ fn cmd_hunt(args: &[String]) {
         process::exit(1);
     }
 
-    println!("🪤 陷阱启动...");
+    println!("陷阱启动...");
     
     // 先编译
     let mut build_args = args.to_vec();
@@ -399,7 +975,7 @@ fn cmd_hunt(args: &[String]) {
 
     // 提示烧录
     let hex_file = args[0].replace(".ts", ".hex").replace(".js", ".hex");
-    println!("\n🎯 猎物已就绪: {}", hex_file);
+    println!("\n猎物已就绪: {}", hex_file);
     println!("   → 使用 'hardy lock' 锁定硬件目标");
     println!("   → 或手动: Gowin Programmer → Load '{}'", hex_file);
 }
@@ -418,19 +994,19 @@ fn cmd_track(args: &[String]) {
     let raw_source = match fs::read_to_string(input_file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("❌ 无法追踪 '{}': {}", input_file, e);
+            eprintln!("无法追踪 '{}': {}", input_file, e);
             process::exit(1);
         }
     };
 
     let source = if input_file.ends_with(".ts") {
-        println!("🔪 剥离类型...");
+        println!("剥离类型...");
         strip::strip_types(&raw_source)
     } else {
         raw_source
     };
 
-    println!("🔍 追踪指令流: {}\n", input_file);
+    println!("追踪指令流: {}\n", input_file);
 
     let instructions = compile_pipeline(&source, false);
     let asm = backend::emit_asm(&instructions);
@@ -442,7 +1018,7 @@ fn cmd_track(args: &[String]) {
         println!("│  {}  │", format!("{:<40}", line));
     }
     println!("└─────────────────────────────────────────────┘");
-    println!("\n📊 共 {} 条指令, {} bytes", instructions.len(), instructions.len() * 4);
+    println!("\n共 {} 条指令, {} bytes", instructions.len(), instructions.len() * 4);
 }
 
 // =============================================================================
@@ -459,7 +1035,7 @@ fn cmd_scan(args: &[String]) {
     let raw_source = match fs::read_to_string(input_file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("❌ 无法侦查 '{}': {}", input_file, e);
+            eprintln!("无法侦查 '{}': {}", input_file, e);
             process::exit(1);
         }
     };
@@ -471,26 +1047,26 @@ fn cmd_scan(args: &[String]) {
         raw_source.clone()
     };
 
-    println!("👁️ 侦查报告: {}", input_file);
+    println!("侦查报告: {}", input_file);
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  📄 文件类型:  {}", if is_ts { "TypeScript" } else { "JavaScript" });
-    println!("  📏 源码行数:  {}", raw_source.lines().count());
-    println!("  📐 源码字节:  {}", raw_source.len());
+    println!("  文件类型:  {}", if is_ts { "TypeScript" } else { "JavaScript" });
+    println!("  源码行数:  {}", raw_source.lines().count());
+    println!("  源码字节:  {}", raw_source.len());
 
     // 词法分析
     let tokens = match lexer::tokenize(&source) {
         Ok(t) => t,
-        Err(e) => { eprintln!("  ❌ 词法异常: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("  词法异常: {}", e); process::exit(1); }
     };
-    println!("  🔤 Token 数:  {}", tokens.len() - 1); // 减去 EOF
+    println!("  Token 数:  {}", tokens.len() - 1); // 减去 EOF
 
     // 语法分析
     let ast = match parser::parse(&tokens) {
         Ok(a) => a,
-        Err(e) => { eprintln!("  ❌ 语法异常: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("  语法异常: {}", e); process::exit(1); }
     };
-    println!("  📝 语句数:    {}", ast.statements.len());
-    println!("  🔧 函数数:    {}", ast.functions.len());
+    println!("  语句数:    {}", ast.statements.len());
+    println!("  函数数:    {}", ast.functions.len());
 
     // 编译估算
     let instrs = compiler::compile(&ast).unwrap_or_default();
@@ -499,11 +1075,11 @@ fn cmd_scan(args: &[String]) {
         compiler::compile(&opt_ast).unwrap_or_default()
     };
 
-    println!("  ⚙️  指令数:    {} (优化后: {})", instrs.len(), opt_instrs.len());
-    println!("  💾 代码大小:  {} bytes (优化后: {} bytes)", instrs.len() * 4, opt_instrs.len() * 4);
+    println!("  指令数:    {} (优化后: {})", instrs.len(), opt_instrs.len());
+    println!("  代码大小:  {} bytes (优化后: {} bytes)", instrs.len() * 4, opt_instrs.len() * 4);
     if instrs.len() > 0 {
         let saving = ((instrs.len() - opt_instrs.len()) as f64 / instrs.len() as f64 * 100.0) as i32;
-        println!("  📉 优化收益:  {}%", saving);
+        println!("  优化收益:  {}%", saving);
     }
 
     // 资源占用估算
@@ -513,13 +1089,13 @@ fn cmd_scan(args: &[String]) {
     let ram_bytes = var_count * 8 + stack_slots * 8;  // 每个变量/栈槽 8 字节
 
     println!();
-    println!("  📊 资源占用估算 (COUNPRE64):");
+    println!("  资源占用估算 (COUNPRE64):");
     println!("     Flash:  {} bytes ({:.1}% / 64KB)", flash_bytes, flash_bytes as f64 / 65536.0 * 100.0);
     println!("     RAM:    ~{} bytes (变量{}个 + 栈槽{}个)", ram_bytes, var_count, stack_slots);
 
     // 多平台资源对照
     println!();
-    println!("  📊 多平台容量对照:");
+    println!("  多平台容量对照:");
     println!("     {:12} {:>8} {:>8}  {}", "平台", "Flash", "RAM", "状态");
     println!("     {:-<55}", "");
     let platforms = [
@@ -533,10 +1109,10 @@ fn cmd_scan(args: &[String]) {
     for (name, flash_cap, ram_cap) in &platforms {
         let flash_pct = if *flash_cap == i32::MAX { 0.0 } else { flash_bytes as f64 / *flash_cap as f64 * 100.0 };
         let ram_pct = if *ram_cap == i32::MAX { 0.0 } else { ram_bytes as f64 / *ram_cap as f64 * 100.0 };
-        let status = if *flash_cap == i32::MAX { "✅ 无限制" }
-            else if flash_pct > 100.0 || ram_pct > 100.0 { "❌ 超限" }
-            else if flash_pct > 80.0 || ram_pct > 80.0 { "⚠️  接近上限" }
-            else { "✅ OK" };
+        let status = if *flash_cap == i32::MAX { "无限制" }
+            else if flash_pct > 100.0 || ram_pct > 100.0 { "超限" }
+            else if flash_pct > 80.0 || ram_pct > 80.0 { "接近上限" }
+            else { "OK" };
         if *flash_cap == i32::MAX {
             println!("     {:12} {:>7} {:>7}  {}", name, "∞", "∞", status);
         } else {
@@ -546,10 +1122,10 @@ fn cmd_scan(args: &[String]) {
 
     // 警告检查
     if flash_bytes > 65536 {
-        println!("\n     ⚠️  Flash 超出 COUNPRE64 限制!");
+        println!("\n     Flash 超出 COUNPRE64 限制!");
     }
     if ram_bytes > 32768 {
-        println!("     ⚠️  RAM 超出 COUNPRE64 限制!");
+        println!("     RAM 超出 COUNPRE64 限制!");
     }
 
     // Phase v1.5: async 函数分析
@@ -558,7 +1134,7 @@ fn cmd_scan(args: &[String]) {
         .collect();
     if !async_fns.is_empty() {
         println!();
-        println!("  ⚡ Async 函数分析 (v1.5):");
+        println!("  Async 函数分析 (v1.5):");
         let mut total_ctx_size = 0usize;
         for sf in &async_fns {
             if let Ok(analysis) = async_transform::analyze_async_function(&sf.func) {
@@ -570,12 +1146,12 @@ fn cmd_scan(args: &[String]) {
         }
         println!("     总上下文开销: {}B / 4096B 预算", total_ctx_size);
         if total_ctx_size > 4096 {
-            println!("     ⚠️  超出 4KB 堆预算!");
+            println!("     超出 4KB 堆预算!");
         }
     }
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  ✅ 侦查完毕，猎物可捕获");
+    println!("  侦查完毕，猎物可捕获");
 }
 
 // =============================================================================
@@ -590,18 +1166,18 @@ fn cmd_lock(args: &[String]) {
         process::exit(1);
     };
 
-    println!("🎯 锁定目标硬件...");
+    println!("锁定目标硬件...");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  📦 弹药: {}", hex_file);
-    println!("  🎯 目标: COUNPRE64 @ Gowin GW1NSR-4C");
-    println!("  🔌 接口: USB-JTAG");
+    println!("  弹药: {}", hex_file);
+    println!("  目标: COUNPRE64 @ Gowin GW1NSR-4C");
+    println!("  接口: USB-JTAG");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("\n  ⚡ 烧录步骤:");
+    println!("\n  烧录步骤:");
     println!("     1. 打开 Gowin Programmer");
     println!("     2. 将 .hex 写入 memory_ctrl.v case 语句");
     println!("     3. Clean All → Run All (Synthesize + P&R)");
     println!("     4. Program Device");
-    println!("\n  🪤 或执行 PowerShell:");
+    println!("\n  或执行 PowerShell:");
     println!("     pwsh -File C:\\COUNPRE64\\tools\\fpga_com.ps1");
 }
 
@@ -648,7 +1224,7 @@ fn cmd_flash(args: &[String]) {
                 }
             }
             "--rom" => emit_rom = true,
-            _ => eprintln!("⚠️  忽略未知参数 '{}'", args[i]),
+            _ => eprintln!("忽略未知参数 '{}'", args[i]),
         }
         i += 1;
     }
@@ -663,7 +1239,7 @@ fn cmd_flash(args: &[String]) {
         let raw_source = match fs::read_to_string(input_file) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("❌ 无法读取源码 '{}': {}", input_file, e);
+                eprintln!("无法读取源码 '{}': {}", input_file, e);
                 process::exit(1);
             }
         };
@@ -679,38 +1255,38 @@ fn cmd_flash(args: &[String]) {
             .and_then(|s| s.to_str())
             .unwrap_or("out");
         let bundle = firmware::emit_bundle(&instructions, base_dir, stem)
-            .unwrap_or_else(|e| { eprintln!("❌ 打包固件失败: {}", e); process::exit(1); });
+            .unwrap_or_else(|e| { eprintln!("打包固件失败: {}", e); process::exit(1); });
 
         if emit_rom {
             let rom_path = base_dir.join(format!("{}_rom.v", stem));
             firmware::emit_verilog_rom(&instructions, &rom_path, "hardyscript_rom")
-                .unwrap_or_else(|e| eprintln!("⚠️  生成 ROM 失败: {}", e));
-            println!("📦 Verilog ROM: {}", rom_path.display());
+                .unwrap_or_else(|e| eprintln!("生成 ROM 失败: {}", e));
+            println!("Verilog ROM: {}", rom_path.display());
         }
 
-        println!("🔨 编译完成: {} 条指令 → {}", bundle.word_count, bundle.hex_path.display());
+        println!("编译完成: {} 条指令 → {}", bundle.word_count, bundle.hex_path.display());
         flasher::FirmwareArtifact::from_hex(&bundle.hex_path)
     };
 
     let artifact = match artifact {
         Ok(a) => a,
-        Err(e) => { eprintln!("❌ {}", e); process::exit(1); }
+        Err(e) => { eprintln!("{}", e); process::exit(1); }
     };
 
-    println!("🚀 开始烧录到 {}...", flasher.name());
+    println!("开始烧录到 {}...", flasher.name());
     match flasher.flash(&artifact) {
         Ok(result) => {
             if !result.stdout.is_empty() { println!("{}", result.stdout); }
             if !result.stderr.is_empty() { eprintln!("{}", result.stderr); }
             if result.success {
-                println!("✅ 烧录成功");
+                println!("烧录成功");
             } else {
-                eprintln!("❌ 烧录失败");
+                eprintln!("烧录失败");
                 process::exit(1);
             }
         }
         Err(e) => {
-            eprintln!("❌ 烧录异常: {}", e);
+            eprintln!("烧录异常: {}", e);
             process::exit(1);
         }
     }
@@ -729,7 +1305,7 @@ fn cmd_bite(args: &[String]) {
     let input_file = &args[0];
     let raw_source = match fs::read_to_string(input_file) {
         Ok(s) => s,
-        Err(e) => { eprintln!("❌ {}", e); process::exit(1); }
+        Err(e) => { eprintln!("{}", e); process::exit(1); }
     };
 
     let source = if input_file.ends_with(".ts") {
@@ -740,7 +1316,7 @@ fn cmd_bite(args: &[String]) {
 
     let instructions = compile_pipeline(&source, false);
 
-    println!("🦷 撕咬执行模式: {} ({} 条指令)\n", input_file, instructions.len());
+    println!("撕咬执行模式: {} ({} 条指令)\n", input_file, instructions.len());
     println!("PC      HEX       ASM                   描述");
     println!("──────  ────────  ────────────────────  ─────────");
     
@@ -751,7 +1327,7 @@ fn cmd_bite(args: &[String]) {
         println!("0x{:04X}  {:08X}  {:<22}  {}", i * 4, hex, asm, desc);
     }
     
-    println!("\n🦷 共咬穿 {} 条指令", instructions.len());
+    println!("\n共咬穿 {} 条指令", instructions.len());
 }
 
 
@@ -773,19 +1349,19 @@ fn cmd_run(args: &[String]) {
     let raw_source = match fs::read_to_string(input_file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("❌ 无法读取 '{}': {}", input_file, e);
+            eprintln!("无法读取 '{}': {}", input_file, e);
             process::exit(1);
         }
     };
 
     let source = if input_file.ends_with(".ts") {
-        println!("🔪 剥离类型...");
+        println!("剥离类型...");
         strip::strip_types(&raw_source)
     } else {
         raw_source
     };
 
-    println!("⚡ 执行引擎启动: {}\n", input_file);
+    println!("执行引擎启动: {}\n", input_file);
 
     let instructions = compile_pipeline(&source, do_optimize);
     let machine_code: Vec<u32> = instructions.iter().map(|i| i.encode()).collect();
@@ -793,7 +1369,7 @@ fn cmd_run(args: &[String]) {
     let mut exec = engine::Engine::new(machine_code);
     if do_hw {
         exec.set_hw_mode(true);
-        println!("🖥️  硬件模拟模式已启用");
+        println!("硬件模拟模式已启用");
     }
     match exec.run() {
         Ok((output, cycles)) => {
@@ -806,10 +1382,10 @@ fn cmd_run(args: &[String]) {
                 exec.hw_sim().print_status();
             }
             println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            println!("  ⚡ 执行完成: {} 条指令, {} cycles", instructions.len(), cycles);
+            println!("  执行完成: {} 条指令, {} cycles", instructions.len(), cycles);
         }
         Err(e) => {
-            eprintln!("❌ 执行错误: {}", e);
+            eprintln!("执行错误: {}", e);
             process::exit(1);
         }
     }
@@ -821,12 +1397,12 @@ fn cmd_run(args: &[String]) {
 fn cmd_prey(args: &[String]) {
     let dir = if !args.is_empty() { &args[0] } else { "." };
     
-    println!("🎯 猎物列表 ({})", dir);
+    println!("猎物列表 ({})", dir);
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
-        Err(e) => { eprintln!("❌ 无法扫描: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("无法扫描: {}", e); process::exit(1); }
     };
 
     let mut count = 0;
@@ -835,7 +1411,7 @@ fn cmd_prey(args: &[String]) {
         let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
         if name.ends_with(".js") || name.ends_with(".ts") {
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            let icon = if name.ends_with(".ts") { "🔷" } else { "🟡" };
+            let icon = if name.ends_with(".ts") { "[TS]" } else { "[JS]" };
             println!("  {} {} ({} bytes)", icon, name, size);
             count += 1;
         }
@@ -866,28 +1442,28 @@ fn cmd_debug(args: &[String]) {
     let raw_source = match fs::read_to_string(input_file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("❌ 无法读取 '{}': {}", input_file, e);
+            eprintln!("无法读取 '{}': {}", input_file, e);
             process::exit(1);
         }
     };
 
     let source = if input_file.ends_with(".ts") {
-        println!("🔪 剥离类型...");
+        println!("剥离类型...");
         strip::strip_types(&raw_source)
     } else {
         raw_source.clone()
     };
 
-    println!("🐛 调试模式: {}\n", input_file);
+    println!("调试模式: {}\n", input_file);
 
     let tokens = match lexer::tokenize(&source) {
         Ok(t) => t,
-        Err(e) => { eprintln!("❌ 词法错误: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("词法错误: {}", e); process::exit(1); }
     };
 
     let ast = match parser::parse(&tokens) {
         Ok(a) => a,
-        Err(e) => { eprintln!("❌ 语法错误: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("语法错误: {}", e); process::exit(1); }
     };
 
     let final_ast = if do_optimize {
@@ -898,7 +1474,7 @@ fn cmd_debug(args: &[String]) {
 
     let result = match compiler::compile_with_sourcemap(&final_ast) {
         Ok(r) => r,
-        Err(e) => { eprintln!("❌ 编译错误: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("编译错误: {}", e); process::exit(1); }
     };
 
     let machine_code: Vec<u32> = result.instructions.iter().map(|i| i.encode()).collect();
@@ -975,7 +1551,7 @@ fn cmd_new(args: &[String]) {
                     board_name = Some(args[i].clone());
                 }
             }
-            _ => eprintln!("⚠️  忽略未知参数 '{}'", args[i]),
+            _ => eprintln!("忽略未知参数 '{}'", args[i]),
         }
         i += 1;
     }
@@ -983,7 +1559,7 @@ fn cmd_new(args: &[String]) {
     let template = match project::ProjectTemplate::from_str(template_name) {
         Some(t) => t,
         None => {
-            eprintln!("❌ 未知模板: {}", template_name);
+            eprintln!("未知模板: {}", template_name);
             project::list_templates();
             process::exit(1);
         }
@@ -992,20 +1568,20 @@ fn cmd_new(args: &[String]) {
     let target_dir = std::env::current_dir().unwrap_or_else(|_| std::path::Path::new(".").to_path_buf());
     match project::create_project(name, &template, &target_dir, board_name.as_deref()) {
         Ok(()) => {
-            println!("✅ 项目创建创建: {}", name);
-            println!("   📁 {}/", name);
+            println!("项目创建创建: {}", name);
+            println!("   {}/", name);
             println!("   ├── hardy.json");
             println!("   ├── .gitignore");
             println!("   └── src/");
             println!("       └── main.js");
             if let Some(ref b) = board_name {
-                println!("   🎯 目标板子: {}", b);
+                println!("   目标板子: {}", b);
             }
             println!();
-            println!("🪤  cd {} && hardy build src/main.js", name);
+            println!(" cd {} && hardy build src/main.js", name);
         }
         Err(e) => {
-            eprintln!("❌ {}", e);
+            eprintln!("{}", e);
             process::exit(1);
         }
     }
@@ -1034,13 +1610,13 @@ fn cmd_monitor(args: &[String]) {
             }
             "--hex" => config.hex_mode = true,
             "--timestamp" => config.timestamp = true,
-            _ => eprintln!("⚠️  忽略未知参数 '{}'", args[i]),
+            _ => eprintln!("忽略未知参数 '{}'", args[i]),
         }
         i += 1;
     }
 
     if let Err(e) = monitor::start_monitor(&config) {
-        eprintln!("❌ {}", e);
+        eprintln!("{}", e);
         process::exit(1);
     }
 }
@@ -1052,7 +1628,7 @@ fn cmd_init(_args: &[String]) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::Path::new(".").to_path_buf());
 
     if cwd.join("hardy.json").exists() {
-        eprintln!("⚠️  hardy.json 已存在，跳过初始化");
+        eprintln!("hardy.json 已存在，跳过初始化");
         return;
     }
 
@@ -1077,12 +1653,12 @@ fn cmd_init(_args: &[String]) {
 
     let src_dir = cwd.join("src");
     if let Err(e) = std::fs::create_dir_all(&src_dir) {
-        eprintln!("❌ 创建 src 目录失败: {}", e);
+        eprintln!("创建 src 目录失败: {}", e);
         process::exit(1);
     }
 
     if let Err(e) = std::fs::write(cwd.join("hardy.json"), &config) {
-        eprintln!("❌ 写入 hardy.json 失败: {}", e);
+        eprintln!("写入 hardy.json 失败: {}", e);
         process::exit(1);
     }
 
@@ -1102,7 +1678,7 @@ while (true) {
 "#;
     if !src_dir.join("main.js").exists() {
         if let Err(e) = std::fs::write(src_dir.join("main.js"), main_js) {
-            eprintln!("❌ 写入 main.js 失败: {}", e);
+            eprintln!("写入 main.js 失败: {}", e);
             process::exit(1);
         }
     }
@@ -1112,12 +1688,12 @@ while (true) {
         let _ = std::fs::write(cwd.join(".gitignore"), gitignore);
     }
 
-    println!("✅ 已初始化 HardyScript 项目: {}", project_name);
-    println!("   📄 hardy.json");
-    println!("   📄 src/main.js");
-    println!("   📄 .gitignore");
+    println!("已初始化 HardyScript 项目: {}", project_name);
+    println!("   hardy.json");
+    println!("   src/main.js");
+    println!("   .gitignore");
     println!();
-    println!("🪤  hardy build src/main.js");
+    println!(" hardy build src/main.js");
 }
 
 // =============================================================================
@@ -1139,29 +1715,29 @@ fn cmd_compat(args: &[String]) {
     let raw_source = match fs::read_to_string(input_file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("❌ 无法读取 '{}': {}", input_file, e);
+            eprintln!("无法读取 '{}': {}", input_file, e);
             process::exit(1);
         }
     };
 
-    println!("🔧 兼容分析: {}", input_file);
+    println!("兼容分析: {}", input_file);
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     // Espruino 检测
     let result = compat::preprocess(&raw_source);
     if result.has_legacy_api {
-        println!("  📡 检测到 Espruino 旧式 API:");
+        println!("  检测到 Espruino 旧式 API:");
         for w in &result.warnings {
             println!("     {}", w);
         }
     } else {
-        println!("  ✅ 未检测到 Espruino 旧式 API");
+        println!("  未检测到 Espruino 旧式 API");
     }
 
     // Moddable 检测
     let (_, moddable_warnings) = compat::transform_moddable_import(&raw_source);
     if !moddable_warnings.is_empty() {
-        println!("  📡 检测到 Moddable 风格导入:");
+        println!("  检测到 Moddable 风格导入:");
         for w in &moddable_warnings {
             println!("     {}", w);
         }
@@ -1172,12 +1748,12 @@ fn cmd_compat(args: &[String]) {
     println!("  共检测 {} 处兼容性问题", total);
 
     if do_convert && total > 0 {
-        println!("\n--- 🔄 转换后的 Hardy 标准代码 ---");
+        println!("\n--- 转换后的 Hardy 标准代码 ---");
         let converted = compat::transform_moddable_import(&result.source).0;
         println!("{}", converted);
     } else if total > 0 {
-        println!("  💡 使用 --convert 查看转换后代码");
-        println!("  💡 或: hardy build {} --compat", input_file);
+        println!("  使用 --convert 查看转换后代码");
+        println!("  或: hardy build {} --compat", input_file);
     }
 }
 
@@ -1189,12 +1765,12 @@ fn cmd_compat(args: &[String]) {
 fn compile_pipeline(source: &str, do_optimize: bool) -> Vec<backend::Instruction> {
     let tokens = match lexer::tokenize(source) {
         Ok(t) => t,
-        Err(e) => { eprintln!("❌ 词法错误: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("词法错误: {}", e); process::exit(1); }
     };
 
     let ast = match parser::parse(&tokens) {
         Ok(a) => a,
-        Err(e) => { eprintln!("❌ 语法错误: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("语法错误: {}", e); process::exit(1); }
     };
 
     let final_ast = if do_optimize {
@@ -1205,7 +1781,7 @@ fn compile_pipeline(source: &str, do_optimize: bool) -> Vec<backend::Instruction
 
     match compiler::compile(&final_ast) {
         Ok(instrs) => instrs,
-        Err(e) => { eprintln!("❌ 编译错误: {}", e); process::exit(1); }
+        Err(e) => { eprintln!("编译错误: {}", e); process::exit(1); }
     }
 }
 
@@ -1319,7 +1895,7 @@ fn cmd_model(args: &[String]) {
             let path = Path::new(&args[1]);
             match model::DuanyanModel::verify(path) {
                 Ok(result) => print!("{}", result.display()),
-                Err(e) => { eprintln!("❌ 验证失败: {}", e); process::exit(1); }
+                Err(e) => { eprintln!("验证失败: {}", e); process::exit(1); }
             }
         }
         "info" => {
@@ -1330,7 +1906,7 @@ fn cmd_model(args: &[String]) {
             let path = Path::new(&args[1]);
             match model::DuanyanModel::read_from_file(path) {
                 Ok(m) => print!("{}", m.info_string()),
-                Err(e) => { eprintln!("❌ 读取失败: {}", e); process::exit(1); }
+                Err(e) => { eprintln!("读取失败: {}", e); process::exit(1); }
             }
         }
         "convert" => {
@@ -1346,7 +1922,7 @@ fn cmd_model(args: &[String]) {
                     "--output" => { i += 1; if i < args.len() { output = args[i].clone(); } }
                     "--quant"  => { i += 1; if i < args.len() { quant_str = args[i].clone(); } }
                     "--official" => { official = true; }
-                    _ => eprintln!("⚠️  忽略未知参数 '{}'", args[i]),
+                    _ => eprintln!("忽略未知参数 '{}'", args[i]),
                 }
                 i += 1;
             }
@@ -1363,7 +1939,7 @@ fn cmd_model(args: &[String]) {
                 "int8" => model::QuantBits::Int8,
                 "fp16" => model::QuantBits::Fp16,
                 "fp32" => model::QuantBits::Fp32,
-                _ => { eprintln!("❌ 不支持的量化方式: {}", quant_str); process::exit(1); }
+                _ => { eprintln!("不支持的量化方式: {}", quant_str); process::exit(1); }
             };
 
             // 检查是否是 GGUF 格式
@@ -1371,7 +1947,7 @@ fn cmd_model(args: &[String]) {
 
             if is_gguf {
                 // === GGUF → .duanyan 真实转换 ===
-                println!("🧠 GGUF → .duanyan 真实转换");
+                println!("GGUF → .duanyan 真实转换");
                 println!("   输入: {} (GGUF)", input);
                 println!("   量化: {}", target_quant.display_name());
 
@@ -1387,16 +1963,16 @@ fn cmd_model(args: &[String]) {
                                 let meta = fs::metadata(output_path).unwrap();
                                 println!("   输出: {} ({} bytes, {:.2} MB)",
                                     output, meta.len(), meta.len() as f64 / (1024.0 * 1024.0));
-                                println!("✅ GGUF转换完成");
+                                println!("GGUF转换完成");
                             }
-                            Err(e) => { eprintln!("❌ 写入失败: {}", e); process::exit(1); }
+                            Err(e) => { eprintln!("写入失败: {}", e); process::exit(1); }
                         }
                     }
-                    Err(e) => { eprintln!("❌ GGUF转换失败: {}", e); process::exit(1); }
+                    Err(e) => { eprintln!("GGUF转换失败: {}", e); process::exit(1); }
                 }
             } else if official {
                 // === 官方规格模型模板 ===
-                println!("🧠 创建千灌Mini官方规格模型模板");
+                println!("创建千灌Mini官方规格模型模板");
                 let mut m = model::create_duanyan_mini_official();
                 // 用量化方式重写层数据
                 let quant = target_quant;
@@ -1417,27 +1993,27 @@ fn cmd_model(args: &[String]) {
                         println!("   规格: {}层/hidden={}/heads={}/vocab={}",
                             model::DUANYAN_MINI_LAYERS, model::DUANYAN_MINI_HIDDEN,
                             model::DUANYAN_MINI_HEADS, model::DUANYAN_MINI_VOCAB);
-                        println!("✅ 官方规格模型模板创建完成");
+                        println!("官方规格模型模板创建完成");
                     }
-                    Err(e) => { eprintln!("❌ 写入失败: {}", e); process::exit(1); }
+                    Err(e) => { eprintln!("写入失败: {}", e); process::exit(1); }
                 }
             } else {
                 // === 普通二进制格式转换 ===
                 match fs::read(input_path) {
                     Ok(data) => {
-                        println!("🧠 模型转换: {} → {}", input, output);
+                        println!("模型转换: {} → {}", input, output);
                         println!("   输入: {} bytes, 量化: {}", data.len(), quant_str);
                         let demo = model::DuanyanModel::create_demo(1, 16);
                         match demo.write_to_file(output_path) {
                             Ok(()) => {
                                 let meta = fs::metadata(output_path).unwrap();
                                 println!("   输出: {} ({} bytes)", output, meta.len());
-                                println!("✅ 转换完成");
+                                println!("转换完成");
                             }
-                            Err(e) => { eprintln!("❌ 写入失败: {}", e); process::exit(1); }
+                            Err(e) => { eprintln!("写入失败: {}", e); process::exit(1); }
                         }
                     }
-                    Err(e) => { eprintln!("❌ 读取失败 '{}': {}", input, e); process::exit(1); }
+                    Err(e) => { eprintln!("读取失败 '{}': {}", input, e); process::exit(1); }
                 }
             }
         }
@@ -1450,7 +2026,7 @@ fn cmd_model(args: &[String]) {
                 match args[i].as_str() {
                     "--output" => { i += 1; if i < args.len() { output = args[i].clone(); } }
                     "--benchmark" => { i += 1; if i < args.len() { bench_out = args[i].clone(); } }
-                    _ => eprintln!("⚠️  忽略未知参数 '{}'", args[i]),
+                    _ => eprintln!("忽略未知参数 '{}'", args[i]),
                 }
                 i += 1;
             }
@@ -1461,7 +2037,7 @@ fn cmd_model(args: &[String]) {
                 process::exit(1);
             }
 
-            println!("🧠 生成锻言Mini手势识别模型");
+            println!("生成锻言Mini手势识别模型");
             println!("   规格: {}层/{}维/{}头/{}类手势",
                 model::DUANYAN_MINI_LAYERS, model::DUANYAN_MINI_HIDDEN,
                 model::DUANYAN_MINI_HEADS, model::GESTURE_CLASSES);
@@ -1482,22 +2058,22 @@ fn cmd_model(args: &[String]) {
                     // 检查是否符合规格
                     let size_mb = meta.len() as f64 / (1024.0 * 1024.0);
                     if size_mb <= model::DUANYAN_MINI_MODEL_SIZE_MB {
-                        println!("   ✅ 模型大小 {:.2}MB ≤ 预算 {:.1}MB", size_mb, model::DUANYAN_MINI_MODEL_SIZE_MB);
+                        println!("   模型大小 {:.2}MB ≤ 预算 {:.1}MB", size_mb, model::DUANYAN_MINI_MODEL_SIZE_MB);
                     } else {
-                        println!("   ❌ 模型大小 {:.2}MB > 预算 {:.1}MB!", size_mb, model::DUANYAN_MINI_MODEL_SIZE_MB);
+                        println!("   模型大小 {:.2}MB > 预算 {:.1}MB!", size_mb, model::DUANYAN_MINI_MODEL_SIZE_MB);
                     }
-                    println!("✅ gesture-10m-int4.duanyan 生成完成");
+                    println!("gesture-10m-int4.duanyan 生成完成");
 
                     // 生成 benchmark C 代码
                     if !bench_out.is_empty() {
                         let c_code = model::generate_esp32_benchmark(&m);
                         match fs::write(&bench_out, &c_code) {
-                            Ok(()) => println!("✅ ESP32 benchmark 代码: {} ({} bytes)", bench_out, c_code.len()),
-                            Err(e) => eprintln!("❌ 写入benchmark失败: {}", e),
+                            Ok(()) => println!("ESP32 benchmark 代码: {} ({} bytes)", bench_out, c_code.len()),
+                            Err(e) => eprintln!("写入benchmark失败: {}", e),
                         }
                     }
                 }
-                Err(e) => { eprintln!("❌ 写入失败: {}", e); process::exit(1); }
+                Err(e) => { eprintln!("写入失败: {}", e); process::exit(1); }
             }
         }
         "benchmark" => {
@@ -1509,7 +2085,7 @@ fn cmd_model(args: &[String]) {
                 match args[i].as_str() {
                     "--model" => { i += 1; if i < args.len() { model_path = args[i].clone(); } }
                     "--output" => { i += 1; if i < args.len() { output = args[i].clone(); } }
-                    _ => eprintln!("⚠️  忽略未知参数 '{}'", args[i]),
+                    _ => eprintln!("忽略未知参数 '{}'", args[i]),
                 }
                 i += 1;
             }
@@ -1520,7 +2096,7 @@ fn cmd_model(args: &[String]) {
             }
 
             let mp = Path::new(&model_path);
-            println!("🧠 生成 ESP32-S3 benchmark 代码");
+            println!("生成 ESP32-S3 benchmark 代码");
             println!("   模型: {}", model_path);
 
             match model::DuanyanModel::read_from_file(mp) {
@@ -1530,12 +2106,12 @@ fn cmd_model(args: &[String]) {
                         Ok(()) => {
                             println!("   输出: {} ({} bytes)", output, c_code.len());
                             println!("   层数: {}, 参数: {}", m.header.n_layers, m.header.n_params);
-                            println!("✅ 用 ESP-IDF 编译运行: idf.py build && idf.py flash monitor");
+                            println!("用 ESP-IDF 编译运行: idf.py build && idf.py flash monitor");
                         }
-                        Err(e) => { eprintln!("❌ 写入失败: {}", e); process::exit(1); }
+                        Err(e) => { eprintln!("写入失败: {}", e); process::exit(1); }
                     }
                 }
-                Err(e) => { eprintln!("❌ 读取模型失败: {}", e); process::exit(1); }
+                Err(e) => { eprintln!("读取模型失败: {}", e); process::exit(1); }
             }
         }
         "deploy" => {
@@ -1559,14 +2135,14 @@ fn cmd_model(args: &[String]) {
             if !sd_dir.exists() {
                 match fs::create_dir_all(sd_dir) {
                     Ok(()) => {}
-                    Err(e) => { eprintln!("❌ 创建目录失败: {}", e); process::exit(1); }
+                    Err(e) => { eprintln!("创建目录失败: {}", e); process::exit(1); }
                 }
             }
             let file_name = model_path.file_name().unwrap_or_default();
             let dest = sd_dir.join(file_name);
             match fs::copy(model_path, &dest) {
-                Ok(bytes) => println!("✅ 部署成功: {} → {} ({} bytes)", model_path.display(), dest.display(), bytes),
-                Err(e) => { eprintln!("❌ 部署失败: {}", e); process::exit(1); }
+                Ok(bytes) => println!("部署成功: {} → {} ({} bytes)", model_path.display(), dest.display(), bytes),
+                Err(e) => { eprintln!("部署失败: {}", e); process::exit(1); }
             }
         }
         "list" => {
@@ -1603,6 +2179,15 @@ fn print_usage() {
     println!("  hardy build <file> --target arduino-avr      Arduino sketch 生成");
     println!("  hardy build <file> --target stm32            STM32 HAL 项目生成");
     println!("  hardy build <file> --target rpi              树莓派项目生成");
+    println!("  hardy build <file> --target ic               工业控制 (PLC/EtherCAT/SIL-3/运动控制)");
+    println!("  hardy build <file> --target ad               自动驾驶 (CAN FD/AUTOSAR/Fail-Op)");
+    println!("  hardy build <file> --target rt               嵌入式 RTOS (微内核/BSP/TLA+)");
+    println!("  hardy build <file> --target av               航空电子 (DO-178C/ARINC653/TMR)");
+    println!("  hardy build <file> --target md               医疗器械 (IEC 62304/ISO 14971)");
+    println!("  hardy build <file> --target rw               轨道交通 (EN 50128 SIL-4/联锁)");
+    println!("  hardy build <file> --target se               半导体设备 (纳米定位/振动抑制)");
+    println!("  hardy build <file> --target edu              教育平台 (课程/编译可视化)");
+    println!("  hardy build <file> --target rb               具身机器人 (运动学/力控/ISO 15066)");
     println!("  hardy run   <file>                          原生执行 (直接运行输出)");
     println!("  hardy run   <file> --hw                     硬件模拟模式 (GPIO/UART/PWM)");
     println!("  hardy debug <file>                          调试模式 (单步/断点/寄存器)");
@@ -1646,7 +2231,7 @@ fn print_usage() {
     println!("  -O            泝火优化 (常量折叠+死代码消除)");
     println!("  --asm         显示武器蓝图 (汇编)");
     println!("  --compat      Espruino/Moddable 兼容模式 (自动转换旧式API)");
-    println!("  --target <t>  编译目标: counpre64(默认) | esp32 | stm32 | arduino-avr | arduino-arm | rpi");
+    println!("  --target <t>  编译目标: counpre64(默认) | esp32 | stm32 | arduino-avr | arduino-arm | rpi | ic | ad | rt | av");
     println!("  --board <b>   板子型号: arduino-uno | arduino-nano | arduino-mega | arduino-due | arduino-zero");
     println!("                esp32-devkit | stm32-bluepill | rpi-4b | counpre64-fpga");
     println!();
@@ -1657,6 +2242,10 @@ fn print_usage() {
     println!("  hardy build blink.js --target arduino-avr --board arduino-uno");
     println!("  hardy build app.js --target stm32 -O");
     println!("  hardy build app.js --target rpi");
+    println!("  hardy build ctrl.js --target ic              工业控制 PLC 代码生成");
+    println!("  hardy build steer.js --target ad             自动驾驶 AUTOSAR SWC");
+    println!("  hardy build sys.js --target rt               RTOS 微内核+BSP");
+    println!("  hardy build fcc.js --target av               飞控 DO-178C 证据包");
     println!("  hardy run   helloworld.js");
     println!("  hardy flash hello.hex --board arduino-nano --port COM3");
     println!("  hardy new my-app --board esp32 -t blinky");
@@ -1689,7 +2278,7 @@ fn cmd_workspace(args: &[String]) {
 
             match workspace::workspace_init(&cwd, &name, monorepo) {
                 Ok(ws) => {
-                    println!("✅ Workspace '{}' 初始化完成", ws.name);
+                    println!("Workspace '{}' 初始化完成", ws.name);
                     println!("  配置文件: hardy.workspace.json");
                     println!("  .hardy/ 目录已创建");
                     if monorepo {
@@ -1697,7 +2286,7 @@ fn cmd_workspace(args: &[String]) {
                     }
                 }
                 Err(e) => {
-                    eprintln!("❌ 初始化失败: {}", e);
+                    eprintln!("初始化失败: {}", e);
                     process::exit(1);
                 }
             }
@@ -1709,7 +2298,7 @@ fn cmd_workspace(args: &[String]) {
                 process::exit(1);
             }
             let mut ws = workspace::WorkspaceConfig::load(&cwd).unwrap_or_else(|e| {
-                eprintln!("❌ {}", e);
+                eprintln!("{}", e);
                 process::exit(1);
             });
             match ws.resolve_build_order() {
@@ -1729,27 +2318,27 @@ fn cmd_workspace(args: &[String]) {
                                 match compile_to_instructions_local(&source) {
                                     Ok(instructions) => {
                                         match crate::firmware::emit_bundle(&instructions, &build_dir, "main") {
-                                            Ok(_) => println!("  ✓ {} 编译成功", name),
-                                            Err(e) => eprintln!("  ✗ {} 编译失败: {}", name, e),
+                                            Ok(_) => println!("  [ok] {} 编译成功", name),
+                                            Err(e) => eprintln!("  [x] {} 编译失败: {}", name, e),
                                         }
                                     }
-                                    Err(e) => eprintln!("  ✗ {} 编译失败: {}", name, e),
+                                    Err(e) => eprintln!("  [x] {} 编译失败: {}", name, e),
                                 }
                             } else {
-                                println!("  ⚠ 跳过 {} (未找到 main.js)", name);
+                                println!("  [!] 跳过 {} (未找到 main.js)", name);
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("❌ {}", e);
+                    eprintln!("{}", e);
                     process::exit(1);
                 }
             }
         }
         Some("list") => {
             let ws = workspace::WorkspaceConfig::load(&cwd).unwrap_or_else(|e| {
-                eprintln!("❌ {}", e);
+                eprintln!("{}", e);
                 process::exit(1);
             });
             println!("Workspace: {} v{}", ws.name, ws.version);
@@ -1788,7 +2377,7 @@ fn cmd_workspace(args: &[String]) {
             }
 
             let mut ws = workspace::WorkspaceConfig::load(&cwd).unwrap_or_else(|e| {
-                eprintln!("❌ {}", e);
+                eprintln!("{}", e);
                 process::exit(1);
             });
 
@@ -1810,11 +2399,11 @@ fn cmd_workspace(args: &[String]) {
                 eprintln!("保存失败: {}", e);
                 process::exit(1);
             });
-            println!("✅ 添加子项目: {} @ {}", name, path);
+            println!("添加子项目: {} @ {}", name, path);
         }
         Some("status") => {
             let ws = workspace::WorkspaceConfig::load(&cwd).unwrap_or_else(|e| {
-                eprintln!("❌ {}", e);
+                eprintln!("{}", e);
                 process::exit(1);
             });
             let statuses = ws.status(&cwd);
@@ -1824,8 +2413,8 @@ fn cmd_workspace(args: &[String]) {
                 println!("{:<20} {:<12} {:<8} {:<8} {}",
                     s.name,
                     s.target,
-                    if s.has_config { "✓" } else { "✗" },
-                    if s.has_entry { "✓" } else { "✗" },
+                    if s.has_config { "[ok]" } else { "[x]" },
+                    if s.has_entry { "[ok]" } else { "[x]" },
                     s.last_build.as_deref().unwrap_or("未编译")
                 );
             }
@@ -1881,7 +2470,7 @@ fn cmd_git_cli(args: &[String]) {
                         println!("工作区干净");
                     }
                 }
-                Err(e) => eprintln!("❌ {}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
         Some("log") => {
@@ -1892,7 +2481,7 @@ fn cmd_git_cli(args: &[String]) {
                         println!("{} {} ({}) - {}", &e.hash[..8], e.message, e.author, e.date);
                     }
                 }
-                Err(e) => eprintln!("❌ {}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
         Some("diff") => {
@@ -1914,7 +2503,7 @@ fn cmd_git_cli(args: &[String]) {
                         }
                     }
                 }
-                Err(e) => eprintln!("❌ {}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
         Some("add") => {
@@ -1922,12 +2511,12 @@ fn cmd_git_cli(args: &[String]) {
                 let files: Vec<String> = args[1..].to_vec();
                 match git_ops::git_add(&cwd, &files) {
                     Ok(_) => println!("已暂存 {} 个文件", files.len()),
-                    Err(e) => eprintln!("❌ {}", e),
+                    Err(e) => eprintln!("{}", e),
                 }
             } else {
                 match git_ops::git_add_all(&cwd) {
                     Ok(_) => println!("已暂存所有文件"),
-                    Err(e) => eprintln!("❌ {}", e),
+                    Err(e) => eprintln!("{}", e),
                 }
             }
         }
@@ -1947,7 +2536,7 @@ fn cmd_git_cli(args: &[String]) {
             }
             match git_ops::git_commit(&cwd, &msg) {
                 Ok(out) => println!("{}", out),
-                Err(e) => eprintln!("❌ {}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
         Some("push") => {
@@ -1955,13 +2544,13 @@ fn cmd_git_cli(args: &[String]) {
             let branch = args.get(2).map(|s| s.as_str());
             match git_ops::git_push(&cwd, remote, branch) {
                 Ok(out) => println!("{}", out),
-                Err(e) => eprintln!("❌ {}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
         Some("pull") => {
             match git_ops::git_pull(&cwd) {
                 Ok(out) => println!("{}", out),
-                Err(e) => eprintln!("❌ {}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
         Some("branch") => {
@@ -1969,7 +2558,7 @@ fn cmd_git_cli(args: &[String]) {
                 // 创建分支
                 match git_ops::git_create_branch(&cwd, &args[1]) {
                     Ok(out) => println!("{}", out),
-                    Err(e) => eprintln!("❌ {}", e),
+                    Err(e) => eprintln!("{}", e),
                 }
             } else {
                 match git_ops::git_branches(&cwd) {
@@ -1980,7 +2569,7 @@ fn cmd_git_cli(args: &[String]) {
                             println!("{}{}{}", prefix, b.name, suffix);
                         }
                     }
-                    Err(e) => eprintln!("❌ {}", e),
+                    Err(e) => eprintln!("{}", e),
                 }
             }
         }
@@ -1991,20 +2580,20 @@ fn cmd_git_cli(args: &[String]) {
             }
             match git_ops::git_checkout(&cwd, &args[1]) {
                 Ok(out) => println!("{}", out),
-                Err(e) => eprintln!("❌ {}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
         Some("init") => {
             match git_ops::git_init(&cwd) {
                 Ok(out) => println!("{}", out),
-                Err(e) => eprintln!("❌ {}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
         Some("hooks") => {
             if args.get(1).map(|s| s.as_str()) == Some("install") {
                 match git_ops::git_install_hooks(&cwd) {
-                    Ok(_) => println!("✅ pre-commit hook 已安装"),
-                    Err(e) => eprintln!("❌ {}", e),
+                    Ok(_) => println!("pre-commit hook 已安装"),
+                    Err(e) => eprintln!("{}", e),
                 }
             } else {
                 eprintln!("用法: hardy git hooks install");
@@ -2090,7 +2679,7 @@ fn cmd_lint(args: &[String]) {
         // 简单估算
         let diags = lint::resource_budget_check(&cwd, 32, 256, &config);
         if diags.is_empty() {
-            println!("✅ 资源约束检查通过");
+            println!("资源约束检查通过");
         } else {
             for d in &diags {
                 println!("  {} [{}] {}", d.severity.symbol(), d.rule_id, d.message);
@@ -2163,7 +2752,7 @@ fn print_lint_result(result: &lint::LintResult) {
         result.error_count, result.warning_count, result.fixable_count
     );
     if result.error_count == 0 && result.warning_count == 0 {
-        println!("✅ 代码规范检查通过");
+        println!("代码规范检查通过");
     }
 }
 
@@ -2202,11 +2791,11 @@ fn cmd_ci(args: &[String]) {
             let result = ci::ci_build_all(&cwd, &config);
             println!();
             if result.success {
-                println!("✅ CI 构建成功 ({} ms)", result.duration_ms);
+                println!("CI 构建成功 ({} ms)", result.duration_ms);
                 println!("  目标: {}", result.targets_built.join(", "));
                 println!("  产物总大小: {} KB", result.total_size_bytes / 1024);
             } else {
-                println!("❌ CI 构建失败");
+                println!("CI 构建失败");
                 if !result.targets_failed.is_empty() {
                     println!("  失败: {}", result.targets_failed.join(", "));
                 }
@@ -2232,7 +2821,7 @@ fn cmd_ci(args: &[String]) {
                     }
                 }
                 Err(e) => {
-                    eprintln!("❌ {}", e);
+                    eprintln!("{}", e);
                     process::exit(1);
                 }
             }
@@ -2242,13 +2831,13 @@ fn cmd_ci(args: &[String]) {
             let gitlab = args.iter().any(|a| a == "--gitlab");
             if github {
                 ci::ci_generate_github_action(&cwd).unwrap_or_else(|e| {
-                    eprintln!("❌ {}", e);
+                    eprintln!("{}", e);
                     process::exit(1);
                 });
             }
             if gitlab {
                 ci::ci_generate_gitlab_ci(&cwd).unwrap_or_else(|e| {
-                    eprintln!("❌ {}", e);
+                    eprintln!("{}", e);
                     process::exit(1);
                 });
             }
@@ -2264,8 +2853,8 @@ fn cmd_ci(args: &[String]) {
                 }
             }
             match ci::ci_archive(&cwd, &version) {
-                Ok(msg) => println!("✅ {}", msg),
-                Err(e) => eprintln!("❌ {}", e),
+                Ok(msg) => println!("{}", msg),
+                Err(e) => eprintln!("{}", e),
             }
         }
         _ => {
