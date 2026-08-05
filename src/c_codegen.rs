@@ -115,14 +115,15 @@ typedef unsigned int u32;
 #define HARDY_RMT_INT_ENA    HARDY_REG(HARDY_RMT_BASE + 0x68)
 #define HARDY_RMT_INT_CLR    HARDY_REG(HARDY_RMT_BASE + 0x6C)
 #define HARDY_RMT_SYS_CONF   HARDY_REG(HARDY_RMT_BASE + 0xC0)
-/* WS2812 时序 @ RMT sclk 实测 12.71MHz (tick≈79ns)。
- * 测量方法: 单帧拉长 144000 ticks + UART 5字符(434us)锚定
- * 标定 CPU 轮询速率 + GPIO48 电平轮询测总时长, 三次重复一致。
- * 此前误设 10MHz → T0H 仅 0.236us 压在 WS2812 判决门限上,
- * "0"码被随机误读为 1 → 约半数帧被污染偏白 → 肉眼闪烁。
- * 现 T0H=0.39us/T0L=0.87us/T1H=0.87us/T1L=0.39us, 门限余量充足 */
-#define HARDY_WS_T0H 5u
-#define HARDY_WS_T0L 11u
+/* WS2812 时序 @ RMT sclk 实测 ≈11.7MHz (tick≈85ns)。
+ * 测量方法: 9400 tick 长帧(50%占空) + CPU 轮询 GPIO48 输入电平采样,
+ * 高电平样本数经 UART 字符锚定(LPC)换算帧时长=804us -> sclk=9400/804us。
+ * 判决验证: 红蓝交替纯色无杂光 + 白->红 64 级渐变丝滑无闪。
+ * 此前误设 T0H=5(0.39~0.43us) 越过灯珠判决门限 → "0"码全读成 1 → 白灯;
+ * T0H=1(85ns) 又短到灯珠不认 → 同样全白。
+ * 现 T0H=0.26us/T0L=1.11us/T1H=0.94us/T1L=0.43us, 周期 16tick≈1.37us */
+#define HARDY_WS_T0H 3u
+#define HARDY_WS_T0L 13u
 #define HARDY_WS_T1H 11u
 #define HARDY_WS_T1L 5u
 
@@ -189,7 +190,7 @@ static void hardy_rmt_init(void) {
     HARDY_REG(HARDY_GPIO_BASE + 0x554 + 48 * 4) = 81;
 }
 /* WS2812: 经 RMT 硬件发送 24bit GRB (MSB first), 帧含 50us 锁存间隙。
- * 完成等待用 UART 锚定 (2 锚=174us > 帧最长 109us): 物理上保证发完
+ * 完成等待用 UART 锚定 (2 锚=174us > 帧最长 44us): 物理上保证发完
  * 才重写 RAM, 不依赖任何校准; TX_END 在部分板上不置位, 仅作快路径 */
 static void hardy_ws2812_send(u32 grb) {
     volatile u32 *ram = (volatile u32 *)HARDY_RMT_RAM_CH0;
@@ -199,14 +200,14 @@ static void hardy_ws2812_send(u32 grb) {
         if ((grb >> (23 - i)) & 1) { hi = HARDY_WS_T1H; lo = HARDY_WS_T1L; }
         ram[i] = hi | (1u << 15) | (lo << 16);
     }
-    ram[24] = 128;   /* ~10us 低电平 = WS2812 锁存间隙 (@12.71MHz) */
+    ram[24] = 128;   /* ~11us 低电平帧尾 (@11.7MHz), 后续空闲低电平提供锁存间隙 */
     ram[25] = 0;     /* 结束标记 */
     HARDY_RMT_INT_CLR = 1;
     HARDY_RMT_CH0CONF0 = BASE_CONF | (1u << 1) | (1u << 2);  /* 复位读指针 */
     HARDY_RMT_CH0CONF0 = BASE_CONF;
     HARDY_RMT_CH0CONF0 = BASE_CONF | (1u << 24);  /* CONF_UPDATE */
     HARDY_RMT_CH0CONF0 = BASE_CONF | (1u << 0);   /* TX_START */
-    hardy_delay_us(400);  /* 帧长 ≈291us (@12.71MHz), 400us 余量充足;
+    hardy_delay_us(400);  /* 帧长 ≈44us (@11.7MHz), 400us 余量充足;
                            * 校准经 UART 锚定实测自洽, 不再向串口发字符 */
 }
 static void hardy_rgb_set(int r, int g, int b) {
