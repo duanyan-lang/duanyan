@@ -127,6 +127,21 @@ typedef unsigned int u32;
 #define HARDY_WS_T1H 11u
 #define HARDY_WS_T1L 5u
 
+/* SAR ADC1 (RTC 控制器 oneshot)。寄存器布局逐项对照 ESP-IDF v5.2 sens_reg.h /
+ * adc_ll.h 核实。★实测根因: 不开 SENS+0x104 bit30 (saradc_clk_en) 时钟门,
+ * start 置位后 done 永不置位 (YL-69 探针 yl69.c 实测验证)。
+ * 干湿实测: 干探头 RAW=4095, 湿探头 RAW≈3300, 干燥曲线 3301→3838→4095 */
+#define HARDY_SENS_MEAS1_CTRL1 HARDY_REG(0x60008808)
+#define HARDY_SENS_MEAS1_CTRL2 HARDY_REG(0x6000880C)
+#define HARDY_SENS_MEAS1_MUX   HARDY_REG(0x60008810)
+#define HARDY_SENS_ATTEN1      HARDY_REG(0x60008814)
+#define HARDY_SENS_POWER_XPD   HARDY_REG(0x6000883C)
+#define HARDY_SENS_SLAVE_ADDR1 HARDY_REG(0x60008840)
+#define HARDY_SENS_CLK_GATE    HARDY_REG(0x60008904)  /* bit30 saradc_clk_en */
+#define HARDY_SENS_RESET       HARDY_REG(0x60008908)  /* bit30 saradc_reset */
+#define HARDY_SARADC_CTRL      HARDY_REG(0x60040000)  /* APB_SARADC 数字侧 */
+#define HARDY_SARADC_CTRL2     HARDY_REG(0x60040004)
+
 static u32 _hardy_ticks_per_us = 10;
 
 static void hardy_uart_putc(char c) {
@@ -230,7 +245,50 @@ static void hardy_rgb_hue(int pos) {
     }
     hardy_ws2812_send(((u32)(g >> 2) << 16) | ((u32)(r >> 2) << 8) | (u32)(b >> 2));
 }
+/* ADC1 初始化 (实测验证序列, 源自 yl69.c 探针)。由 boot_init 无条件调用:
+ * ★实测教训: 不能用 static 标志做懒初始化——零初值 static 会进 .bss,
+ * 裸机镜像若不清 .bss 则标志为随机值, init 被静默跳过 (YL-69 首烧实证) */
+static void hardy_adc_init(void) {
+    HARDY_PERIP_CLK_EN0 |= (1u << 29);        /* APB 总线时钟 (保险) */
+    HARDY_REG(0x600C0038) |= (1u << 29);      /* 探针 yl69.c 实测用的保险地址, 两处都写 */
+    HARDY_SENS_CLK_GATE |= (1u << 30);        /* ★ saradc_clk_en: 不开则 done 永不置位 */
+    HARDY_SENS_RESET |= (1u << 30);           /* saradc 复位脉冲 */
+    HARDY_SENS_RESET &= ~(1u << 30);
+    hardy_delay_us(100);                      /* 时钟门开启后稳定窗口 (探针里由 UART 输出自然提供) */
+    HARDY_SENS_MEAS1_CTRL1 |= (0xFFu << 24);  /* amp FSM 全部强制关 (纯数字 oneshot) */
+    HARDY_SENS_POWER_XPD |= (3u << 29) | (1u << 31); /* force_xpd_sar=常开 + sarclk_en */
+    hardy_delay_us(500);                      /* 模拟上电稳定 */
+    HARDY_SENS_MEAS1_MUX &= ~(1u << 31);      /* RTC 控制器路径 (非数字 DMA) */
+    HARDY_SENS_MEAS1_CTRL2 |= (1u << 18) | (1u << 31); /* start_force + en_pad_force */
+    /* APB_SARADC 数字侧默认值 (探针 yl69.c 实测序列的一部分) */
+    HARDY_SARADC_CTRL |= (1u << 0);           /* start_force=1 */
+    HARDY_SARADC_CTRL &= ~(1u << 1);          /* start=0 */
+    HARDY_SARADC_CTRL2 |= (1u << 11);         /* timer_sel=1 */
+    HARDY_SARADC_CTRL2 &= ~(1u << 24);        /* timer_en=0 (不用定时触发) */
+}
+/* 读 ADC1: 参数为 GPIO 号 (1~10 → ADC1_CH0~CH9), 12bit, 11dB 全量程 0~3.3V。
+ * YL-69 实测: 干=4095, 湿≈3300 */
+static u32 hardy_adc_read(u32 gpio) {
+    if (gpio < 1 || gpio > 10) return 0;
+    u32 ch = gpio - 1;
+    HARDY_SENS_ATTEN1 = (HARDY_SENS_ATTEN1 & ~(3u << (ch * 2))) | (3u << (ch * 2));
+    HARDY_SENS_MEAS1_CTRL2 = (HARDY_SENS_MEAS1_CTRL2 & ~(0xFFFu << 19)) | ((1u << ch) << 19);
+    u32 w = 0;
+    while ((HARDY_SENS_SLAVE_ADDR1 >> 22) & 0xFFu) { if (++w > 100000u) break; } /* 等 FSM 空闲 */
+    HARDY_SENS_MEAS1_CTRL2 &= ~(1u << 17);    /* start_sar 清 0 */
+    hardy_delay_us(20);
+    HARDY_SENS_MEAS1_CTRL2 |= (1u << 17);     /* 启动转换 */
+    u32 t = 0;
+    while (!(HARDY_SENS_MEAS1_CTRL2 & (1u << 16))) {
+        if (++t > 100000u) return 0;          /* 超时 */
+        hardy_delay_us(1);
+    }
+    return HARDY_SENS_MEAS1_CTRL2 & 0xFFFFu;
+}
 static void hardy_boot_init(void) {
+    /* 清零 .bss: 裸机无 crt0, 零初值 static 全靠手动清 (链接脚本提供符号) */
+    extern char __bss_start[], __bss_end[];
+    for (char *p = __bss_start; p < __bss_end; p++) *p = 0;
     /* 关三只看门狗 */
     HARDY_RTC_WDTWPROTECT = 0x50D83AA1;
     HARDY_RTC_WDTFEED = 1;
@@ -252,6 +310,8 @@ static void hardy_boot_init(void) {
     hardy_delay_ms(10);
     /* 数据脚 GPIO48 由 RMT 外设驱动 (软件模拟在低 CPU 频率下波形畸变) */
     hardy_rmt_init();
+    /* ADC1 控制器初始化 (RTC oneshot, 不用不影响) */
+    hardy_adc_init();
     hardy_uart_puts("[DUANYAN-OK] hardyscript bare boot (RMT) tpu=");
     hardy_uart_num(_hardy_ticks_per_us);
     hardy_uart_puts("\r\n");
@@ -1766,6 +1826,9 @@ impl CCodeGenerator {
                             // already handled above
                         }
                         // RGB 灯 (ESP32-S3 板载 WS2812)
+                        "ADC.read" => {
+                            return Ok(Some(format!("hardy_adc_read({})", first_arg)));
+                        }
                         "RGB.setColor" if args.len() >= 3 => {
                             let g = self.generate_expr(&args[1])?;
                             let b = self.generate_expr(&args[2])?;
@@ -3205,5 +3268,16 @@ console.log(42);
         assert!(c.contains("hardy_uart_puts(\"boot ok\\r\\n\");"), "字符串应走 UART");
         assert!(c.contains("hardy_uart_num(42);"), "数字应走 UART");
         assert!(!c.contains("printf"), "裸机不得使用 printf");
+    }
+
+    #[test]
+    fn test_bare_adc_read() {
+        let source = r#"
+let m = ADC.read(6);
+"#;
+        let c = compile_to_c(source, CTarget::Esp32S3Bare);
+        assert!(c.contains("hardy_adc_read(6)"), "ADC.read 应映射到 hardy_adc_read");
+        assert!(c.contains("HARDY_SENS_CLK_GATE |= (1u << 30);"), "应包含 saradc 时钟门关键步骤");
+        assert!(c.contains("HARDY_SENS_MEAS1_CTRL2"), "应包含转换控制寄存器");
     }
 }
