@@ -17,6 +17,12 @@ path = "src/lib.rs"
 espflash = { version = "4", features = ["serialport"] }
 serialport = "4.2"
 
+[features]
+# 默认不含行业垂直域(automotive/avionics/medical/railway 等演示广度模块)
+# 需要行业编译 --target ic|ad|rt|av|md|rw|se|edu|rb 时: cargo build --features domains
+default = []
+domains = []
+
 [profile.release]
 opt-level = 2
 lto = true

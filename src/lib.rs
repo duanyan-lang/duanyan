@@ -39,14 +39,24 @@ pub mod rt_scheduler;     // Phase W2: 实时调度内核 (RMS/EDF+可调度性+
 pub mod can_deterministic; // Phase W3: 汽车通信确定性 (CAN调度+E2E延迟+看门狗)
 pub mod memory_determinism; // Phase W4: 内存与缓存确定性 (栈证明+Cache+DMA+MPU)
 pub mod certification;    // Phase W5: 认证级输出 (MISRA C+ASIL+MC/DC+追踪矩阵)
+// 行业垂直域模块: 演示广度模块, 默认不参与编译, 需要 --features domains
+#[cfg(feature = "domains")]
 pub mod industrial_control; // Phase IC: 工业控制 (IEC61131/EtherCAT/SIL3/运动控制)
+#[cfg(feature = "domains")]
 pub mod automotive;         // Phase AD: 自动驾驶 (CAN FD/混合关键性/Fail-Op/AUTOSAR)
+#[cfg(feature = "domains")]
 pub mod hardy_rtos;         // Phase RT: 嵌入式RTOS (微内核/IPC/BSP/形式化验证)
+#[cfg(feature = "domains")]
 pub mod avionics;           // Phase AV: 航空电子 (DO-178C/ARINC653/浮点确定/TMR)
+#[cfg(feature = "domains")]
 pub mod medical;            // Phase MD: 医疗器械 (IEC 62304/ISO 14971/故障安全)
+#[cfg(feature = "domains")]
 pub mod railway;            // Phase RW: 轨道交通 (EN 50128 SIL-4/联锁/安全通信)
+#[cfg(feature = "domains")]
 pub mod semiconductor;      // Phase SE: 半导体设备 (纳米定位/振动抑制/对准)
+#[cfg(feature = "domains")]
 pub mod education;          // Phase EDU: 教育平台 (课程/编译可视化/实验)
+#[cfg(feature = "domains")]
 pub mod robotics;           // Phase RB: 具身机器人 (运动学/力控/传感融合/安全协作)
 pub mod language_intelligence; // DUANYAN 语言智能引擎 (诊断/补全/悬停/行业规则)
 
