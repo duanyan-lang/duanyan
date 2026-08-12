@@ -1,8 +1,7 @@
 //! Hardy - The HardyScript Compiler
 //!
-//! 捕猎主题命令行: JavaScript/TypeScript → COUNPRE64 机器码
+//! 锻造主题命令行: 把 JavaScript/TypeScript 锻造成机器码
 //!
-//! "在代码的丛林中，Hardy 是无形的陷阱"
 
 use std::env;
 use std::fs;
@@ -95,7 +94,7 @@ fn main() {
     }
 
     match args[1].as_str() {
-        // 捕猎命令
+        // 编译+部署命令 (hunt/track/scan)
         "build"   => cmd_build(&args[2..]),
         "hunt"    => cmd_hunt(&args[2..]),
         "track"   => cmd_track(&args[2..]),
@@ -128,7 +127,7 @@ fn main() {
         "help" | "--help" | "-h" => { print_banner(); print_usage(); }
         "version" | "--version" | "-V" => print_banner(),
         _ => {
-            eprintln!("未知猎术 '{}'\n", args[1]);
+            eprintln!("未知命令 '{}'\n", args[1]);
             print_usage();
             process::exit(1);
         }
@@ -140,7 +139,7 @@ fn main() {
 // =============================================================================
 fn cmd_build(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy build: 请指定猎物源码");
+        eprintln!("hardy build: 请指定源码文件");
         eprintln!("用法: hardy build <input.js|.ts> [-o output.hex] [--asm] [-O] [--compat] [--async] [--target esp32|arduino-avr|arduino-arm|stm32|rpi|counpre64] [--board arduino-uno]");
         process::exit(1);
     }
@@ -177,7 +176,7 @@ fn cmd_build(args: &[String]) {
     let raw_source = match fs::read_to_string(input_file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("无法捕获猎物 '{}': {}", input_file, e);
+            eprintln!("无法读取文件 '{}': {}", input_file, e);
             process::exit(1);
         }
     };
@@ -238,7 +237,7 @@ fn cmd_build(args: &[String]) {
 
     // ---------- COUNPRE64 原生编译路径 ----------
     println!("锻造武器: {} → {}", input_file, output_file);
-    if do_optimize { println!("   泝火优化: 开启"); }
+    if do_optimize { println!("   优化: 开启"); }
 
     // 编译流水线
     let instructions = compile_pipeline(&source, do_optimize);
@@ -246,7 +245,7 @@ fn cmd_build(args: &[String]) {
     // 输出
     if emit_asm {
         let asm = backend::emit_asm(&instructions);
-        println!("\n--- 武器蓝图 (汇编) ---");
+        println!("\n--- 汇编 ---");
         println!("{}", asm);
     }
 
@@ -425,11 +424,11 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
 mod industry;
 
 // =============================================================================
-// hardy hunt - 运行（捕猎执行）: build + flash
+// hardy hunt - 编译+部署: build + flash
 // =============================================================================
 fn cmd_hunt(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy hunt: 请指定猎物");
+        eprintln!("hardy hunt: 请指定源码文件");
         eprintln!("用法: hardy hunt <input.js|.ts> [--port COM3]");
         process::exit(1);
     }
@@ -445,7 +444,7 @@ fn cmd_hunt(args: &[String]) {
 
     // 提示烧录
     let hex_file = args[0].replace(".ts", ".hex").replace(".js", ".hex");
-    println!("\n猎物已就绪: {}", hex_file);
+    println!("\n固件已就绪: {}", hex_file);
     println!("   → 使用 'hardy lock' 锁定硬件目标");
     println!("   → 或手动: Gowin Programmer → Load '{}'", hex_file);
 }
@@ -476,7 +475,7 @@ fn cmd_track(args: &[String]) {
         raw_source
     };
 
-    println!("追踪指令流: {}\n", input_file);
+    println!("指令流: {}\n", input_file);
 
     let instructions = compile_pipeline(&source, false);
     let asm = backend::emit_asm(&instructions);
@@ -496,7 +495,7 @@ fn cmd_track(args: &[String]) {
 // =============================================================================
 fn cmd_scan(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy scan: 请指定侦查目标");
+        eprintln!("hardy scan: 请指定源码文件");
         eprintln!("用法: hardy scan <input.js|.ts>");
         process::exit(1);
     }
@@ -621,7 +620,7 @@ fn cmd_scan(args: &[String]) {
     }
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  侦查完毕，猎物可捕获");
+    println!("  分析完毕，可编译部署");
 }
 
 // =============================================================================
@@ -656,7 +655,7 @@ fn cmd_lock(args: &[String]) {
 // =============================================================================
 fn cmd_flash(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy flash: 请指定猎物源码或 .hex 文件");
+        eprintln!("hardy flash: 请指定源码或 .hex 文件");
         eprintln!("用法: hardy flash <input.js|.ts|.hex> [--target gowin|stm32|esp32|arduino|rpi] [--board arduino-uno] [--port COM3] [--rom]");
         process::exit(1);
     }
@@ -763,7 +762,7 @@ fn cmd_flash(args: &[String]) {
 }
 
 // =============================================================================
-// hardy bite - 单步调试（撕咬执行）
+// hardy bite - 单步调试（逐条执行）
 // =============================================================================
 fn cmd_bite(args: &[String]) {
     if args.is_empty() {
@@ -786,7 +785,7 @@ fn cmd_bite(args: &[String]) {
 
     let instructions = compile_pipeline(&source, false);
 
-    println!("撕咬执行模式: {} ({} 条指令)\n", input_file, instructions.len());
+    println!("逐条执行模式: {} ({} 条指令)\n", input_file, instructions.len());
     println!("PC      HEX       ASM                   描述");
     println!("──────  ────────  ────────────────────  ─────────");
     
@@ -862,12 +861,12 @@ fn cmd_run(args: &[String]) {
 }
 
 // =============================================================================
-// hardy prey - 猎物列表
+// hardy prey - 源码文件列表
 // =============================================================================
 fn cmd_prey(args: &[String]) {
     let dir = if !args.is_empty() { &args[0] } else { "." };
     
-    println!("猎物列表 ({})", dir);
+    println!("源码列表 ({})", dir);
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     let entries = match fs::read_dir(dir) {
@@ -888,10 +887,10 @@ fn cmd_prey(args: &[String]) {
     }
 
     if count == 0 {
-        println!("  (无猎物)");
+        println!("  (无源码文件)");
     } else {
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("  共发现 {} 个猎物", count);
+        println!("  共发现 {} 个源码文件", count);
     }
 }
 
@@ -1641,10 +1640,10 @@ fn cmd_model(args: &[String]) {
 }
 
 fn print_usage() {
-    println!("猎术手册:");
+    println!("命令手册:");
     println!();
     println!("  编译与运行:");
-    println!("  hardy build <file>                          锻造武器 (编译为 .hex)");
+    println!("  hardy build <file>                          编译为 .hex");
     println!("  hardy build <file> --target esp32            C 代码生成 (ESP-IDF 项目)");
     println!("  hardy build <file> --target arduino-avr      Arduino sketch 生成");
     println!("  hardy build <file> --target stm32            STM32 HAL 项目生成");
@@ -1658,12 +1657,12 @@ fn print_usage() {
     println!("  hardy build <file> --target se               半导体设备 (纳米定位/振动抑制)");
     println!("  hardy build <file> --target edu              教育平台 (课程/编译可视化)");
     println!("  hardy build <file> --target rb               具身机器人 (运动学/力控/ISO 15066)");
-    println!("  hardy run   <file>                          原生执行 (直接运行输出)");
+    println!("  hardy run   <file>                          编译并运行 (直接输出)");
     println!("  hardy run   <file> --hw                     硬件模拟模式 (GPIO/UART/PWM)");
     println!("  hardy debug <file>                          调试模式 (单步/断点/寄存器)");
-    println!("  hardy hunt  <file>                          设阱捕获 (编译+部署)");
-    println!("  hardy track <file>                          追踪指令 (查看汇编)");
-    println!("  hardy scan  <file>                          侦查目标 (代码分析+资源估算)");
+    println!("  hardy hunt  <file>                          编译+部署");
+    println!("  hardy track <file>                          查看汇编");
+    println!("  hardy scan  <file>                          代码分析+资源估算");
     println!();
     println!("  烧录:");
     println!("  hardy flash <file> --port COM3              烧录到指定串口");
@@ -1693,13 +1692,15 @@ fn print_usage() {
     println!();
     println!("  其他:");
     println!("  hardy lock  <hex>                           锁定硬件 (烧录指引)");
-    println!("  hardy bite  <file>                          撕咬执行 (逐条解析)");
-    println!("  hardy prey  [dir]                           猎物列表 (列出源码)");
+    println!("  hardy bite  <file>                          逐条解析执行");
+    println!("  hardy prey  [dir]                           列出源码文件");
+    println!("  hardy help                                  显示本手册");
+    println!("  hardy --version                             显示版本信息");
     println!();
     println!("选项:");
     println!("  -o <file>     输出文件");
-    println!("  -O            泝火优化 (常量折叠+死代码消除)");
-    println!("  --asm         显示武器蓝图 (汇编)");
+    println!("  -O            优化 (常量折叠+死代码消除)");
+    println!("  --asm         显示汇编");
     println!("  --compat      Espruino/Moddable 兼容模式 (自动转换旧式API)");
     println!("  --target <t>  编译目标: counpre64(默认) | esp32 | stm32 | arduino-avr | arduino-arm | rpi | ic | ad | rt | av");
     println!("  --board <b>   板子型号: arduino-uno | arduino-nano | arduino-mega | arduino-due | arduino-zero");
@@ -1725,7 +1726,7 @@ fn print_usage() {
     println!("  hardy model list --prebuilt");
     println!("  hardy monitor --port COM3 --baud 115200");
     println!();
-    println!("猎包子命令: hardy pack help");
+    println!("包管理子命令: hardy pack help");
 }
 
 // =============================================================================

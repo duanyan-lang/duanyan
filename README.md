@@ -56,7 +56,7 @@ hardy model generate --output gesture.duanyan
 
 # Package manager
 hardy pack init
-hardy pack add math-utils
+hardy pack install math-utils
 ```
 
 ## Example
@@ -128,7 +128,7 @@ JavaScript / TypeScript
 | `hardy model generate` | Generate AI gesture model |
 | `hardy model convert` | Convert GGUF to Duanyan format |
 | `hardy model benchmark` | Generate ESP32 benchmark harness |
-| `hardy pack init/add/publish` | Package manager |
+| `hardy pack init/install/publish` | Package manager |
 | `hardy ci` | Run CI/CD pipeline |
 | `hardy lint <file>` | Static analysis |
 

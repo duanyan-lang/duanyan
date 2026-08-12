@@ -1,6 +1,6 @@
 {
   "name": "hardyscript",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "HardyScript: JavaScript/TypeScript → COUNPRE64 / ESP32 / Arduino / STM32 / Raspberry Pi unified hardware programming compiler",
   "keywords": [
     "compiler",

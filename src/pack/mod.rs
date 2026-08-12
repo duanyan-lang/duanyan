@@ -1,12 +1,12 @@
-//! Hardy PACK - 猎包管理器
+//! Hardy PACK - 包管理器
 //!
 //! 子命令:
-//!   init    - 初始化猎物巢穴 (项目)
-//!   install - 安装猎包 (捕获依赖)
-//!   publish - 发布猎包 (贡献猎物)
-//!   update  - 更新猎包
-//!   remove  - 移除猎包
-//!   list    - 查看已捕获的猎包
+//!   init    - 初始化项目
+//!   install - 安装包 (下载依赖)
+//!   publish - 发布包
+//!   update  - 更新包
+//!   remove  - 移除包
+//!   list    - 查看已安装的包
 //!   hunt    - 一键安装 + 运行
 
 pub mod json;
@@ -39,7 +39,7 @@ pub fn dispatch(args: &[String]) {
         Some("lock") => cmd_lock(),
         Some("verify") => cmd_verify(),
         Some(other) => {
-            eprintln!("未知猎包指令: '{}'", other);
+            eprintln!("未知 pack 指令: '{}'", other);
             print_pack_usage();
             std::process::exit(1);
         }
@@ -49,19 +49,19 @@ pub fn dispatch(args: &[String]) {
 
 /// 打印 pack 子命令帮助
 pub fn print_pack_usage() {
-    println!("Hardy PACK - 猎包管理器");
+    println!("Hardy PACK - 包管理器");
     println!();
     println!("用法: hardy pack <指令>");
     println!();
-    println!("猎包指令:");
-    println!("  init            初始化猎物巢穴 (创建 hardy.json)");
-    println!("  install [name]  安装猎包 (捕获依赖), 简写: i");
-    println!("  publish         发布猎包 (贡献猎物)");
-    println!("  update [name]   更新猎包");
-    println!("  remove <name>   移除猎包");
-    println!("  list            查看已捕获的猎包, 简写: ls");
-    println!("  search <query>  搜索猎包 (Registry)");
-    println!("  hunt [file]     出击狩猎 (install + run)");
+    println!("pack 指令:");
+    println!("  init            初始化项目 (创建 hardy.json)");
+    println!("  install [name]  安装包 (下载依赖), 简写: i");
+    println!("  publish         发布包");
+    println!("  update [name]   更新包");
+    println!("  remove <name>   移除包");
+    println!("  list            查看已安装的包, 简写: ls");
+    println!("  search <query>  搜索包 (Registry)");
+    println!("  hunt [file]     安装依赖并运行 (install + run)");
     println!("  lock            生成依赖锁定文件 (hardy.lock)");
     println!("  verify          验证依赖完整性");
     println!();
@@ -74,7 +74,7 @@ pub fn print_pack_usage() {
 }
 
 // =============================================================================
-// hardy pack init - 初始化猎物巢穴
+// hardy pack init - 初始化项目
 // =============================================================================
 fn cmd_init() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -90,11 +90,11 @@ fn cmd_init() {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "my-project".to_string());
 
-    println!("初始化猎物巢穴");
+    println!("初始化项目");
     println!();
 
     // 交互式输入
-    let name = prompt_input(&format!("猎包名称 ({})", default_name), &default_name);
+    let name = prompt_input(&format!("包名称 ({})", default_name), &default_name);
     let version = prompt_input("版本号 (0.1.0)", "0.1.0");
     let desc = prompt_input("描述", "");
     let main = prompt_input("入口文件 (index.js)", "index.js");
@@ -125,7 +125,7 @@ fn cmd_init() {
     println!("hardy.json 已创建");
     println!(".hardy/ 目录已创建");
     println!();
-    println!("开始狩猎吧!");
+    println!("开始锻造吧!");
 }
 
 fn prompt_input(prompt: &str, default: &str) -> String {
@@ -142,7 +142,7 @@ fn prompt_input(prompt: &str, default: &str) -> String {
 }
 
 // =============================================================================
-// hardy pack install - 安装猎包
+// hardy pack install - 安装包
 // =============================================================================
 fn cmd_install(args: &[String]) {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -165,16 +165,16 @@ fn install_all(dir: &Path) {
     });
 
     if manifest.dependencies.is_empty() {
-        println!("无依赖需要捕获");
+        println!("无依赖需要安装");
         return;
     }
 
-    println!("捕获猎包...");
+    println!("安装依赖...");
     let client = RegistryClient::new(&registry::get_registry_url());
     let mut lockfile = Lockfile::load(dir).unwrap_or_else(|_| Lockfile { packages: Vec::new() });
 
     for (name, constraint_str) in &manifest.dependencies {
-        print!("  捕获 {}@{}... ", name, constraint_str);
+        print!("  安装 {}@{}... ", name, constraint_str);
         match install_package(&client, name, constraint_str, dir, &mut lockfile) {
             Ok(version) => println!("{}@{}", name, version),
             Err(e) => println!("失败: {}", e),
@@ -186,12 +186,12 @@ fn install_all(dir: &Path) {
     });
 
     println!();
-    println!("狩猎完成! {} 个猎包已捕获", manifest.dependencies.len());
+    println!("安装完成! {} 个包已安装", manifest.dependencies.len());
 }
 
 fn install_one(dir: &Path, name: &str, version_constraint: Option<&str>) {
     let constraint = version_constraint.unwrap_or("*");
-    println!("捕获猎包: {}@{}", name, constraint);
+    println!("安装包: {}@{}", name, constraint);
 
     let client = RegistryClient::new(&registry::get_registry_url());
     let mut lockfile = Lockfile::load(dir).unwrap_or_else(|_| Lockfile { packages: Vec::new() });
@@ -205,10 +205,10 @@ fn install_one(dir: &Path, name: &str, version_constraint: Option<&str>) {
             manifest.add_dependency(name, constraint);
             manifest.save(dir).ok();
             lockfile.save(dir).ok();
-            println!("捕获成功: {}@{}", name, version);
+            println!("安装成功: {}@{}", name, version);
         }
         Err(e) => {
-            eprintln!("捕获失败: {}", e);
+            eprintln!("安装失败: {}", e);
             std::process::exit(1);
         }
     }
@@ -252,7 +252,7 @@ fn install_package(
 }
 
 // =============================================================================
-// hardy pack publish - 发布猎包
+// hardy pack publish - 发布包
 // =============================================================================
 fn cmd_publish() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -261,7 +261,7 @@ fn cmd_publish() {
         std::process::exit(1);
     });
 
-    println!("投放猎物: {}@{}", manifest.name, manifest.version);
+    println!("发布包: {}@{}", manifest.name, manifest.version);
 
     // 打包
     let data = archive::pack(&cwd).unwrap_or_else(|e| {
@@ -278,18 +278,18 @@ fn cmd_publish() {
 
     match client.publish(&manifest.name, &manifest.version, &metadata, &data) {
         Ok(msg) => {
-            println!("投放成功: {}@{} 已进入猎场 (registry: {})", manifest.name, manifest.version, url);
+            println!("发布成功: {}@{} (registry: {})", manifest.name, manifest.version, url);
             let _ = msg;
         }
         Err(e) => {
-            eprintln!("投放失败: {}", e);
+            eprintln!("发布失败: {}", e);
             std::process::exit(1);
         }
     }
 }
 
 // =============================================================================
-// hardy pack update - 更新猎包
+// hardy pack update - 更新包
 // =============================================================================
 fn cmd_update(args: &[String]) {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -303,7 +303,7 @@ fn cmd_update(args: &[String]) {
 
     if args.is_empty() {
         // 更新所有依赖
-        println!("更新全部猎包...");
+        println!("更新全部包...");
         let mut updated = 0;
         for (name, constraint_str) in &manifest.dependencies {
             match update_one(&client, name, constraint_str, &cwd, &mut lockfile) {
@@ -318,9 +318,9 @@ fn cmd_update(args: &[String]) {
         }
         lockfile.save(&cwd).ok();
         if updated == 0 {
-            println!("所有猎包已是最新");
+            println!("所有包已是最新");
         } else {
-            println!("更新了 {} 个猎包", updated);
+            println!("更新了 {} 个包", updated);
         }
     } else {
         let name = &args[0];
@@ -370,11 +370,11 @@ fn update_one(
 }
 
 // =============================================================================
-// hardy pack remove - 移除猎包
+// hardy pack remove - 移除包
 // =============================================================================
 fn cmd_remove(args: &[String]) {
     if args.is_empty() {
-        eprintln!("请指定要释放的猎包名称");
+        eprintln!("请指定要移除的包名称");
         eprintln!("用法: hardy pack remove <name>");
         std::process::exit(1);
     }
@@ -403,25 +403,25 @@ fn cmd_remove(args: &[String]) {
         fs::remove_dir_all(&pkg_dir).ok();
     }
 
-    println!("释放猎包: {}", name);
+    println!("已移除包: {}", name);
 }
 
 // =============================================================================
-// hardy pack list - 猎物清单
+// hardy pack list - 已安装包列表
 // =============================================================================
 fn cmd_list() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
     let lockfile = Lockfile::load(&cwd).unwrap_or_else(|_| Lockfile { packages: Vec::new() });
 
     if lockfile.packages.is_empty() {
-        println!("猎物清单为空");
-        println!("运行 'hardy pack install' 捕获猎包");
+        println!("已安装包列表为空");
+        println!("运行 'hardy pack install' 安装包");
         return;
     }
 
-    println!("猎物清单:");
+    println!("已安装包列表:");
     println!("{:-<50}", "");
-    println!("{:<25} {:<15} {}", "猎包", "版本", "校验和");
+    println!("{:<25} {:<15} {}", "包", "版本", "校验和");
     println!("{:-<50}", "");
     for pkg in &lockfile.packages {
         let checksum_short = if pkg.checksum.len() > 12 {
@@ -432,11 +432,11 @@ fn cmd_list() {
         println!("{:<25} {:<15} {}", pkg.name, pkg.version, checksum_short);
     }
     println!("{:-<50}", "");
-    println!("共 {} 个猎包", lockfile.packages.len());
+    println!("共 {} 个包", lockfile.packages.len());
 }
 
 // =============================================================================
-// hardy pack search - 搜索猎包
+// hardy pack search - 搜索包
 // =============================================================================
 fn cmd_search(args: &[String]) {
     if args.is_empty() {
@@ -450,15 +450,15 @@ fn cmd_search(args: &[String]) {
     let url = registry::get_registry_url();
     let client = RegistryClient::new(&url);
 
-    println!("🔍 搜索猎包: \"{}\"", query);
+    println!("搜索包: \"{}\"", query);
     println!("{:-<50}", "");
 
     match client.search(&query) {
         Ok(results) => {
             if results.is_empty() {
-                println!("未找到匹配的猎包");
+                println!("未找到匹配的包");
             } else {
-                println!("{:<25} {:<12} {}", "猎包", "最新版本", "描述");
+                println!("{:<25} {:<12} {}", "包", "最新版本", "描述");
                 println!("{:-<50}", "");
                 for pkg in &results {
                     let desc = if pkg.description.len() > 30 {
@@ -469,18 +469,18 @@ fn cmd_search(args: &[String]) {
                     println!("{:<25} {:<12} {}", pkg.name, pkg.latest, desc);
                 }
                 println!("{:-<50}", "");
-                println!("共找到 {} 个猎包", results.len());
+                println!("共找到 {} 个包", results.len());
             }
         }
         Err(e) => {
-            eprintln!("❌ {}", e);
-            eprintln!("💡 确保 Registry 服务正在运行: {}", url);
+            eprintln!("[FAIL] {}", e);
+            eprintln!("提示: 确保 Registry 服务正在运行: {}", url);
         }
     }
 }
 
 // =============================================================================
-// hardy pack hunt - 出击狩猎 (install + run)
+// hardy pack hunt - 安装依赖并运行 (install + run)
 // =============================================================================
 fn cmd_hunt(args: &[String]) {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -492,7 +492,7 @@ fn cmd_hunt(args: &[String]) {
     });
 
     if !manifest.dependencies.is_empty() {
-        println!("Phase 1: 捕获依赖...");
+        println!("Phase 1: 安装依赖...");
         install_all(&cwd);
         println!();
     }
@@ -509,7 +509,7 @@ fn cmd_hunt(args: &[String]) {
         std::process::exit(1);
     }
 
-    println!("Phase 2: 出击狩猎 -> {}", target_file.display());
+    println!("Phase 2: 运行 -> {}", target_file.display());
     println!("{:=<50}", "");
 
     // 调用编译器执行
