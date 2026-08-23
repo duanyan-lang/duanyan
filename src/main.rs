@@ -236,7 +236,7 @@ fn cmd_build(args: &[String]) {
     }
 
     // ---------- COUNPRE64 原生编译路径 ----------
-    println!("锻造武器: {} → {}", input_file, output_file);
+    println!("编译: {} → {}", input_file, output_file);
     if do_optimize { println!("   优化: 开启"); }
 
     // 编译流水线
@@ -270,10 +270,10 @@ fn cmd_build(args: &[String]) {
                     }
                 }
             }
-            println!("   武器锻造完成: {}", output_file);
+            println!("   编译完成: {}", output_file);
         }
         Err(e) => {
-            eprintln!("锻造失败: {}", e);
+            eprintln!("编译失败: {}", e);
             process::exit(1);
         }
     }
@@ -331,7 +331,7 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
             println!("      4. idf.py build");
             println!("      5. idf.py -p COM3 flash monitor");
             println!();
-            println!("   ESP32 项目锻造完成");
+            println!("   ESP32 项目生成完成");
         }
         c_codegen::CTarget::ArduinoAvr | c_codegen::CTarget::ArduinoArm => {
             let paths = match arduino_project::generate_arduino_project(&c_result, base_dir, stem) {
@@ -367,7 +367,7 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
             println!("      3. arduino-cli compile --fqbn {} {}", arduino_board.fqbn, paths.project_dir.display());
             println!("      4. arduino-cli upload -p COM3 --fqbn {} {}", arduino_board.fqbn, paths.project_dir.display());
             println!();
-            println!("   Arduino sketch 锻造完成");
+            println!("   Arduino sketch 生成完成");
         }
         c_codegen::CTarget::Stm32 => {
             let paths = match stm32_project::generate_stm32_project(&c_result, base_dir, stem) {
@@ -387,7 +387,7 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
             println!("      4. make");
             println!("      5. make flash  (或 st-flash write {}_stm32.bin 0x08000000)", stem);
             println!();
-            println!("   STM32 项目锻造完成");
+            println!("   STM32 项目生成完成");
         }
         c_codegen::CTarget::RaspberryPi => {
             let paths = match rpi_project::generate_rpi_project(&c_result, base_dir, stem) {
@@ -405,7 +405,7 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
             println!("      3. sudo ./{}_rpi  (本地执行)", stem);
             println!("      或: bash run.sh <pi_host> <pi_user>  (远程部署)");
             println!();
-            println!("   RPi 项目锻造完成");
+            println!("   RPi 项目生成完成");
         }
         _ => {
             // 其他平台: 仅输出 C 源码
