@@ -489,6 +489,132 @@ use super::*;
         assert!(c.contains("hardy_servo_attach(11, 500, 2500);"), "应使用默认脉宽");
     }
 
+    // v1.6 P0: hardy:servo 关节层代码生成测试
+    #[test]
+    fn test_joint_bind_write_esp32() {
+        let c = compile_to_c(
+            "import { Joint } from \"hardy:servo\"; Joint.bind(0, 0, 0, 30, 150, 90); Joint.write(0, 90);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("#include \"driver/i2c.h\""), "PCA9685 走 I2C");
+        assert!(c.contains("#include \"driver/uart.h\""), "ZX361 走 UART");
+        assert!(c.contains("HardyScript Joint/Servo helpers (v1.6 P0"), "应生成关节层 helper");
+        assert!(c.contains("hardy_pca9685_write_us"), "应含 PCA9685 helper");
+        assert!(c.contains("hardy_zx361_move"), "应含 ZX361 helper");
+        assert!(c.contains("hardy_joint_bind(0, 0, 0, 30, 150, 90);"), "应调用 hardy_joint_bind");
+        assert!(c.contains("hardy_joint_write(0, 90, 0);"), "应调用 hardy_joint_write (ms 默认 0)");
+        assert!(c.contains("运行期包络钳位"), "应含运行期包络钳位注释");
+    }
+
+    #[test]
+    fn test_joint_write_with_ms_and_read_home() {
+        let c = compile_to_c(
+            "import { Joint } from \"hardy:servo\"; Joint.bind(4, 1, 2, 0, 240, 120); Joint.write(4, 120, 500); let p = Joint.read(4); Joint.home();",
+            CTarget::Esp32
+        );
+        assert!(c.contains("hardy_joint_write(4, 120, 500);"), "总线关节带行程 ms");
+        assert!(c.contains("hardy_joint_read(4)"), "Joint.read 生成值表达式");
+        assert!(c.contains("hardy_joint_home();"), "Joint.home 全归中");
+    }
+
+    // v1.6 P1: hardy:servo 安全护栏代码生成测试
+    #[test]
+    fn test_safety_check_esp32() {
+        let c = compile_to_c(
+            "import { Safety } from \"hardy:servo\"; let a = Safety.check(300, 40, 1000);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("#ifndef HARDY_LOAD_MAX"), "限额可编译期覆盖");
+        assert!(c.contains("HardyScript actuator safety guard (v1.6 P1"), "应生成安全护栏 helper");
+        assert!(c.contains("_hardy_safety_check(300, 40, 1000)"), "Safety.check 生成值表达式");
+        assert!(c.contains("temp > stall > load") || c.contains("temp_c > _hardy_temp_max"), "优先级 temp>stall>load");
+    }
+
+    #[test]
+    fn test_safety_limits_esp32() {
+        let c = compile_to_c(
+            "import { Safety } from \"hardy:servo\"; Safety.limits(900, 65, 3000);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("hardy_safety_limits(900, 65, 3000);"), "Safety.limits 运行期设置限额");
+    }
+
+    // v1.6 P2: hardy:robot 轨迹/glide 代码生成测试
+    #[test]
+    fn test_robot_joint_glide_esp32() {
+        let c = compile_to_c(
+            "import { Traj, Joint } from \"hardy:robot\"; Joint.glide(0, 30, 120, 2, 20);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("#include <math.h>"), "轨迹数学需 math.h");
+        assert!(c.contains("HardyScript robot motion helpers (v1.6 P2"), "应生成轨迹 helper");
+        assert!(c.contains("_hardy_joint_glide(0, 30, 120, 2, 20);"), "Joint.glide 调用");
+        assert!(c.contains("_hardy_quintic_plan"), "应含五次规划 helper");
+        assert!(c.contains("hardy_joint_write(idx, p.pos"), "glide 逐采样点驱动关节");
+    }
+
+    #[test]
+    fn test_robot_traj_quintic_sample() {
+        let c = compile_to_c(
+            "import { Traj } from \"hardy:robot\"; let p = Traj.sample(Traj.quintic(30, 120, 2), 1);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("_hardy_quintic_plan(30, 120, 2)"), "Traj.quintic 生成规划调用");
+        assert!(c.contains("_hardy_quintic_sample("), "Traj.sample 生成采样调用");
+    }
+
+    // v1.6 P3: hardy:modeb Mode-B 线协议直发代码生成测试
+    #[test]
+    fn test_modeb_arm_home_esp32() {
+        let c = compile_to_c(
+            "import { ModeB } from \"hardy:modeb\"; ModeB.armHome();",
+            CTarget::Esp32
+        );
+        assert!(c.contains("#include \"driver/uart.h\""), "Mode-B 走 UART");
+        assert!(c.contains("HardyScript Mode-B wire protocol (v1.6 P3"), "应生成 Mode-B helper");
+        assert!(c.contains("_hardy_modeb_crc8"), "应含 C 版 crc8");
+        assert!(c.contains("_hardy_modeb_arm_home();"), "armHome 无参调用");
+        assert!(c.contains("4, 0,0x03,0x84, 1,0x03,0x84"), "arm_home 黄金帧载荷 (四关节 @900)");
+        assert!(c.contains("for (int i = 0; i < 8; i++)"), "8×'U' 校准突发");
+    }
+
+    #[test]
+    fn test_modeb_joint_set_and_heartbeat_esp32() {
+        let c = compile_to_c(
+            "import { ModeB } from \"hardy:modeb\"; ModeB.jointSet(2, 900, 0, 0); ModeB.heartbeat(0);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("_hardy_modeb_joint_set(2, 900, 0, 0);"), "0x20 关节设置");
+        assert!(c.contains("_hardy_modeb_send(0x20, pl, 7);"), "joint_set 组 7 字节载荷");
+        assert!(c.contains("_hardy_modeb_heartbeat(0);"), "0x01 心跳");
+    }
+
+    #[test]
+    fn test_modeb_send_and_frame_esp32() {
+        let c = compile_to_c(
+            "import { ModeB } from \"hardy:modeb\"; ModeB.send(18, buf, 0); let n = ModeB.frame(18, buf, 0);",
+            CTarget::Esp32
+        );
+        assert!(c.contains("_hardy_modeb_send(18, buf, 0);"), "send 为语句");
+        assert!(c.contains("_hardy_modeb_send(18, buf, 0)"), "frame 为值表达式");
+    }
+
+    #[test]
+    fn test_modeb_spine_target_alias() {
+        // duanyan-spine / spine 别名→ Esp32S3Bare
+        assert_eq!(CTarget::from_str("duanyan-spine"), Some(CTarget::Esp32S3Bare));
+        assert_eq!(CTarget::from_str("spine"), Some(CTarget::Esp32S3Bare));
+        // 脊髄端骨架: 走裸机 UART0 FIFO 直发, 不依赖 ESP-IDF uart_write_bytes
+        let c = compile_to_c(
+            "import { ModeB } from \"hardy:modeb\"; ModeB.armHome();",
+            CTarget::Esp32S3Bare
+        );
+        assert!(c.contains("Mode-B spine skeleton (v1.6 P3, --target duanyan-spine)"), "应生成脊髄端骨架");
+        assert!(c.contains("hardy_uart_putc('U')"), "裸机 'U' 突发走 hardy_uart_putc");
+        assert!(c.contains("_hardy_modeb_arm_home();"), "armHome 调用");
+        assert!(!c.contains("uart_write_bytes"), "脊髄端不依赖 ESP-IDF UART 驱动");
+    }
+
     // Phase 1.3: 调度器代码生成测试
     #[test]
     fn test_set_interval_esp32() {

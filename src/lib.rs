@@ -14,6 +14,11 @@ pub mod firmware;
 pub mod config;
 pub mod hardware_api;
 pub mod hardware_sim;
+pub mod bus_zx361;        // v1.6 P0: ZX361 总线舵机 ASCII 协议 (移植自 DUANYAN)
+pub mod joint_api;        // v1.6 P0: 关节抽象 (Backend/JointSpec/路由, 镜像 DUANYAN)
+pub mod robot_safety;     // v1.6 P1: 执行器安全护栏 (负载/温度/堵转, 镜像 DUANYAN safety_policy)
+pub mod robot_motion;     // v1.6 P2: 机器人纯运动学/轨迹数学 (无门禁单一真源, robotics 下沉复用)
+pub mod modeb_proto;      // v1.6 P3: Mode-B 线协议编解码 (镜像 DUANYAN mode_b_proto, 黄金帧字节一致)
 pub mod board;
 pub mod compat;
 pub mod stdlib;

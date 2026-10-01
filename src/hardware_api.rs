@@ -71,6 +71,12 @@ pub enum HardwareModule {
     Sensor,
     /// hardy:motor - 电机/舵机控制
     Motor,
+    /// hardy:servo - 关节/舵机 (PCA9685 通道 + ZX361 总线 + 回读, v1.6 P0)
+    Servo,
+    /// hardy:robot - 机器人轨迹/运动学 (五次/梯形 + glide, v1.6 P2)
+    Robot,
+    /// hardy:modeb - Mode-B 线协议直发 (帧头 AA 55 + crc8 + 'U' 突发, v1.6 P3)
+    ModeB,
 }
 
 impl HardwareModule {
@@ -81,6 +87,9 @@ impl HardwareModule {
             "hardy:ai" => Some(Self::Ai),
             "hardy:sensor" => Some(Self::Sensor),
             "hardy:motor" => Some(Self::Motor),
+            "hardy:servo" => Some(Self::Servo),
+            "hardy:robot" => Some(Self::Robot),
+            "hardy:modeb" => Some(Self::ModeB),
             _ => None,
         }
     }
@@ -146,6 +155,43 @@ pub enum HardwareCall {
     MotorSetSpeed { motor_id: u8, speed: i16 },
     /// Motor.brake(motor_id)
     MotorBrake { motor_id: u8 },
+    // v1.6 P0: 关节抽象 (对齐 DUANYAN joint_api; 关节号为中心, 后端可混搭)
+    /// Joint.bind(joint, backend, chan_id, min, max, home) — backend: 0=pca9685, 1=zx361
+    /// (角度包络为整数度; 运行期精钳位由 C helper 承担)
+    JointBind { joint: u8, backend: u8, chan_id: u8, min_deg: i16, max_deg: i16, home_deg: i16 },
+    /// Joint.write(joint, deg[, ms]) — 目标角/时间多为运行期表达式, 此处仅承载关节号与行程
+    JointWrite { joint: u8, ms: u16 },
+    /// Joint.read(joint) — 回读 (PWM: hw 脉冲; 总线: 位置/负载/温度)
+    JointRead { joint: u8 },
+    /// Joint.home() — 全关节归中
+    JointHome,
+    // v1.6 P1: 执行器安全护栏 (对齐 DUANYAN safety_policy)
+    /// Safety.check(load, temp_c, stall_ms) — 优先级 temp>stall>load (温度不可常量化, 只载 load/stall)
+    SafetyCheck { load: u16, stall_ms: u32 },
+    /// Safety.limits(load_max, temp_max_c, stall_ms) — 运行期限额覆盖
+    SafetyLimits { load_max: u16, stall_ms: u32 },
+    // v1.6 P2: 机器人轨迹/运动学 (下沉自 robotics.rs 纯数学)
+    /// Traj.quintic(q0, qf, T) — 五次多项式轨迹规划 (边界速度/加速度为零)
+    TrajQuintic,
+    /// Traj.sample(handle, t) — 采样轨迹点 (pos/vel/acc)
+    TrajSample,
+    /// Traj.trapezoid(distance, v_max, a_max) — 梯形速度规划
+    TrajTrapezoid,
+    /// Joint.glide(idx, from, to, T, steps) — 五次采样平滑多点移动 (呼应真机 0x23 track)
+    JointGlide { joint: u8, steps: u16 },
+    // v1.6 P3: Mode-B 线协议直发 (对齐 DUANYAN mode_b_proto; 帧 AA 55 LEN CMD PL CRC8 + 'U' 突发)
+    /// ModeB.send(cmd, payload, len) — 原语: 组帧 + crc8 + UART 写 (payload/len 为运行期表达式)
+    ModeBSend { cmd: u8 },
+    /// ModeB.frame(cmd, len) — 返回值: 组一帧并发送, 回写入总字节数
+    ModeBFrame { cmd: u8 },
+    /// ModeB.jointSet(joint, ang, sweep_lo, sweep_hi) — 0x20 关节设置 (ang/lo/hi 运行期)
+    ModeBJointSet { joint: u8 },
+    /// ModeB.armSync(items, n) — 0x30 臂总线同步写 (items 运行期数组, n 项数)
+    ModeBArmSync,
+    /// ModeB.armHome() — 0x22 四关节归中 (黄金帧字节固定, 全 900)
+    ModeBArmHome,
+    /// ModeB.heartbeat(uptime) — 0x01 心跳 (uptime 秒, LE 4 字节)
+    ModeBHeartbeat,
 }
 
 /// 解析硬件API调用（编译器使用）
@@ -169,6 +215,32 @@ pub fn resolve_hardware_call(call_name: &str, args: &[i64]) -> Option<HardwareCa
         "Motor.init" if args.len() >= 3 => Some(HardwareCall::MotorInit { in1: args[0] as u8, in2: args[1] as u8, ena: args[2] as u8 }),
         "Motor.setSpeed" if args.len() >= 2 => Some(HardwareCall::MotorSetSpeed { motor_id: args[0] as u8, speed: args[1] as i16 }),
         "Motor.brake" if args.len() >= 1 => Some(HardwareCall::MotorBrake { motor_id: args[0] as u8 }),
+        // v1.6 P0: Joint.*
+        "Joint.bind" if args.len() >= 6 => Some(HardwareCall::JointBind {
+            joint: args[0] as u8, backend: args[1] as u8, chan_id: args[2] as u8,
+            min_deg: args[3] as i16, max_deg: args[4] as i16, home_deg: args[5] as i16,
+        }),
+        "Joint.write" if args.len() >= 1 => Some(HardwareCall::JointWrite {
+            joint: args[0] as u8,
+            ms: if args.len() >= 3 { args[2] as u16 } else { 0 },
+        }),
+        "Joint.read" if args.len() >= 1 => Some(HardwareCall::JointRead { joint: args[0] as u8 }),
+        "Joint.home" => Some(HardwareCall::JointHome),
+        // v1.6 P1: Safety.*
+        "Safety.check" if args.len() >= 3 => Some(HardwareCall::SafetyCheck { load: args[0] as u16, stall_ms: args[2] as u32 }),
+        "Safety.limits" if args.len() >= 3 => Some(HardwareCall::SafetyLimits { load_max: args[0] as u16, stall_ms: args[2] as u32 }),
+        // v1.6 P2: Traj.* / Joint.glide
+        "Traj.quintic" if args.len() >= 3 => Some(HardwareCall::TrajQuintic),
+        "Traj.sample" if args.len() >= 2 => Some(HardwareCall::TrajSample),
+        "Traj.trapezoid" if args.len() >= 3 => Some(HardwareCall::TrajTrapezoid),
+        "Joint.glide" if args.len() >= 5 => Some(HardwareCall::JointGlide { joint: args[0] as u8, steps: args[4] as u16 }),
+        // v1.6 P3: ModeB.* (hardy:modeb)
+        "ModeB.send" if args.len() >= 3 => Some(HardwareCall::ModeBSend { cmd: args[0] as u8 }),
+        "ModeB.frame" if args.len() >= 3 => Some(HardwareCall::ModeBFrame { cmd: args[0] as u8 }),
+        "ModeB.jointSet" if args.len() >= 4 => Some(HardwareCall::ModeBJointSet { joint: args[0] as u8 }),
+        "ModeB.armSync" if args.len() >= 2 => Some(HardwareCall::ModeBArmSync),
+        "ModeB.armHome" => Some(HardwareCall::ModeBArmHome),
+        "ModeB.heartbeat" if args.len() >= 1 => Some(HardwareCall::ModeBHeartbeat),
         _ => None,
     }
 }
@@ -196,6 +268,25 @@ pub fn hardware_call_to_description(call: &HardwareCall) -> String {
         HardwareCall::MotorInit { in1, in2, ena } => format!("Motor.init in1={} in2={} ena={}", in1, in2, ena),
         HardwareCall::MotorSetSpeed { motor_id, speed } => format!("Motor.setSpeed #{} → {}", motor_id, speed),
         HardwareCall::MotorBrake { motor_id } => format!("Motor.brake #{}", motor_id),
+        HardwareCall::JointBind { joint, backend, chan_id, min_deg, max_deg, home_deg } => {
+            let be = if *backend == 1 { "zx361" } else { "pca9685" };
+            format!("Joint.bind #{} → {} ch/id={} [{},{}] home={}", joint, be, chan_id, min_deg, max_deg, home_deg)
+        }
+        HardwareCall::JointWrite { joint, ms } => format!("Joint.write #{} ({}ms)", joint, ms),
+        HardwareCall::JointRead { joint } => format!("Joint.read #{}", joint),
+        HardwareCall::JointHome => "Joint.home (all)".to_string(),
+        HardwareCall::SafetyCheck { load, stall_ms } => format!("Safety.check load={} stall={}ms", load, stall_ms),
+        HardwareCall::SafetyLimits { load_max, stall_ms } => format!("Safety.limits load_max={} stall={}ms", load_max, stall_ms),
+        HardwareCall::TrajQuintic => "Traj.quintic (五次轨迹)".to_string(),
+        HardwareCall::TrajSample => "Traj.sample".to_string(),
+        HardwareCall::TrajTrapezoid => "Traj.trapezoid".to_string(),
+        HardwareCall::JointGlide { joint, steps } => format!("Joint.glide #{} ({} 点平滑)", joint, steps),
+        HardwareCall::ModeBSend { cmd } => format!("Mode-B send cmd 0x{:02X} (AA 55 + crc8 + 'U' 突发)", cmd),
+        HardwareCall::ModeBFrame { cmd } => format!("Mode-B frame cmd 0x{:02X}", cmd),
+        HardwareCall::ModeBJointSet { joint } => format!("Mode-B joint_set #{} (0x20)", joint),
+        HardwareCall::ModeBArmSync => "Mode-B arm_sync (0x30 臂总线同步写)".to_string(),
+        HardwareCall::ModeBArmHome => "Mode-B arm_home (0x22, 四关节 @ 90°)".to_string(),
+        HardwareCall::ModeBHeartbeat => "Mode-B heartbeat (0x01)".to_string(),
     }
 }
 
@@ -209,6 +300,9 @@ mod tests {
         assert_eq!(HardwareModule::from_import_source("hardy:esp32"), Some(HardwareModule::Esp32));
         assert_eq!(HardwareModule::from_import_source("hardy:ai"), Some(HardwareModule::Ai));
         assert_eq!(HardwareModule::from_import_source("hardy:motor"), Some(HardwareModule::Motor));
+        assert_eq!(HardwareModule::from_import_source("hardy:servo"), Some(HardwareModule::Servo));
+        assert_eq!(HardwareModule::from_import_source("hardy:robot"), Some(HardwareModule::Robot));
+        assert_eq!(HardwareModule::from_import_source("hardy:modeb"), Some(HardwareModule::ModeB));
         assert_eq!(HardwareModule::from_import_source("unknown"), None);
     }
 
@@ -267,5 +361,74 @@ mod tests {
     fn test_resolve_motor_brake() {
         let call = resolve_hardware_call("Motor.brake", &[0]);
         assert_eq!(call, Some(HardwareCall::MotorBrake { motor_id: 0 }));
+    }
+
+    // v1.6 P0: Joint.* 解析
+    #[test]
+    fn test_resolve_joint_bind() {
+        // Joint.bind(0, 0=pca9685, ch0, 30, 150, 90)
+        let call = resolve_hardware_call("Joint.bind", &[0, 0, 0, 30, 150, 90]);
+        assert_eq!(call, Some(HardwareCall::JointBind {
+            joint: 0, backend: 0, chan_id: 0, min_deg: 30, max_deg: 150, home_deg: 90 }));
+        // 参不足不解析
+        assert_eq!(resolve_hardware_call("Joint.bind", &[0, 0, 0]), None);
+    }
+
+    #[test]
+    fn test_resolve_joint_write_read_home() {
+        assert_eq!(resolve_hardware_call("Joint.write", &[4, 120, 500]),
+                   Some(HardwareCall::JointWrite { joint: 4, ms: 500 }));
+        assert_eq!(resolve_hardware_call("Joint.write", &[0, 90]),
+                   Some(HardwareCall::JointWrite { joint: 0, ms: 0 }));
+        assert_eq!(resolve_hardware_call("Joint.read", &[4]),
+                   Some(HardwareCall::JointRead { joint: 4 }));
+        assert_eq!(resolve_hardware_call("Joint.home", &[]),
+                   Some(HardwareCall::JointHome));
+    }
+
+    #[test]
+    fn test_joint_description() {
+        let d = hardware_call_to_description(&HardwareCall::JointBind {
+            joint: 4, backend: 1, chan_id: 2, min_deg: 0, max_deg: 240, home_deg: 120 });
+        assert!(d.contains("zx361"));
+        assert!(d.contains("#4"));
+    }
+
+    // v1.6 P1: Safety.* 解析
+    #[test]
+    fn test_resolve_safety() {
+        assert_eq!(resolve_hardware_call("Safety.check", &[300, 40, 1000]),
+                   Some(HardwareCall::SafetyCheck { load: 300, stall_ms: 1000 }));
+        assert_eq!(resolve_hardware_call("Safety.limits", &[900, 65, 3000]),
+                   Some(HardwareCall::SafetyLimits { load_max: 900, stall_ms: 3000 }));
+        assert_eq!(resolve_hardware_call("Safety.check", &[300]), None);
+    }
+
+    // v1.6 P2: Traj.* / Joint.glide 解析 + 模块
+    #[test]
+    fn test_resolve_robot_motion() {
+        assert_eq!(HardwareModule::from_import_source("hardy:robot"), Some(HardwareModule::Robot));
+        assert_eq!(resolve_hardware_call("Traj.quintic", &[30, 120, 2]), Some(HardwareCall::TrajQuintic));
+        assert_eq!(resolve_hardware_call("Traj.trapezoid", &[100, 50, 100]), Some(HardwareCall::TrajTrapezoid));
+        assert_eq!(resolve_hardware_call("Joint.glide", &[0, 30, 120, 2, 20]),
+                   Some(HardwareCall::JointGlide { joint: 0, steps: 20 }));
+    }
+
+    // v1.6 P3: ModeB.* 解析 + 模块
+    #[test]
+    fn test_resolve_modeb() {
+        assert_eq!(HardwareModule::from_import_source("hardy:modeb"), Some(HardwareModule::ModeB));
+        assert_eq!(resolve_hardware_call("ModeB.send", &[0x12, 0, 0]),
+                   Some(HardwareCall::ModeBSend { cmd: 0x12 }));
+        assert_eq!(resolve_hardware_call("ModeB.frame", &[0x20, 0, 7]),
+                   Some(HardwareCall::ModeBFrame { cmd: 0x20 }));
+        assert_eq!(resolve_hardware_call("ModeB.jointSet", &[2, 900, 0, 0]),
+                   Some(HardwareCall::ModeBJointSet { joint: 2 }));
+        assert_eq!(resolve_hardware_call("ModeB.armSync", &[0, 1]), Some(HardwareCall::ModeBArmSync));
+        assert_eq!(resolve_hardware_call("ModeB.armHome", &[]), Some(HardwareCall::ModeBArmHome));
+        assert_eq!(resolve_hardware_call("ModeB.heartbeat", &[0]), Some(HardwareCall::ModeBHeartbeat));
+        // 参数不足拒绝
+        assert_eq!(resolve_hardware_call("ModeB.send", &[0x12]), None);
+        assert_eq!(resolve_hardware_call("ModeB.jointSet", &[2, 900]), None);
     }
 }

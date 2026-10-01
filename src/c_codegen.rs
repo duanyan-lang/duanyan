@@ -28,6 +28,8 @@ impl CTarget {
         match s.to_lowercase().as_str() {
             "esp32" | "esp" => Some(Self::Esp32),
             "esp32s3-bare" | "esp32-bare" | "esp32s3" | "bare" => Some(Self::Esp32S3Bare),
+            // v1.6 P3: DUANYAN 脊髄端 (脑体分离: Pi=脑, S3=脊髄) — 复用裸机镜像路径 + Mode-B 应答骨架
+            "duanyan-spine" | "spine" => Some(Self::Esp32S3Bare),
             "stm32" => Some(Self::Stm32),
             "arduino-avr" | "arduino" => Some(Self::ArduinoAvr),
             "arduino-arm" => Some(Self::ArduinoArm),
@@ -404,6 +406,24 @@ impl CCodeGenerator {
                                 self.hw_imports.insert(format!("motor:{}", item));
                             }
                         }
+                        HardwareModule::Servo => {
+                            // v1.6 P0: 关节/舵机模块 (Joint/Pca9685/BusServo)
+                            for item in items {
+                                self.hw_imports.insert(format!("servo:{}", item));
+                            }
+                        }
+                        HardwareModule::Robot => {
+                            // v1.6 P2: 机器人轨迹/运动学模块 (Traj/Joint)
+                            for item in items {
+                                self.hw_imports.insert(format!("robot:{}", item));
+                            }
+                        }
+                        HardwareModule::ModeB => {
+                            // v1.6 P3: Mode-B 线协议直发模块 (ModeB)
+                            for item in items {
+                                self.hw_imports.insert(format!("modeb:{}", item));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -676,6 +696,18 @@ impl CCodeGenerator {
                     self.output.push_str("#include \"driver/ledc.h\"\n");
                     self.output.push_str("#include \"driver/gpio.h\"\n");
                 }
+                // v1.6 P0: hardy:servo 关节层 — PCA9685 走 I²C, ZX361 走 UART
+                // v1.6 P2: hardy:robot 轨迹/glide 复用关节 helper, 故一并拉入
+                if self.hw_imports.iter().any(|s| s.starts_with("servo:") || s.starts_with("robot:") || s.starts_with("modeb:")) {
+                    self.output.push_str("#include \"driver/i2c.h\"\n");
+                    self.output.push_str("#include \"driver/uart.h\"\n");
+                    self.output.push_str("#include <string.h>\n");
+                    self.output.push_str("#include <stdio.h>\n");
+                    self.output.push_str("#include <stdlib.h>\n");
+                }
+                if self.hw_imports.iter().any(|s| s.starts_with("robot:")) {
+                    self.output.push_str("#include <math.h>\n");
+                }
                 if self.hw_imports.contains("Timer") {
                     // FreeRTOS task delay already included
                 }
@@ -724,6 +756,48 @@ impl CCodeGenerator {
         match self.target {
             CTarget::Esp32S3Bare => {
                 // 裸机 HAL 已在头部整体注入, 无需额外 helper
+                // v1.6 P3: --target duanyan-spine 的 Mode-B 应答端骨架 (走裸机 UART0 FIFO 直发)
+                if self.hw_imports.iter().any(|s| s.starts_with("modeb:")) {
+                    self.output.push_str("/* HardyScript Mode-B spine skeleton (v1.6 P3, --target duanyan-spine) — 组帧端骨架;\n");
+                    self.output.push_str("   ⚠ 只走 UART0 FIFO 直发, 不替换真机 uart_linkm6 位啮时序/应答端 */\n");
+                    self.output.push_str("static inline uint8_t _hardy_modeb_crc8(const uint8_t *d, int n) {\n");
+                    self.output.push_str("    uint8_t crc = 0;\n");
+                    self.output.push_str("    for (int i = 0; i < n; i++) {\n");
+                    self.output.push_str("        crc ^= d[i];\n");
+                    self.output.push_str("        for (int b = 0; b < 8; b++) crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("    return crc;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline int _hardy_modeb_send(uint8_t cmd, const uint8_t *pl, uint8_t len) {\n");
+                    self.output.push_str("    uint8_t buf[5 + 64];\n");
+                    self.output.push_str("    if (len > 64) len = 64;\n");
+                    self.output.push_str("    buf[0] = 0xAA; buf[1] = 0x55; buf[2] = len; buf[3] = cmd;\n");
+                    self.output.push_str("    for (int i = 0; i < len; i++) buf[4 + i] = pl[i];\n");
+                    self.output.push_str("    buf[4 + len] = _hardy_modeb_crc8(&buf[2], 2 + len);\n");
+                    self.output.push_str("    for (int i = 0; i < 8; i++) hardy_uart_putc('U');   /* 位啮自校准突发 */\n");
+                    self.output.push_str("    for (int i = 0; i < 5 + len; i++) hardy_uart_putc((char)buf[i]);\n");
+                    self.output.push_str("    return 5 + len;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline int _hardy_modeb_joint_set(uint8_t joint, uint16_t ang, uint16_t lo, uint16_t hi) {\n");
+                    self.output.push_str("    uint8_t pl[7] = { joint, (uint8_t)(ang>>8), (uint8_t)(ang&0xFF), (uint8_t)(lo>>8), (uint8_t)(lo&0xFF), (uint8_t)(hi>>8), (uint8_t)(hi&0xFF) };\n");
+                    self.output.push_str("    return _hardy_modeb_send(0x20, pl, 7);\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline int _hardy_modeb_arm_home(void) {\n");
+                    self.output.push_str("    uint8_t pl[13] = { 4, 0,0x03,0x84, 1,0x03,0x84, 2,0x03,0x84, 3,0x03,0x84 };\n");
+                    self.output.push_str("    return _hardy_modeb_send(0x22, pl, 13);\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline int _hardy_modeb_arm_sync(const uint8_t *items, uint8_t n) {\n");
+                    self.output.push_str("    uint8_t pl[1 + 8*5];\n");
+                    self.output.push_str("    if (n == 0 || n > 8) return 0;\n");
+                    self.output.push_str("    pl[0] = n;\n");
+                    self.output.push_str("    for (int i = 0; i < n*5; i++) pl[1+i] = items[i];\n");
+                    self.output.push_str("    return _hardy_modeb_send(0x30, pl, 1 + n*5);\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline int _hardy_modeb_heartbeat(uint32_t uptime) {\n");
+                    self.output.push_str("    uint8_t pl[4] = { (uint8_t)(uptime&0xFF), (uint8_t)((uptime>>8)&0xFF), (uint8_t)((uptime>>16)&0xFF), (uint8_t)((uptime>>24)&0xFF) };\n");
+                    self.output.push_str("    return _hardy_modeb_send(0x01, pl, 4);\n");
+                    self.output.push_str("}\n\n");
+                }
             }
             CTarget::Esp32 => {
                 if self.hw_imports.contains("GPIO") {
@@ -997,6 +1071,238 @@ impl CCodeGenerator {
                     self.output.push_str("    gpio_set_level(_hardy_motor_in2[id], 0);\n");
                     self.output.push_str("    ledc_set_duty(LEDC_LOW_SPEED_MODE, _hardy_motor_ch[id], 0);\n");
                     self.output.push_str("    ledc_update_duty(LEDC_LOW_SPEED_MODE, _hardy_motor_ch[id]);\n");
+                    self.output.push_str("}\n\n");
+                }
+                // v1.6 P0: hardy:servo 关节层 helpers (PCA9685 I²C + ZX361 UART)
+                // 语义对齐 DUANYAN joint_api: deg 先钳包络→线性映射 500..2500→按后端路由
+                // (Esp32S3Bare 寄存器级目标的关节驱动走 mode-B 帧, 属 P3 duanyan-spine)
+                if self.hw_imports.iter().any(|s| s.starts_with("servo:") || s.starts_with("robot:")) {
+                    self.output.push_str("/* HardyScript Joint/Servo helpers (v1.6 P0: PCA9685 I2C + ZX361 UART bus) */\n");
+                    self.output.push_str("#define HARDY_JOINT_MAX 16\n");
+                    self.output.push_str("#define HARDY_SERVO_US_MIN 500\n");
+                    self.output.push_str("#define HARDY_SERVO_US_MAX 2500\n");
+                    self.output.push_str("#ifndef HARDY_PCA9685_ADDR\n#define HARDY_PCA9685_ADDR 0x40\n#endif\n");
+                    self.output.push_str("#ifndef HARDY_ZX361_UART\n#define HARDY_ZX361_UART UART_NUM_1\n#endif\n\n");
+                    self.output.push_str("/* 关节绑定表: 后端(0=pca9685,1=zx361) + 通道/ID + 包络 */\n");
+                    self.output.push_str("static uint8_t _hj_backend[HARDY_JOINT_MAX];\n");
+                    self.output.push_str("static uint8_t _hj_chan_id[HARDY_JOINT_MAX];\n");
+                    self.output.push_str("static float   _hj_min[HARDY_JOINT_MAX];\n");
+                    self.output.push_str("static float   _hj_max[HARDY_JOINT_MAX];\n");
+                    self.output.push_str("static float   _hj_home[HARDY_JOINT_MAX];\n");
+                    self.output.push_str("static uint8_t _hj_bound[HARDY_JOINT_MAX];\n");
+                    self.output.push_str("static uint8_t _hardy_pca_addr = HARDY_PCA9685_ADDR;\n\n");
+                    self.output.push_str("/* --- PCA9685 (16-ch PWM over I2C) --- */\n");
+                    self.output.push_str("static void hardy_pca9685_write_reg(uint8_t reg, uint8_t val) {\n");
+                    self.output.push_str("    uint8_t buf[2] = { reg, val };\n");
+                    self.output.push_str("    i2c_master_write_to_device(I2C_NUM_0, _hardy_pca_addr, buf, sizeof(buf), 100 / portTICK_PERIOD_MS);\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline void hardy_pca9685_init(uint8_t addr) {\n");
+                    self.output.push_str("    _hardy_pca_addr = addr;\n");
+                    self.output.push_str("    hardy_pca9685_write_reg(0x00, 0x10);   /* MODE1: SLEEP */\n");
+                    self.output.push_str("    hardy_pca9685_write_reg(0xFE, 121);    /* PRE_SCALE: 25MHz/4096/50Hz-1 */\n");
+                    self.output.push_str("    hardy_pca9685_write_reg(0x00, 0x80);   /* MODE1: RESTART, wake */\n");
+                    self.output.push_str("    hardy_pca9685_write_reg(0x00, 0xA0);   /* MODE1: auto-increment */\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline void hardy_pca9685_write_us(uint8_t channel, uint32_t us) {\n");
+                    self.output.push_str("    if (us > HARDY_SERVO_US_MAX) us = HARDY_SERVO_US_MAX;\n");
+                    self.output.push_str("    uint16_t off = (uint16_t)(us * 4096 / 20000);  /* 50Hz: 20000us period, 12-bit */\n");
+                    self.output.push_str("    uint8_t base = 0x06 + 4 * channel;\n");
+                    self.output.push_str("    hardy_pca9685_write_reg(base + 0, 0);\n");
+                    self.output.push_str("    hardy_pca9685_write_reg(base + 1, 0);\n");
+                    self.output.push_str("    hardy_pca9685_write_reg(base + 2, (uint8_t)(off & 0xFF));\n");
+                    self.output.push_str("    hardy_pca9685_write_reg(base + 3, (uint8_t)((off >> 8) & 0x0F));\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("/* --- ZX361 bus servo (ASCII over UART) --- */\n");
+                    self.output.push_str("static inline void hardy_zx361_move(uint8_t id, uint16_t pwm, uint16_t ms) {\n");
+                    self.output.push_str("    if (pwm < HARDY_SERVO_US_MIN) pwm = HARDY_SERVO_US_MIN;\n");
+                    self.output.push_str("    if (pwm > HARDY_SERVO_US_MAX) pwm = HARDY_SERVO_US_MAX;\n");
+                    self.output.push_str("    char buf[20];\n");
+                    self.output.push_str("    int n = snprintf(buf, sizeof(buf), \"#%03uP%04uT%04u!\", id, pwm, ms);\n");
+                    self.output.push_str("    uart_write_bytes(HARDY_ZX361_UART, buf, n);\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline int hardy_zx361_read_pos(uint8_t id) {\n");
+                    self.output.push_str("    char buf[12];\n");
+                    self.output.push_str("    int n = snprintf(buf, sizeof(buf), \"#%03uPRAD!\", id);\n");
+                    self.output.push_str("    uart_write_bytes(HARDY_ZX361_UART, buf, n);\n");
+                    self.output.push_str("    uint8_t rx[16] = {0};\n");
+                    self.output.push_str("    int len = uart_read_bytes(HARDY_ZX361_UART, rx, sizeof(rx) - 1, 50 / portTICK_PERIOD_MS);\n");
+                    self.output.push_str("    if (len < 10) return -1;\n");
+                    self.output.push_str("    rx[len] = 0;\n");
+                    self.output.push_str("    return atoi((char*)&rx[5]);   /* #IDP<pwm>! */\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline int hardy_zx361_read_temp(uint8_t id) {\n");
+                    self.output.push_str("    char buf[12];\n");
+                    self.output.push_str("    int n = snprintf(buf, sizeof(buf), \"#%03uPRTE!\", id);\n");
+                    self.output.push_str("    uart_write_bytes(HARDY_ZX361_UART, buf, n);\n");
+                    self.output.push_str("    uint8_t rx[24] = {0};\n");
+                    self.output.push_str("    int len = uart_read_bytes(HARDY_ZX361_UART, rx, sizeof(rx) - 1, 50 / portTICK_PERIOD_MS);\n");
+                    self.output.push_str("    if (len < 15) return -1;\n");
+                    self.output.push_str("    rx[len] = 0;\n");
+                    self.output.push_str("    char ads[5] = { (char)rx[5], (char)rx[6], (char)rx[7], (char)rx[8], 0 };\n");
+                    self.output.push_str("    float r = 10.0f * (float)atoi(ads) / 2048.0f;\n");
+                    self.output.push_str("    return (int)(0.633916f * r * r - 13.2675f * r + 94.28351f);  /* 手册 V3.1 温度公式 */\n");
+                    self.output.push_str("}\n\n");
+                    self.output.push_str("/* --- Joint layer: bind + envelope-clamped write + read + home --- */\n");
+                    self.output.push_str("static inline int hardy_joint_bind(uint8_t joint, uint8_t backend, uint8_t chan_id,\n");
+                    self.output.push_str("                                   float min_deg, float max_deg, float home_deg) {\n");
+                    self.output.push_str("    if (joint >= HARDY_JOINT_MAX || min_deg >= max_deg) return 0;  /* 越界/倒置包络拒绑 */\n");
+                    self.output.push_str("    _hj_backend[joint] = backend;\n");
+                    self.output.push_str("    _hj_chan_id[joint] = chan_id;\n");
+                    self.output.push_str("    _hj_min[joint] = min_deg;\n");
+                    self.output.push_str("    _hj_max[joint] = max_deg;\n");
+                    self.output.push_str("    _hj_home[joint] = home_deg;\n");
+                    self.output.push_str("    _hj_bound[joint] = 1;\n");
+                    self.output.push_str("    return 1;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline void hardy_joint_write(uint8_t joint, float deg, uint16_t ms) {\n");
+                    self.output.push_str("    if (joint >= HARDY_JOINT_MAX || !_hj_bound[joint]) return;  /* 未绑定跳过 */\n");
+                    self.output.push_str("    if (deg < _hj_min[joint]) deg = _hj_min[joint];   /* 运行期包络钳位 */\n");
+                    self.output.push_str("    if (deg > _hj_max[joint]) deg = _hj_max[joint];\n");
+                    self.output.push_str("    float f = (deg - _hj_min[joint]) / (_hj_max[joint] - _hj_min[joint]);\n");
+                    self.output.push_str("    uint16_t pwm = (uint16_t)(HARDY_SERVO_US_MIN + f * (HARDY_SERVO_US_MAX - HARDY_SERVO_US_MIN) + 0.5f);\n");
+                    self.output.push_str("    if (_hj_backend[joint] == 1) hardy_zx361_move(_hj_chan_id[joint], pwm, ms);\n");
+                    self.output.push_str("    else hardy_pca9685_write_us(_hj_chan_id[joint], pwm);\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline int hardy_joint_read(uint8_t joint) {\n");
+                    self.output.push_str("    if (joint >= HARDY_JOINT_MAX || !_hj_bound[joint]) return -1;\n");
+                    self.output.push_str("    if (_hj_backend[joint] == 1) return hardy_zx361_read_pos(_hj_chan_id[joint]);\n");
+                    self.output.push_str("    return -1;  /* PWM 后端无位置回读 (hw 脉冲真值走 mode-B 0x21) */\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline void hardy_joint_home(void) {\n");
+                    self.output.push_str("    for (uint8_t j = 0; j < HARDY_JOINT_MAX; j++)\n");
+                    self.output.push_str("        if (_hj_bound[j]) hardy_joint_write(j, _hj_home[j], 500);\n");
+                    self.output.push_str("}\n\n");
+                    // v1.6 P1: 执行器安全护栏 (对齐 DUANYAN safety_policy: temp>stall>load + 迟滞)
+                    self.output.push_str("/* HardyScript actuator safety guard (v1.6 P1: load/temp/stall, 对齐 DUANYAN) */\n");
+                    self.output.push_str("#ifndef HARDY_LOAD_MAX\n#define HARDY_LOAD_MAX 900\n#endif\n");
+                    self.output.push_str("#ifndef HARDY_TEMP_MAX\n#define HARDY_TEMP_MAX 65.0f\n#endif\n");
+                    self.output.push_str("#ifndef HARDY_STALL_MS\n#define HARDY_STALL_MS 3000\n#endif\n");
+                    self.output.push_str("#define HARDY_NORMAL_RECOVER 3\n");
+                    self.output.push_str("/* 动作码: 0=None 1=TorqueOff 2=Stop 3=AlarmLed 4=EscalateHost */\n");
+                    self.output.push_str("static uint16_t _hardy_load_max = HARDY_LOAD_MAX;\n");
+                    self.output.push_str("static float    _hardy_temp_max = HARDY_TEMP_MAX;\n");
+                    self.output.push_str("static uint32_t _hardy_stall_ms = HARDY_STALL_MS;\n");
+                    self.output.push_str("static uint8_t _hs_faulted[HARDY_JOINT_MAX];\n");
+                    self.output.push_str("static uint8_t _hs_normal_run[HARDY_JOINT_MAX];\n");
+                    self.output.push_str("static inline void hardy_safety_limits(uint16_t load_max, float temp_max_c, uint32_t stall_ms) {\n");
+                    self.output.push_str("    _hardy_load_max = load_max; _hardy_temp_max = temp_max_c; _hardy_stall_ms = stall_ms;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("/* 无状态优先级判定: temp > stall > load (stall==0||0xFFFFFFFF 视为无堵转证据) */\n");
+                    self.output.push_str("static inline int _hardy_safety_eval(uint16_t load, float temp_c, uint32_t stall_ms) {\n");
+                    self.output.push_str("    if (temp_c > _hardy_temp_max) return 1;\n");
+                    self.output.push_str("    if (stall_ms != 0 && stall_ms != 0xFFFFFFFFu && stall_ms > _hardy_stall_ms) return 2;\n");
+                    self.output.push_str("    if (load > _hardy_load_max) return 2;\n");
+                    self.output.push_str("    return 0;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("/* 无状态一次性判定 (对应 Safety.check) */\n");
+                    self.output.push_str("static inline int _hardy_safety_check(uint16_t load, float temp_c, uint32_t stall_ms) {\n");
+                    self.output.push_str("    return _hardy_safety_eval(load, temp_c, stall_ms);\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("/* 带迟滞的按 id 状态化判定: 恢复需连续 HARDY_NORMAL_RECOVER 次正常 */\n");
+                    self.output.push_str("static inline int _hardy_safety_check_id(uint8_t id, uint16_t load, float temp_c, uint32_t stall_ms) {\n");
+                    self.output.push_str("    int act = _hardy_safety_eval(load, temp_c, stall_ms);\n");
+                    self.output.push_str("    if (id >= HARDY_JOINT_MAX) return act;\n");
+                    self.output.push_str("    if (act == 0) {\n");
+                    self.output.push_str("        if (_hs_faulted[id]) {\n");
+                    self.output.push_str("            if (_hs_normal_run[id] < 255) _hs_normal_run[id]++;\n");
+                    self.output.push_str("            if (_hs_normal_run[id] >= HARDY_NORMAL_RECOVER) { _hs_faulted[id] = 0; _hs_normal_run[id] = 0; return 0; }\n");
+                    self.output.push_str("            return 4;\n");
+                    self.output.push_str("        }\n");
+                    self.output.push_str("        _hs_normal_run[id] = 0; return 0;\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("    _hs_faulted[id] = 1; _hs_normal_run[id] = 0; return act;\n");
+                    self.output.push_str("}\n\n");
+                }
+                // v1.6 P2: hardy:robot 轨迹数学 (下沉自 robotics.rs 纯数学, 与 robot_motion.rs 一致)
+                if self.hw_imports.iter().any(|s| s.starts_with("robot:")) {
+                    self.output.push_str("/* HardyScript robot motion helpers (v1.6 P2: quintic/trapezoid + joint glide) */\n");
+                    self.output.push_str("typedef struct { float c[6]; float T; } _hardy_quintic_t;\n");
+                    self.output.push_str("typedef struct { float pos; float vel; float acc; } _hardy_traj_point_t;\n");
+                    self.output.push_str("static inline _hardy_quintic_t _hardy_quintic_plan(float q0, float qf, float T) {\n");
+                    self.output.push_str("    _hardy_quintic_t h; float T2 = T*T, T3 = T2*T, T4 = T3*T, T5 = T4*T; float dq = qf - q0;\n");
+                    self.output.push_str("    h.c[0] = q0; h.c[1] = 0.0f; h.c[2] = 0.0f;\n");
+                    self.output.push_str("    h.c[3] = 10.0f*dq/T3; h.c[4] = -15.0f*dq/T4; h.c[5] = 6.0f*dq/T5; h.T = T;\n");
+                    self.output.push_str("    return h;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("static inline _hardy_traj_point_t _hardy_quintic_sample(_hardy_quintic_t h, float t) {\n");
+                    self.output.push_str("    _hardy_traj_point_t p; float t2=t*t, t3=t2*t, t4=t3*t, t5=t4*t;\n");
+                    self.output.push_str("    p.pos = h.c[0]+h.c[1]*t+h.c[2]*t2+h.c[3]*t3+h.c[4]*t4+h.c[5]*t5;\n");
+                    self.output.push_str("    p.vel = h.c[1]+2*h.c[2]*t+3*h.c[3]*t2+4*h.c[4]*t3+5*h.c[5]*t4;\n");
+                    self.output.push_str("    p.acc = 2*h.c[2]+6*h.c[3]*t+12*h.c[4]*t2+20*h.c[5]*t3;\n");
+                    self.output.push_str("    return p;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("typedef struct { float t_accel, t_const, t_decel, v_max, accel, distance; } _hardy_trapezoid_t;\n");
+                    self.output.push_str("static inline _hardy_trapezoid_t _hardy_trapezoid_plan(float distance, float v_max, float a_max) {\n");
+                    self.output.push_str("    _hardy_trapezoid_t p; float t_accel = v_max/a_max; float d_accel = 0.5f*a_max*t_accel*t_accel;\n");
+                    self.output.push_str("    if (2.0f*d_accel >= distance) {\n");
+                    self.output.push_str("        float t = sqrtf(distance/a_max);\n");
+                    self.output.push_str("        p.t_accel=t; p.t_const=0.0f; p.t_decel=t; p.v_max=a_max*t; p.accel=a_max; p.distance=distance;\n");
+                    self.output.push_str("    } else {\n");
+                    self.output.push_str("        float d_const = distance - 2.0f*d_accel;\n");
+                    self.output.push_str("        p.t_accel=t_accel; p.t_const=d_const/v_max; p.t_decel=t_accel; p.v_max=v_max; p.accel=a_max; p.distance=distance;\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("    return p;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("/* 五次采样 steps 点平滑移动关节 idx: from→to, 总时长 T 秒 (呼应真机 0x23 track glide) */\n");
+                    self.output.push_str("static inline void _hardy_joint_glide(uint8_t idx, float from, float to, float T, int steps) {\n");
+                    self.output.push_str("    if (steps < 2) steps = 2;\n");
+                    self.output.push_str("    _hardy_quintic_t h = _hardy_quintic_plan(from, to, T);\n");
+                    self.output.push_str("    uint32_t dt_ms = (uint32_t)(T * 1000.0f / (steps - 1));\n");
+                    self.output.push_str("    for (int i = 0; i < steps; i++) {\n");
+                    self.output.push_str("        float t = T * (float)i / (float)(steps - 1);\n");
+                    self.output.push_str("        _hardy_traj_point_t p = _hardy_quintic_sample(h, t);\n");
+                    self.output.push_str("        hardy_joint_write(idx, p.pos, (uint16_t)dt_ms);\n");
+                    self.output.push_str("        vTaskDelay(pdMS_TO_TICKS(dt_ms));\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("}\n\n");
+                }
+                // v1.6 P3: hardy:modeb Mode-B 线协议直发 (镜像 DUANYAN mode_b_proto, 帧 AA 55 LEN CMD PL CRC8)
+                if self.hw_imports.iter().any(|s| s.starts_with("modeb:")) {
+                    self.output.push_str("/* HardyScript Mode-B wire protocol (v1.6 P3: 镜像 DUANYAN mode_b_proto; 骨架不替换真机 uart_linkm6 位啮时序) */\n");
+                    self.output.push_str("#ifndef HARDY_MODEB_UART\n#define HARDY_MODEB_UART UART_NUM_0\n#endif\n");
+                    self.output.push_str("#define HARDY_MODEB_HEAD0 0xAA\n#define HARDY_MODEB_HEAD1 0x55\n#define HARDY_MODEB_MAXPL 64\n");
+                    self.output.push_str("/* CRC8 poly 0x07 init 0 — 与真机固件 crc8() 逐位等价 */\n");
+                    self.output.push_str("static inline uint8_t _hardy_modeb_crc8(const uint8_t *d, int n) {\n");
+                    self.output.push_str("    uint8_t crc = 0;\n");
+                    self.output.push_str("    for (int i = 0; i < n; i++) {\n");
+                    self.output.push_str("        crc ^= d[i];\n");
+                    self.output.push_str("        for (int b = 0; b < 8; b++) crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);\n");
+                    self.output.push_str("    }\n");
+                    self.output.push_str("    return crc;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("/* 组帧 + 8×'U' 校准突发 + UART 写: 返回帧总字节数 (5+len, 不含前导) */\n");
+                    self.output.push_str("static inline int _hardy_modeb_send(uint8_t cmd, const uint8_t *pl, uint8_t len) {\n");
+                    self.output.push_str("    uint8_t buf[5 + HARDY_MODEB_MAXPL];\n");
+                    self.output.push_str("    if (len > HARDY_MODEB_MAXPL) len = HARDY_MODEB_MAXPL;\n");
+                    self.output.push_str("    buf[0] = HARDY_MODEB_HEAD0; buf[1] = HARDY_MODEB_HEAD1; buf[2] = len; buf[3] = cmd;\n");
+                    self.output.push_str("    for (int i = 0; i < len; i++) buf[4 + i] = pl[i];\n");
+                    self.output.push_str("    buf[4 + len] = _hardy_modeb_crc8(&buf[2], 2 + len);   /* CRC 覆盖 LEN,CMD,PAYLOAD */\n");
+                    self.output.push_str("    for (int i = 0; i < 8; i++) uart_write_bytes(HARDY_MODEB_UART, \"U\", 1);  /* 位啮自校准突发 */\n");
+                    self.output.push_str("    uart_write_bytes(HARDY_MODEB_UART, (const char*)buf, 5 + len);\n");
+                    self.output.push_str("    return 5 + len;\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("/* 0x20 关节设置: payload [joint][ang_hi][ang_lo][lo_hi][lo_lo][hi_hi][hi_lo] */\n");
+                    self.output.push_str("static inline int _hardy_modeb_joint_set(uint8_t joint, uint16_t ang, uint16_t lo, uint16_t hi) {\n");
+                    self.output.push_str("    uint8_t pl[7] = { joint, (uint8_t)(ang>>8), (uint8_t)(ang&0xFF), (uint8_t)(lo>>8), (uint8_t)(lo&0xFF), (uint8_t)(hi>>8), (uint8_t)(hi&0xFF) };\n");
+                    self.output.push_str("    return _hardy_modeb_send(0x20, pl, 7);\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("/* 0x22 四关节归中: ARM_HOME_ANGLE=900(0x0384) — 黄金帧字节固定 */\n");
+                    self.output.push_str("static inline int _hardy_modeb_arm_home(void) {\n");
+                    self.output.push_str("    uint8_t pl[13] = { 4, 0,0x03,0x84, 1,0x03,0x84, 2,0x03,0x84, 3,0x03,0x84 };\n");
+                    self.output.push_str("    return _hardy_modeb_send(0x22, pl, 13);\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("/* 0x30 臂总线同步写: items = n×[id,pw_hi,pw_lo,t_hi,t_lo] 已排布, n≤8 */\n");
+                    self.output.push_str("static inline int _hardy_modeb_arm_sync(const uint8_t *items, uint8_t n) {\n");
+                    self.output.push_str("    uint8_t pl[1 + 8*5];\n");
+                    self.output.push_str("    if (n == 0 || n > 8) return 0;\n");
+                    self.output.push_str("    pl[0] = n;\n");
+                    self.output.push_str("    for (int i = 0; i < n*5; i++) pl[1+i] = items[i];\n");
+                    self.output.push_str("    return _hardy_modeb_send(0x30, pl, 1 + n*5);\n");
+                    self.output.push_str("}\n");
+                    self.output.push_str("/* 0x01 心跳: payload = uptime 秒 LE 4 字节 */\n");
+                    self.output.push_str("static inline int _hardy_modeb_heartbeat(uint32_t uptime) {\n");
+                    self.output.push_str("    uint8_t pl[4] = { (uint8_t)(uptime&0xFF), (uint8_t)((uptime>>8)&0xFF), (uint8_t)((uptime>>16)&0xFF), (uint8_t)((uptime>>24)&0xFF) };\n");
+                    self.output.push_str("    return _hardy_modeb_send(0x01, pl, 4);\n");
                     self.output.push_str("}\n\n");
                 }
             }
@@ -1811,6 +2117,14 @@ impl CCodeGenerator {
                     "Chip.mac" => {
                         return Ok(Some("hardy_chip_mac()".to_string()));
                     }
+                    // v1.6 P0: Joint.home() 无参 → 全关节归中
+                    "Joint.home" => {
+                        return Ok(Some("hardy_joint_home();".to_string()));
+                    }
+                    // v1.6 P3: ModeB.armHome() 无参 → 0x22 四关节归中 (黄金帧)
+                    "ModeB.armHome" => {
+                        return Ok(Some("_hardy_modeb_arm_home();".to_string()));
+                    }
                     _ => {}
                 }
                 // 有参数的调用
@@ -1911,6 +2225,81 @@ impl CCodeGenerator {
                         "Motor.brake" => {
                             let id = self.generate_expr(&args[0])?;
                             return Ok(Some(format!("hardy_motor_brake({});", id)));
+                        }
+                        // v1.6 P0: Joint.* (hardy:servo)
+                        // Joint.bind(joint, backend, chan_id, min, max, home) — backend: 0=pca9685,1=zx361
+                        "Joint.bind" if args.len() >= 6 => {
+                            let be = self.generate_expr(&args[1])?;
+                            let ch = self.generate_expr(&args[2])?;
+                            let mn = self.generate_expr(&args[3])?;
+                            let mx = self.generate_expr(&args[4])?;
+                            let hm = self.generate_expr(&args[5])?;
+                            return Ok(Some(format!("hardy_joint_bind({}, {}, {}, {}, {}, {});", first_arg, be, ch, mn, mx, hm)));
+                        }
+                        "Joint.write" if args.len() >= 2 => {
+                            let deg = self.generate_expr(&args[1])?;
+                            let ms = if args.len() >= 3 { self.generate_expr(&args[2])? } else { "0".to_string() };
+                            return Ok(Some(format!("hardy_joint_write({}, {}, {});", first_arg, deg, ms)));
+                        }
+                        "Joint.read" => {
+                            return Ok(Some(format!("hardy_joint_read({})", first_arg)));
+                        }
+                        // v1.6 P1: Safety.* (hardy:servo)
+                        "Safety.check" if args.len() >= 3 => {
+                            let temp = self.generate_expr(&args[1])?;
+                            let stall = self.generate_expr(&args[2])?;
+                            return Ok(Some(format!("_hardy_safety_check({}, {}, {})", first_arg, temp, stall)));
+                        }
+                        "Safety.limits" if args.len() >= 3 => {
+                            let temp = self.generate_expr(&args[1])?;
+                            let stall = self.generate_expr(&args[2])?;
+                            return Ok(Some(format!("hardy_safety_limits({}, {}, {});", first_arg, temp, stall)));
+                        }
+                        // v1.6 P2: Traj.* / Joint.glide (hardy:robot)
+                        "Traj.quintic" if args.len() >= 3 => {
+                            let qf = self.generate_expr(&args[1])?;
+                            let t = self.generate_expr(&args[2])?;
+                            return Ok(Some(format!("_hardy_quintic_plan({}, {}, {})", first_arg, qf, t)));
+                        }
+                        "Traj.sample" if args.len() >= 2 => {
+                            let t = self.generate_expr(&args[1])?;
+                            return Ok(Some(format!("_hardy_quintic_sample({}, {})", first_arg, t)));
+                        }
+                        "Traj.trapezoid" if args.len() >= 3 => {
+                            let vmax = self.generate_expr(&args[1])?;
+                            let amax = self.generate_expr(&args[2])?;
+                            return Ok(Some(format!("_hardy_trapezoid_plan({}, {}, {})", first_arg, vmax, amax)));
+                        }
+                        "Joint.glide" if args.len() >= 5 => {
+                            let from = self.generate_expr(&args[1])?;
+                            let to = self.generate_expr(&args[2])?;
+                            let t = self.generate_expr(&args[3])?;
+                            let steps = self.generate_expr(&args[4])?;
+                            return Ok(Some(format!("_hardy_joint_glide({}, {}, {}, {}, {});", first_arg, from, to, t, steps)));
+                        }
+                        // v1.6 P3: ModeB.* (hardy:modeb — Mode-B 线协议直发)
+                        "ModeB.send" if args.len() >= 3 => {
+                            let pl = self.generate_expr(&args[1])?;
+                            let len = self.generate_expr(&args[2])?;
+                            return Ok(Some(format!("_hardy_modeb_send({}, {}, {});", first_arg, pl, len)));
+                        }
+                        "ModeB.frame" if args.len() >= 3 => {
+                            let pl = self.generate_expr(&args[1])?;
+                            let len = self.generate_expr(&args[2])?;
+                            return Ok(Some(format!("_hardy_modeb_send({}, {}, {})", first_arg, pl, len)));
+                        }
+                        "ModeB.jointSet" if args.len() >= 4 => {
+                            let ang = self.generate_expr(&args[1])?;
+                            let lo = self.generate_expr(&args[2])?;
+                            let hi = self.generate_expr(&args[3])?;
+                            return Ok(Some(format!("_hardy_modeb_joint_set({}, {}, {}, {});", first_arg, ang, lo, hi)));
+                        }
+                        "ModeB.armSync" if args.len() >= 2 => {
+                            let n = self.generate_expr(&args[1])?;
+                            return Ok(Some(format!("_hardy_modeb_arm_sync({}, {});", first_arg, n)));
+                        }
+                        "ModeB.heartbeat" if args.len() >= 1 => {
+                            return Ok(Some(format!("_hardy_modeb_heartbeat({});", first_arg)));
                         }
                         // Phase 1.3: setInterval / setTimeout → 调度器
                         "setInterval" if args.len() >= 2 => {
