@@ -22,6 +22,7 @@ pub enum TokenKind {
     Case,        // Phase A.3
     Default,     // Phase A.3
     Break,       // Phase A.3
+    Continue,    // 语言完备性批 2
     Import,      // Phase A.4
     Export,      // Phase A.4
     From,        // Phase A.4
@@ -62,6 +63,11 @@ pub enum TokenKind {
     Dot,        // .  Phase 4: 成员访问
     PlusPlus,   // ++ Phase 9: for循环
     MinusMinus, // -- Phase 9: for循环
+    PlusEq,     // += 复合赋值
+    MinusEq,    // -= 复合赋值
+    StarEq,     // *= 复合赋值
+    SlashEq,    // /= 复合赋值
+    PercentEq,  // %= 复合赋值
     Le,         // <= Phase 9
     Ge,         // >= Phase 9
     Colon,      // :  Phase 10: 对象属性

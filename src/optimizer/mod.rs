@@ -154,6 +154,8 @@ impl Optimizer {
             }
             // Phase A.3: break
             Statement::Break => Statement::Break,
+            // 语言完备性批 2: continue
+            Statement::Continue => Statement::Continue,
             // Phase A.4: import
             Statement::Import { items, source } => Statement::Import {
                 items: items.clone(),

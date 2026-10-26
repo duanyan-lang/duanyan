@@ -238,6 +238,11 @@ impl<'a> Parser<'a> {
                 self.expect(&TokenKind::Semi)?;
                 Ok(Statement::Break)
             }
+            TokenKind::Continue => {
+                self.advance();
+                self.expect(&TokenKind::Semi)?;
+                Ok(Statement::Continue)
+            }
             TokenKind::Import => self.parse_import(),
             TokenKind::Export => self.parse_export(),
             // Phase 1.4: await expr; 作为语句 (async 函数内)
@@ -288,14 +293,27 @@ impl<'a> Parser<'a> {
                     return Ok(Statement::PostDec(name));
                 }
                 
-                // 数组索引赋值: name[index] = value;
+                // 数组索引赋值: name[index] = value; 或 name[index] op= value;
                 if *self.peek() == TokenKind::LBracket {
                     self.advance(); // consume '['
                     let index = self.parse_expr()?;
                     self.expect(&TokenKind::RBracket)?;
-                    self.expect(&TokenKind::Eq)?;
+                    let compound = Self::compound_binop(self.peek());
+                    if compound.is_some() {
+                        self.advance();
+                    } else {
+                        self.expect(&TokenKind::Eq)?;
+                    }
                     let value = self.parse_expr()?;
                     self.expect(&TokenKind::Semi)?;
+                    let value = match compound {
+                        Some(op) => Expr::BinOp {
+                            op,
+                            left: Box::new(Expr::Index { array: Box::new(Expr::Ident(name.clone())), index: Box::new(index.clone()) }),
+                            right: Box::new(value),
+                        },
+                        None => value,
+                    };
                     return Ok(Statement::IndexAssign { name, index, value });
                 }
                 
@@ -315,10 +333,23 @@ impl<'a> Parser<'a> {
                         self.expect(&TokenKind::Semi)?;
                         return Ok(Statement::Expr(Expr::Call { name: call_name, args }));
                     }
-                    // 属性赋值: obj.prop = value
-                    self.expect(&TokenKind::Eq)?;
+                    // 属性赋值: obj.prop = value 或 obj.prop op= value
+                    let compound = Self::compound_binop(self.peek());
+                    if compound.is_some() {
+                        self.advance();
+                    } else {
+                        self.expect(&TokenKind::Eq)?;
+                    }
                     let value = self.parse_expr()?;
                     self.expect(&TokenKind::Semi)?;
+                    let value = match compound {
+                        Some(op) => Expr::BinOp {
+                            op,
+                            left: Box::new(Expr::PropAccess { object: Box::new(Expr::Ident(name.clone())), property: prop.clone() }),
+                            right: Box::new(value),
+                        },
+                        None => value,
+                    };
                     return Ok(Statement::PropAssign { object: name, property: prop, value });
                 }
                 
@@ -331,12 +362,21 @@ impl<'a> Parser<'a> {
                     return Ok(Statement::Expr(Expr::Call { name, args }));
                 }
                 
-                // 赋值: ident = expr;
+                // 赋值: ident = expr; 或复合赋值 ident op= expr;
                 if *self.peek() == TokenKind::Eq {
                     self.advance(); // consume '='
                     let value = self.parse_expr()?;
                     self.expect(&TokenKind::Semi)?;
                     return Ok(Statement::Assign { name, value });
+                }
+                if let Some(op) = Self::compound_binop(self.peek()) {
+                    self.advance();
+                    let rhs = self.parse_expr()?;
+                    self.expect(&TokenKind::Semi)?;
+                    return Ok(Statement::Assign {
+                        name: name.clone(),
+                        value: Expr::BinOp { op, left: Box::new(Expr::Ident(name)), right: Box::new(rhs) },
+                    });
                 }
                 
                 // 表达式语句
@@ -374,12 +414,21 @@ impl<'a> Parser<'a> {
             self.expect(&TokenKind::Semi)?;
             return Ok(Statement::Expr(Expr::Call { name, args }));
         }
-        // 赋值: ident = expr;
+        // 赋值: ident = expr; 或复合赋值 ident op= expr;
         if *self.peek() == TokenKind::Eq {
             self.advance();
             let value = self.parse_expr()?;
             self.expect(&TokenKind::Semi)?;
             return Ok(Statement::Assign { name, value });
+        }
+        if let Some(op) = Self::compound_binop(self.peek()) {
+            self.advance();
+            let rhs = self.parse_expr()?;
+            self.expect(&TokenKind::Semi)?;
+            return Ok(Statement::Assign {
+                name: name.clone(),
+                value: Expr::BinOp { op, left: Box::new(Expr::Ident(name)), right: Box::new(rhs) },
+            });
         }
         // 表达式语句
         let mut expr = Expr::Ident(name);
@@ -665,9 +714,18 @@ impl<'a> Parser<'a> {
                 let value = self.parse_expr()?;
                 Ok(Statement::Assign { name, value })
             }
+            _ if Self::compound_binop(self.peek()).is_some() => {
+                let op = Self::compound_binop(self.peek()).unwrap();
+                self.advance();
+                let rhs = self.parse_expr()?;
+                Ok(Statement::Assign {
+                    name: name.clone(),
+                    value: Expr::BinOp { op, left: Box::new(Expr::Ident(name)), right: Box::new(rhs) },
+                })
+            }
             _ => {
                 let tok = &self.tokens[self.pos];
-                Err(format!("line {} col {}: for update expects ++/--/=", tok.line, tok.col))
+                Err(format!("line {} col {}: for update expects ++/--/= or += -= *= /= %=", tok.line, tok.col))
             }
         }
     }
@@ -787,8 +845,40 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, String> {
-        let primary = self.parse_primary()?;
-        self.parse_postfix(primary)
+        // 一元运算符脱糖（复用现有 BinOp 节点，零后端改动）：
+        //   -x → (0 - x)   +x → x   !x → (x == 0)
+        match self.peek() {
+            TokenKind::Minus => {
+                self.advance();
+                let operand = self.parse_unary()?;
+                Ok(Expr::BinOp { op: BinOp::Sub, left: Box::new(Expr::Number(0)), right: Box::new(operand) })
+            }
+            TokenKind::Plus => {
+                self.advance();
+                self.parse_unary()
+            }
+            TokenKind::Bang => {
+                self.advance();
+                let operand = self.parse_unary()?;
+                Ok(Expr::BinOp { op: BinOp::Eq, left: Box::new(operand), right: Box::new(Expr::Number(0)) })
+            }
+            _ => {
+                let primary = self.parse_primary()?;
+                self.parse_postfix(primary)
+            }
+        }
+    }
+
+    /// 复合赋值 token → BinOp（供脱糖为 Assign/IndexAssign/PropAssign + BinOp）
+    fn compound_binop(kind: &TokenKind) -> Option<BinOp> {
+        match kind {
+            TokenKind::PlusEq => Some(BinOp::Add),
+            TokenKind::MinusEq => Some(BinOp::Sub),
+            TokenKind::StarEq => Some(BinOp::Mul),
+            TokenKind::SlashEq => Some(BinOp::Div),
+            TokenKind::PercentEq => Some(BinOp::Mod),
+            _ => None,
+        }
     }
 
     /// 向前看检查是否是箭头函数: (...)=>
@@ -851,7 +941,9 @@ impl<'a> Parser<'a> {
                         _ => return Err("property: . expects ident".to_string()),
                     };
                     // Phase A.8: 字符串方法 .length / .charAt(i) / .slice(a, b)
-                    if prop == "length" || prop == "charAt" || prop == "slice" || prop == "substring" || prop == "indexOf" {
+                    // 语言完备性批 2: .startsWith/.endsWith/.includes/.charCodeAt
+                    if prop == "length" || prop == "charAt" || prop == "slice" || prop == "substring" || prop == "indexOf"
+                        || prop == "startsWith" || prop == "endsWith" || prop == "includes" || prop == "charCodeAt" {
                         if *self.peek() == TokenKind::LParen {
                             self.advance(); // consume '('
                             let args = self.parse_args()?;
@@ -993,18 +1085,58 @@ impl<'a> Parser<'a> {
                 self.expect(&TokenKind::Dot)?;
                 let method = match self.peek().clone() {
                     TokenKind::Ident(ref m) => m.clone(),
-                    _ => return Err("Math 后期望 .max/.min/.abs".to_string()),
+                    _ => return Err("Math 后期望 .max/.min/.abs/.sqrt/.pow".to_string()),
                 };
                 self.advance(); // consume method name
+                // 语言完备性批 2：整数语义下的脱糖（本语言所有值均为整数）
+                //   floor/trunc/round/ceil(x) ≡ x（整数的取整/取顶是恒等）
+                //   sign(x) ≡ (x > 0) - (x < 0)
+                match method.as_str() {
+                    "floor" | "trunc" | "round" | "ceil" => {
+                        self.expect(&TokenKind::LParen)?;
+                        let args = self.parse_args()?;
+                        self.expect(&TokenKind::RParen)?;
+                        if args.len() != 1 {
+                            return Err(format!("Math.{} 需要 1 个参数", method));
+                        }
+                        return Ok(args.into_iter().next().unwrap());
+                    }
+                    "sign" => {
+                        self.expect(&TokenKind::LParen)?;
+                        let args = self.parse_args()?;
+                        self.expect(&TokenKind::RParen)?;
+                        if args.len() != 1 {
+                            return Err("Math.sign 需要 1 个参数".to_string());
+                        }
+                        let x = args.into_iter().next().unwrap();
+                        return Ok(Expr::BinOp {
+                            op: BinOp::Sub,
+                            left: Box::new(Expr::BinOp { op: BinOp::Gt, left: Box::new(x.clone()), right: Box::new(Expr::Number(0)) }),
+                            right: Box::new(Expr::BinOp { op: BinOp::Lt, left: Box::new(x), right: Box::new(Expr::Number(0)) }),
+                        });
+                    }
+                    _ => {}
+                }
                 let op = match method.as_str() {
                     "max" => MathOp::Max,
                     "min" => MathOp::Min,
                     "abs" => MathOp::Abs,
+                    "sqrt" => MathOp::Sqrt,
+                    "pow" => MathOp::Pow,
                     _ => return Err(format!("不支持的 Math.{}", method)),
                 };
                 self.expect(&TokenKind::LParen)?;
                 let args = self.parse_args()?;
                 self.expect(&TokenKind::RParen)?;
+                // 参数数量前置检查：避免空参数在下游后端越界
+                match op {
+                    MathOp::Abs | MathOp::Sqrt => {
+                        if args.len() != 1 { return Err(format!("Math.{} 需要 1 个参数", method)); }
+                    }
+                    MathOp::Max | MathOp::Min | MathOp::Pow => {
+                        if args.len() != 2 { return Err(format!("Math.{} 需要 2 个参数", method)); }
+                    }
+                }
                 Ok(Expr::MathIntrinsic { op, args })
             }
             TokenKind::Ident(name) => {
@@ -1086,6 +1218,151 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::*;
     use crate::lexer::tokenize;
+
+    // 语言完备性批 1：一元运算脱糖 + 复合赋值脱糖
+    #[test]
+    fn test_parse_unary_minus() {
+        let tokens = tokenize("let x = -5;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                assert_eq!(*value, Expr::BinOp {
+                    op: BinOp::Sub,
+                    left: Box::new(Expr::Number(0)),
+                    right: Box::new(Expr::Number(5)),
+                });
+            }
+            _ => panic!("期望 Let 语句"),
+        }
+    }
+
+    #[test]
+    fn test_parse_unary_plus_is_identity() {
+        let tokens = tokenize("let x = +3;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => assert_eq!(*value, Expr::Number(3)),
+            _ => panic!("期望 Let 语句"),
+        }
+    }
+
+    #[test]
+    fn test_parse_unary_not() {
+        let tokens = tokenize("let f = !x;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                assert_eq!(*value, Expr::BinOp {
+                    op: BinOp::Eq,
+                    left: Box::new(Expr::Ident("x".to_string())),
+                    right: Box::new(Expr::Number(0)),
+                });
+            }
+            _ => panic!("期望 Let 语句"),
+        }
+    }
+
+    #[test]
+    fn test_parse_unary_binding() {
+        // -x * y → (0 - x) * y，一元优先级高于乘法
+        let tokens = tokenize("let z = -x * y;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Let { value, .. } => {
+                assert_eq!(*value, Expr::BinOp {
+                    op: BinOp::Mul,
+                    left: Box::new(Expr::BinOp {
+                        op: BinOp::Sub,
+                        left: Box::new(Expr::Number(0)),
+                        right: Box::new(Expr::Ident("x".to_string())),
+                    }),
+                    right: Box::new(Expr::Ident("y".to_string())),
+                });
+            }
+            _ => panic!("期望 Let 语句"),
+        }
+    }
+
+    #[test]
+    fn test_parse_compound_assign_simple() {
+        let tokens = tokenize("x += 2;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::Assign { name, value } => {
+                assert_eq!(name, "x");
+                assert_eq!(*value, Expr::BinOp {
+                    op: BinOp::Add,
+                    left: Box::new(Expr::Ident("x".to_string())),
+                    right: Box::new(Expr::Number(2)),
+                });
+            }
+            _ => panic!("期望 Assign 语句"),
+        }
+    }
+
+    #[test]
+    fn test_parse_compound_assign_index() {
+        let tokens = tokenize("arr[i] %= 3;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::IndexAssign { name, index, value } => {
+                assert_eq!(name, "arr");
+                assert_eq!(*index, Expr::Ident("i".to_string()));
+                assert_eq!(*value, Expr::BinOp {
+                    op: BinOp::Mod,
+                    left: Box::new(Expr::Index {
+                        array: Box::new(Expr::Ident("arr".to_string())),
+                        index: Box::new(Expr::Ident("i".to_string())),
+                    }),
+                    right: Box::new(Expr::Number(3)),
+                });
+            }
+            _ => panic!("期望 IndexAssign 语句"),
+        }
+    }
+
+    #[test]
+    fn test_parse_compound_assign_prop() {
+        let tokens = tokenize("obj.count -= 1;").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::PropAssign { object, property, value } => {
+                assert_eq!(object, "obj");
+                assert_eq!(property, "count");
+                assert_eq!(*value, Expr::BinOp {
+                    op: BinOp::Sub,
+                    left: Box::new(Expr::PropAccess {
+                        object: Box::new(Expr::Ident("obj".to_string())),
+                        property: "count".to_string(),
+                    }),
+                    right: Box::new(Expr::Number(1)),
+                });
+            }
+            _ => panic!("期望 PropAssign 语句"),
+        }
+    }
+
+    #[test]
+    fn test_parse_for_update_compound() {
+        let tokens = tokenize("for (let i = 0; i < 3; i += 1) { }").unwrap();
+        let program = parse(&tokens).unwrap();
+        match &program.statements[0].stmt {
+            Statement::For { update, .. } => {
+                match &**update {
+                    Statement::Assign { name, value } => {
+                        assert_eq!(name, "i");
+                        assert_eq!(*value, Expr::BinOp {
+                            op: BinOp::Add,
+                            left: Box::new(Expr::Ident("i".to_string())),
+                            right: Box::new(Expr::Number(1)),
+                        });
+                    }
+                    _ => panic!("期望 Assign 更新子句"),
+                }
+            }
+            _ => panic!("期望 For 语句"),
+        }
+    }
 
     #[test]
     fn test_parse_let() {

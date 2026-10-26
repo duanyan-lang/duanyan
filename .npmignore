@@ -3,6 +3,9 @@ target/
 *.hex
 *.bin
 *.elf
+# bin/hardy.exe 是本机 PATH 上 `hardy` 命令的实体（不可删，用 scripts/sync-bin.ps1 保持新鲜）；
+# 但不随 npm 分发——npm 用户由 postinstall 从源码构建，包装器 bin/hardy.js 只找 target/release 与 cargo bin
+bin/hardy.exe
 
 # Test files
 test_*.js

@@ -3,7 +3,7 @@
 
 # 用法: 在 PowerShell 中运行 .\scripts\hardy-completion.ps1 或添加到 $PROFILE
 
-$script:snarCommands = @(
+$script:hardyCommands = @(
     'build'
     'hunt'
     'track'
@@ -23,41 +23,41 @@ $script:snarCommands = @(
     'version'
 )
 
-$script:snarSubcommands = @{
+$script:hardySubcommands = @{
     'board' = @('list', 'info')
     'pack'  = @('build', 'install', 'uninstall', 'list', 'search', 'info', 'help')
 }
 
-$script:snarTemplates = @('blank', 'blinky', 'uart', 'button')
+$script:hardyTemplates = @('blank', 'blinky', 'uart', 'button')
 
-$script:snarTargets = @('gowin', 'stm32', 'esp32', 'rpi-pico')
+$script:hardyTargets = @('gowin', 'stm32', 'esp32', 'rpi-pico')
 
-function Get-SnarCompletions {
+function Get-HardyCompletions {
     param(
         [string]$wordToComplete,
         [System.Management.Automation.CommandAst]$commandAst
     )
 
     $elements = $commandAst.CommandElements
-    $snarIndex = -1
+    $hardyIndex = -1
     
     for ($i = 0; $i -lt $elements.Count; $i++) {
         if ($elements[$i].Value -eq 'hardy') {
-            $snarIndex = $i
+            $hardyIndex = $i
             break
         }
     }
 
-    if ($snarIndex -eq -1) { return @() }
+    if ($hardyIndex -eq -1) { return @() }
 
     $args = @()
-    for ($i = $snarIndex + 1; $i -lt $elements.Count; $i++) {
+    for ($i = $hardyIndex + 1; $i -lt $elements.Count; $i++) {
         $args += $elements[$i].Value
     }
 
     # 第一个参数：主命令
     if ($args.Count -eq 0 -or ($args.Count -eq 1 -and $wordToComplete)) {
-        return $script:snarCommands | Where-Object { $_ -like "$wordToComplete*" }
+        return $script:hardyCommands | Where-Object { $_ -like "$wordToComplete*" }
     }
 
     $command = $args[0]
@@ -65,14 +65,14 @@ function Get-SnarCompletions {
     # board 子命令补全
     if ($command -eq 'board') {
         if ($args.Count -eq 1 -or ($args.Count -eq 2 -and $wordToComplete)) {
-            return $script:snarSubcommands['board'] | Where-Object { $_ -like "$wordToComplete*" }
+            return $script:hardySubcommands['board'] | Where-Object { $_ -like "$wordToComplete*" }
         }
     }
 
     # pack 子命令补全
     if ($command -eq 'pack') {
         if ($args.Count -eq 1 -or ($args.Count -eq 2 -and $wordToComplete)) {
-            return $script:snarSubcommands['pack'] | Where-Object { $_ -like "$wordToComplete*" }
+            return $script:hardySubcommands['pack'] | Where-Object { $_ -like "$wordToComplete*" }
         }
     }
 
@@ -90,7 +90,7 @@ function Get-SnarCompletions {
                 return @('--target', '-t', '--port', '-p', '--rom') | Where-Object { $_ -like "$wordToComplete*" }
             }
             if ($lastArg -eq '--target' -or $lastArg -eq '-t') {
-                return $script:snarTargets | Where-Object { $_ -like "$wordToComplete*" }
+                return $script:hardyTargets | Where-Object { $_ -like "$wordToComplete*" }
             }
         }
         'new' {
@@ -98,7 +98,7 @@ function Get-SnarCompletions {
                 return @('--template', '-t') | Where-Object { $_ -like "$wordToComplete*" }
             }
             if ($lastArg -eq '--template' -or $lastArg -eq '-t') {
-                return $script:snarTemplates | Where-Object { $_ -like "$wordToComplete*" }
+                return $script:hardyTemplates | Where-Object { $_ -like "$wordToComplete*" }
             }
         }
         'monitor' {
@@ -119,7 +119,7 @@ function Get-SnarCompletions {
 Register-ArgumentCompleter -Native -CommandName 'hardy' -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
     
-    Get-SnarCompletions -wordToComplete $wordToComplete -commandAst $commandAst | ForEach-Object {
+    Get-HardyCompletions -wordToComplete $wordToComplete -commandAst $commandAst | ForEach-Object {
         [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     }
 }

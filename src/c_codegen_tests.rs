@@ -998,3 +998,58 @@ let m = ADC.read(6);
         assert!(c.contains("HARDY_SENS_CLK_GATE |= (1u << 30);"), "应包含 saradc 时钟门关键步骤");
         assert!(c.contains("HARDY_SENS_MEAS1_CTRL2"), "应包含转换控制寄存器");
     }
+
+    // -----------------------------------------------------------------------
+    // 语言完备性批 2：Math 扩展 / continue / 字符串谓词
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_math_sqrt_helper_injected() {
+        let c = compile_to_c("let r = Math.sqrt(144);", CTarget::Esp32);
+        assert!(c.contains("hardy_isqrt(144)"));
+        assert!(c.contains("static int32_t hardy_isqrt(int32_t n)"), "应注入 isqrt helper");
+    }
+
+    #[test]
+    fn test_math_pow_helper_injected() {
+        let c = compile_to_c("let p = Math.pow(2, 10);", CTarget::Esp32);
+        assert!(c.contains("hardy_ipow(2, 10)"));
+        assert!(c.contains("static int32_t hardy_ipow(int32_t b, int32_t e)"), "应注入 ipow helper");
+    }
+
+    #[test]
+    fn test_math_floor_is_identity_desugar() {
+        // 整数语义：floor 直接返回参数，不产生任何库调用
+        let c = compile_to_c("let x = Math.floor(7);", CTarget::Esp32);
+        assert!(c.contains("int32_t x = 7;"), "floor(7) 应脱糖为 7");
+        assert!(!c.contains("floor"), "不应出现 floor 库调用");
+    }
+
+    #[test]
+    fn test_math_sign_desugar() {
+        let c = compile_to_c("let v = 9; let s = Math.sign(v);", CTarget::Esp32);
+        assert!(c.contains("((v > 0) - (v < 0))"), "sign 应脱糖为 (v>0)-(v<0)");
+    }
+
+    #[test]
+    fn test_continue_break_c_output() {
+        let c = compile_to_c(
+            "for (let i = 0; i < 3; i++) { if (i == 1) { continue; } if (i == 2) { break; } }",
+            CTarget::Esp32);
+        assert!(c.contains("continue;"));
+        assert!(c.contains("break;"));
+    }
+
+    #[test]
+    fn test_string_predicates_c() {
+        let c = compile_to_c(
+            "let cmd = \"RUN\"; if (cmd.startsWith(\"RU\")) { console.log(1); }", CTarget::Esp32);
+        assert!(c.contains("strncmp"), "startsWith 应生成 strncmp 表达式");
+        assert!(c.contains("#include <string.h>"));
+        let c2 = compile_to_c(
+            "let cmd = \"RUN\"; if (cmd.endsWith(\"UN\")) { console.log(1); }", CTarget::Esp32);
+        assert!(c2.contains("strcmp"), "endsWith 应生成 strcmp 后缀比较");
+        let c3 = compile_to_c(
+            "let cmd = \"RUN\"; if (cmd.includes(\"U\")) { console.log(1); }", CTarget::Esp32);
+        assert!(c3.contains("strstr"), "includes 应生成 strstr 表达式");
+    }

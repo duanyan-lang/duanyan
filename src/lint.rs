@@ -201,6 +201,19 @@ pub fn builtin_rules() -> Vec<LintRule> {
         LintRule { id: "unbounded-loop-in-realtime".into(), description: "@realtime 中循环上界不可知".into(), severity: Severity::Error, fixable: false },
         LintRule { id: "float-in-realtime".into(), description: "@realtime 中使用浮点".into(), severity: Severity::Warning, fixable: false },
         LintRule { id: "deep-call-chain".into(), description: "调用链超过 5 层".into(), severity: Severity::Warning, fixable: false },
+        // 语言完备性批 2d: Web 子集护栏——不支持写法当场报 Error + 替代方案
+        LintRule { id: "web-no-do-while".into(), description: "do...while 不支持".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "web-no-for-in-of".into(), description: "for...of / for...in 不支持".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "web-no-try-catch".into(), description: "try/catch/throw 不支持".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "web-no-class".into(), description: "class/extends/super/this 不支持".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "web-no-reflection".into(), description: "typeof/instanceof/delete 不支持".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "web-no-bitwise".into(), description: "位运算符 & | ^ ~ << >> 不支持".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "web-no-numeric-syntax".into(), description: "1e3 指数/0b 0o 进制/** 幂运算不支持".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "web-no-modern-operators".into(), description: "... / ?. / ?? 不支持".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "web-no-dynamic-methods".into(), description: "push/map/split/trim 等数组字符串动态方法不支持".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "web-no-runtime-globals".into(), description: "JSON/Object/Date 运行时 API 不支持".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "web-no-undefined-nan".into(), description: "undefined/NaN/Infinity 不支持".into(), severity: Severity::Error, fixable: false },
+        LintRule { id: "web-no-new".into(), description: "new 构造器不支持（零动态分配）".into(), severity: Severity::Error, fixable: false },
     ]
 }
 
@@ -653,6 +666,108 @@ pub fn lint_file(file_path: &Path, source: &str, config: &LintConfig) -> LintRes
         }
     }
 
+    // =========================================================================
+    // 语言完备性批 2d: Web 子集护栏
+    // 对“编译器不支持、但容易静默通过或给出晦涩错误”的 JS 写法
+    // 当场报 Error，并给出子集内可编译的等价替代方案。
+    // =========================================================================
+    {
+        let mut in_block = false;
+        for (line_idx, raw_line) in lines.iter().enumerate() {
+            let line_num = (line_idx + 1) as u32;
+            let stripped = strip_comments(raw_line, &mut in_block);
+            let code = stripped.trim();
+            if code.is_empty() { continue; }
+
+            let mut push_web = |id: &str, msg: &str, sugg: &str| {
+                if config.is_rule_disabled(id) { return; }
+                diagnostics.push(LintDiagnostic {
+                    rule_id: id.into(),
+                    severity: config.effective_severity(id),
+                    message: msg.into(),
+                    file: file_name.clone(),
+                    line: line_num,
+                    column: 1,
+                    suggestion: Some(sugg.into()),
+                    fix: None,
+                });
+            };
+
+            // 1. do...while
+            if code == "do" || code.starts_with("do ") || code.starts_with("do{") || code.starts_with("do {") {
+                push_web("web-no-do-while",
+                    "do...while 循环不支持",
+                    "改写为: while (true) { 语句…; if (!(条件)) break; } 或先执行一次语句再进 while (条件)");
+            }
+            // 2. for...of / for...in / a in b
+            if contains_word(code, "for") && (contains_word(code, "of") || contains_word(code, "in")) {
+                push_web("web-no-for-in-of",
+                    "for...of / for...in 不支持",
+                    "用标准 for 循环 + 下标: for (let i = 0; i < arr.length; i++) { let x = arr[i]; }");
+            }
+            // 3. try/catch/throw/finally
+            if ["try", "catch", "throw", "finally"].iter().any(|w| contains_word(code, w)) {
+                push_web("web-no-try-catch",
+                    "异常处理 (try/catch/throw) 不支持",
+                    "裸机运行时无异常机制: 调用前用 if 预校验并返回错误码, 如 if (n == 0) { return -1; }");
+            }
+            // 4. class/extends/super/this
+            if ["class", "extends", "super", "this"].iter().any(|w| contains_word(code, w)) {
+                push_web("web-no-class",
+                    "class / extends / super / this 不支持",
+                    "用工厂函数 + 对象字面量: function makePoint(x, y) { return { x: x, y: y }; }，多实例多次调用工厂函数");
+            }
+            // 5. typeof/instanceof/delete
+            if ["typeof", "instanceof", "delete"].iter().any(|w| contains_word(code, w)) {
+                push_web("web-no-reflection",
+                    "typeof / instanceof / delete 不支持（类型在写代码时已确定）",
+                    "变量类型编译期固定，无需运行时类型判断；清空属性直接赋值 0 或 null");
+            }
+            // 6. 位运算
+            if has_bitwise(code) {
+                push_web("web-no-bitwise",
+                    "位运算符 & | ^ ~ << >> 不支持",
+                    "2 的幂场景: x<<n 写 x * Math.pow(2, n)，x>>n 写 x / Math.pow(2, n)；x&1 判奇偶写 x % 2 == 0");
+            }
+            // 7. 数值语法
+            if has_exponent(code) || has_prefixed_radix(code) || code.contains("**") {
+                push_web("web-no-numeric-syntax",
+                    "指数字面量 (1e3) / 二进制八进制 (0b/0o) / ** 幂运算不支持",
+                    "用完整十进制字面量或 0x 十六进制 (已支持)；幂运算用 Math.pow(a, b)");
+            }
+            // 8. 现代运算符
+            if code.contains("...") || code.contains("?.") || code.contains("??") {
+                push_web("web-no-modern-operators",
+                    "展开/剩余 (...) / 可选链 (?.) / 空值合并 (??) 不支持",
+                    "参数显式写全；用 a && a.b 代替 a?.b；用 a != null ? a : 默认值 代替 a ?? 默认值");
+            }
+            // 9. 数组/字符串动态方法（会被静默解析成普通函数调用，能编过但结果错）
+            if WEB_UNSUPPORTED_METHODS.iter().any(|m| has_method_call(code, m)) {
+                push_web("web-no-dynamic-methods",
+                    "该数组/字符串动态方法不支持（能编译但会静默得到错误结果）",
+                    "追加用定长数组+下标计数器 (arr[n] = x; n = n + 1;)；map/filter/forEach 用 for 循环；sort 用双循环比较交换；split/trim 用 charAt + 下标扫描");
+            }
+            // 10. 运行时全局对象
+            if ["JSON.", "Object.", "Date."].iter().any(|g| code.contains(g)) {
+                push_web("web-no-runtime-globals",
+                    "JSON / Object / Date 运行时 API 不支持",
+                    "结构转换逐字段显式赋值；时间用 Timer / 系统滴答 API；键值集合用定长数组+并行数组表达");
+            }
+            // 11. undefined/NaN/Infinity
+            if ["undefined", "NaN", "Infinity"].iter().any(|w| contains_word(code, w)) {
+                push_web("web-no-undefined-nan",
+                    "undefined / NaN / Infinity 不支持（整数语义无此类值）",
+                    "空值用 null，数值缺省用 0；除法前检查分母 != 0 避免未定义行为");
+            }
+            // 12. new 构造器
+            if contains_word(code, "new") {
+                push_web("web-no-new",
+                    "new 构造器不支持（零动态分配）",
+                    "用对象字面量 { } / 数组字面量 [ ]，大小编译期确定");
+            }
+        }
+    }
+
     // 统计
     let error_count = diagnostics.iter().filter(|d| d.severity == Severity::Error).count() as u32;
     let warning_count = diagnostics.iter().filter(|d| d.severity == Severity::Warning).count() as u32;
@@ -772,6 +887,128 @@ fn find_word_at_start(line: &str, word: &str) -> Option<u32> {
         }
     }
     None
+}
+
+// =========================================================================
+// 批 2d: Web 子集护栏辅助函数
+// =========================================================================
+
+/// 批 2d 不支持的数组/字符串动态方法（解析层会当成普通调用，能编过但结果错）
+const WEB_UNSUPPORTED_METHODS: &[&str] = &[
+    // 数组：增删/迭代/变换类
+    "push", "pop", "shift", "unshift", "splice", "concat", "join", "reverse", "sort",
+    "map", "filter", "reduce", "forEach", "find", "findIndex", "some", "every",
+    "flat", "flatMap", "fill",
+    // 字符串：白名单 (length/charAt/slice/substring/indexOf/startsWith/endsWith/includes/charCodeAt) 之外
+    "split", "trim", "replace", "toUpperCase", "toLowerCase", "padStart", "padEnd", "repeat", "match",
+];
+
+/// 剥离行内 // 与 /* */ 块注释（跨行状态由调用方持有）
+fn strip_comments(line: &str, in_block: &mut bool) -> String {
+    let mut out = String::new();
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if *in_block {
+            if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '/' {
+                *in_block = false;
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else if chars[i] == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
+            break;
+        } else if chars[i] == '/' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            *in_block = true;
+            i += 2;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// 整词匹配（标识符边界：字母/数字/_/$ 之外），避免 entry 误中 try、pin 误中 in
+fn contains_word(code: &str, word: &str) -> bool {
+    let c: Vec<char> = code.chars().collect();
+    let w: Vec<char> = word.chars().collect();
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_' || ch == '$';
+    let mut i = 0;
+    while i + w.len() <= c.len() {
+        if c[i..i + w.len()] == w[..] {
+            let before_ok = i == 0 || !is_ident(c[i - 1]);
+            let after_ok = i + w.len() == c.len() || !is_ident(c[i + w.len()]);
+            if before_ok && after_ok { return true; }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// 单个 & | ^ ~ << >> 检测（排除 && / || 逻辑运算）
+fn has_bitwise(code: &str) -> bool {
+    let c: Vec<char> = code.chars().collect();
+    for i in 0..c.len() {
+        match c[i] {
+            '~' | '^' => return true,
+            '&' | '|' => {
+                let same = c[i];
+                let prev_same = i > 0 && c[i - 1] == same;
+                let next_same = i + 1 < c.len() && c[i + 1] == same;
+                if !prev_same && !next_same { return true; }
+            }
+            '<' => { if i + 1 < c.len() && c[i + 1] == '<' { return true; } }
+            '>' => { if i + 1 < c.len() && c[i + 1] == '>' { return true; } }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// 指数字面量 1e3 / 2.5e-4（前一位是数字、e 后可带符号再接数字）
+fn has_exponent(code: &str) -> bool {
+    let c: Vec<char> = code.chars().collect();
+    for i in 1..c.len() {
+        if (c[i] == 'e' || c[i] == 'E') && c[i - 1].is_ascii_digit() {
+            let mut j = i + 1;
+            if j < c.len() && (c[j] == '+' || c[j] == '-') { j += 1; }
+            if j < c.len() && c[j].is_ascii_digit() { return true; }
+        }
+    }
+    false
+}
+
+/// 0b/0o 前缀进制字面量（0x 已支持，不在检测范围）
+fn has_prefixed_radix(code: &str) -> bool {
+    let c: Vec<char> = code.chars().collect();
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_' || ch == '$';
+    for i in 0..c.len() {
+        if c[i] == '0' && i + 2 < c.len() {
+            let n = c[i + 1].to_ascii_lowercase();
+            if (n == 'b' || n == 'o') && is_ident(c[i + 2])
+                && (i == 0 || !is_ident(c[i - 1]))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// .name( 形式的方法调用（允许 .name 与 ( 之间的空格）
+fn has_method_call(code: &str, name: &str) -> bool {
+    let dot_name = format!(".{}", name);
+    let mut pos = 0;
+    while let Some(idx) = code[pos..].find(&dot_name) {
+        let abs = pos + idx;
+        // 排除 `..name` 连点误匹配；点前允许接收者字符
+        let prev = if abs > 0 { code[..abs].chars().next_back().unwrap() } else { ' ' };
+        let after = code[abs + dot_name.len()..].trim_start();
+        if prev != '.' && after.starts_with('(') { return true; }
+        pos = abs + dot_name.len();
+    }
+    false
 }
 
 fn find_js_files(dir: &Path) -> Vec<std::path::PathBuf> {
@@ -939,8 +1176,8 @@ mod tests {
     #[test]
     fn test_builtin_rules_count() {
         let rules = builtin_rules();
-        // 原始15条 + v5.1 4条 + async 5条 + Phase 2.5 3条 + Phase 4.5 4条 = 31条
-        assert_eq!(rules.len(), 31);
+        // 原始15条 + v5.1 4条 + async 5条 + Phase 2.5 3条 + Phase 4.5 4条 + 批 2d Web 护栏 12条 = 43条
+        assert_eq!(rules.len(), 43);
     }
 
     // Phase 2.5: 零 malloc lint 测试
@@ -969,5 +1206,77 @@ mod tests {
         let result = lint_file(Path::new("test.js"), source, &config);
         assert!(!result.diagnostics.iter().any(|d| d.rule_id == "no-dynamic-alloc"),
             "字面量不应触发 no-dynamic-alloc");
+    }
+
+    // 批 2d: Web 子集护栏测试
+    #[test]
+    fn test_lint_web_do_while() {
+        let config = LintConfig::default_config();
+        let source = "do {\n  blink();\n} while (n < 10);";
+        let result = lint_file(Path::new("test.js"), source, &config);
+        assert!(result.diagnostics.iter().any(|d| d.rule_id == "web-no-do-while" && d.severity == Severity::Error));
+    }
+
+    #[test]
+    fn test_lint_web_for_of_and_try() {
+        let config = LintConfig::default_config();
+        let source = "for (const x of list) { console.log(x); }\ntry { f(); } catch (e) { }";
+        let result = lint_file(Path::new("test.js"), source, &config);
+        assert!(result.diagnostics.iter().any(|d| d.rule_id == "web-no-for-in-of"));
+        assert!(result.diagnostics.iter().any(|d| d.rule_id == "web-no-try-catch"));
+    }
+
+    #[test]
+    fn test_lint_web_bitwise_no_false_positive() {
+        let config = LintConfig::default_config();
+        // 纯逻辑运算不应误报位运算
+        let clean = "let y = (a && b) || (c >= d);\nlet entry = 1;";
+        let result = lint_file(Path::new("test.js"), clean, &config);
+        assert!(!result.diagnostics.iter().any(|d| d.rule_id == "web-no-bitwise"),
+            "&&/||/>= 不应触发位运算护栏");
+        // 真实位运算必须报错
+        let bad = "let m = flags & 0xff;\nlet s = x << 3;";
+        let result2 = lint_file(Path::new("test.js"), bad, &config);
+        assert!(result2.diagnostics.iter().any(|d| d.rule_id == "web-no-bitwise"));
+    }
+
+    #[test]
+    fn test_lint_web_array_push_and_number_syntax() {
+        let config = LintConfig::default_config();
+        let source = "arr.push(42);\nlet ms = 1e3;\nlet p = 2 ** 10;";
+        let result = lint_file(Path::new("test.js"), source, &config);
+        assert!(result.diagnostics.iter().any(|d| d.rule_id == "web-no-dynamic-methods"), "push 应拦截");
+        assert!(result.diagnostics.iter().any(|d| d.rule_id == "web-no-numeric-syntax"), "1e3/** 应拦截");
+    }
+
+    #[test]
+    fn test_lint_web_modern_ops_globals_new() {
+        let config = LintConfig::default_config();
+        let source = "let v = obj?.x ?? 1;\nlet s = JSON.stringify(data);\nlet d = new Date();\nlet u = undefined;";
+        let result = lint_file(Path::new("test.js"), source, &config);
+        assert!(result.diagnostics.iter().any(|d| d.rule_id == "web-no-modern-operators"));
+        assert!(result.diagnostics.iter().any(|d| d.rule_id == "web-no-runtime-globals"));
+        assert!(result.diagnostics.iter().any(|d| d.rule_id == "web-no-new"));
+        assert!(result.diagnostics.iter().any(|d| d.rule_id == "web-no-undefined-nan"));
+    }
+
+    #[test]
+    fn test_lint_web_clean_subset_passes() {
+        // 子集内合法代码：不应产生任何 web-* 诊断
+        let config = LintConfig::default_config();
+        let source = "let n = 0;\nfor (let i = 0; i < 10; i++) { n += i; }\nif (n % 2 == 0 && n >= 10) { console.log(Math.max(n, 0xFF)); }\nlet msg = 'ok';\nlet a = -3;\nwhile (n > 0) { n -= 1; if (n == 5) { continue; } }";
+        let result = lint_file(Path::new("test.js"), source, &config);
+        let web_hits: Vec<_> = result.diagnostics.iter().filter(|d| d.rule_id.starts_with("web-")).collect();
+        assert!(web_hits.is_empty(), "干净子集代码不应触发护栏: {:?}", web_hits.iter().map(|d| &d.rule_id).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_lint_web_comment_ignored() {
+        // 注释里的不支持写法不应报错（块注释跨行状态）
+        let config = LintConfig::default_config();
+        let source = "/* TODO: try { arr.push(1) } catch (e) {} */\nlet x = 1; // new Map() 不支持也不用报";
+        let result = lint_file(Path::new("test.js"), source, &config);
+        let web_hits: Vec<_> = result.diagnostics.iter().filter(|d| d.rule_id.starts_with("web-")).collect();
+        assert!(web_hits.is_empty(), "注释内容不应触发护栏: {:?}", web_hits.iter().map(|d| &d.rule_id).collect::<Vec<_>>());
     }
 }

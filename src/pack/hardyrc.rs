@@ -13,14 +13,14 @@ use std::path::Path;
 
 /// .hardyrc 配置
 #[derive(Debug, Clone)]
-pub struct SnarRc {
+pub struct HardyRc {
     pub registry: String,
     pub token: Option<String>,
     pub scope: Option<String>,
     pub extra: HashMap<String, String>,
 }
 
-impl Default for SnarRc {
+impl Default for HardyRc {
     fn default() -> Self {
         Self {
             registry: "http://localhost:7890".to_string(),
@@ -31,7 +31,7 @@ impl Default for SnarRc {
     }
 }
 
-impl SnarRc {
+impl HardyRc {
     /// 从目录加载 .hardyrc (查找当前目录 -> 父目录 -> 用户目录)
     pub fn load(dir: &Path) -> Self {
         // 查找顺序: 当前目录 -> 父目录 -> HOME
@@ -123,7 +123,7 @@ pub fn get_effective_registry_url(dir: &Path) -> String {
     if let Ok(url) = std::env::var("HARDY_REGISTRY") {
         return url;
     }
-    let rc = SnarRc::load(dir);
+    let rc = HardyRc::load(dir);
     rc.registry
 }
 
@@ -139,7 +139,7 @@ registry=https://packages.hardy.dev
 token=hardy_abc123
 scope=@my-team
 "#;
-        let rc = SnarRc::parse(content);
+        let rc = HardyRc::parse(content);
         assert_eq!(rc.registry, "https://packages.hardy.dev");
         assert_eq!(rc.token, Some("hardy_abc123".to_string()));
         assert_eq!(rc.scope, Some("@my-team".to_string()));
@@ -147,18 +147,18 @@ scope=@my-team
 
     #[test]
     fn test_default_hardyrc() {
-        let rc = SnarRc::default();
+        let rc = HardyRc::default();
         assert_eq!(rc.registry, "http://localhost:7890");
         assert!(rc.token.is_none());
     }
 
     #[test]
     fn test_roundtrip() {
-        let mut rc = SnarRc::default();
+        let mut rc = HardyRc::default();
         rc.registry = "https://my-registry.dev".to_string();
         rc.token = Some("tok123".to_string());
         let serialized = rc.to_string_repr();
-        let rc2 = SnarRc::parse(&serialized);
+        let rc2 = HardyRc::parse(&serialized);
         assert_eq!(rc2.registry, "https://my-registry.dev");
         assert_eq!(rc2.token, Some("tok123".to_string()));
     }

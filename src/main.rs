@@ -2109,6 +2109,10 @@ fn cmd_lint(args: &[String]) {
             "--rules" => show_rules = true,
             "--file" => {}
             _ if arg.starts_with("--budget") => {}
+            // 位置参数直接给文件名时也按单文件 lint（网站编译服务按文件调用）
+            _ if arg.ends_with(".js") || arg.ends_with(".ts") => {
+                file_path = Some(arg.clone());
+            }
             _ => {
                 // 可能是 --file 的参数 或 --budget 的参数
                 if args.windows(2).any(|w| w[0] == "--file" && w[1] == *arg) {

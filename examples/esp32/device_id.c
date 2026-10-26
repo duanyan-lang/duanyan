@@ -5,7 +5,7 @@
  * 烧录: esptool write-flash 或 Flash Download Tool
  * 
  * 设备 ID 算法:
- *   MAC (eFuse 6字节) → FNV-1a 哈希 → "SNAR-XXXX-XXXX-XXXX"
+ *   MAC (eFuse 6字节) → FNV-1a 哈希 → "HardyScript-XXXX-XXXX-XXXX"
  *   每颗芯片全球唯一，适用于云服务认证/产品销售/联网通讯
  */
 
@@ -66,7 +66,7 @@ static unsigned int fnv1a_32(const unsigned char *data, int len) {
 
 /* ===== 设备 ID 生成 ===== */
 /* 从 MAC 生成 48 位唯一标识: 两轮 FNV-1a 拼接 */
-static void generate_device_id(const unsigned char mac[6], char out[19]) {
+static void generate_device_id(const unsigned char mac[6], char out[28]) {
     /* 第一轮: 原始 MAC → 32 bit */
     unsigned int h1 = fnv1a_32(mac, 6);
     /* 第二轮: MAC + h1 混合 → 32 bit (取高16位凑满48位) */
@@ -78,12 +78,12 @@ static void generate_device_id(const unsigned char mac[6], char out[19]) {
     mix[9] = h1 & 0xFF;
     unsigned int h2 = fnv1a_32(mix, 10);
     
-    /* 格式: SNAR-XXXX-XXXX-XXXX (h1高16 + h1低16 + h2高16) */
+    /* 格式: HardyScript-XXXX-XXXX-XXXX (h1高16 + h1低16 + h2高16) */
     const char hex[] = "0123456789ABCDEF";
     unsigned int parts[3] = { (h1 >> 16) & 0xFFFF, h1 & 0xFFFF, (h2 >> 16) & 0xFFFF };
     int pos = 0;
-    out[pos++] = 'S'; out[pos++] = 'N'; out[pos++] = 'A'; out[pos++] = 'R';
-    out[pos++] = '-';
+    const char *prefix = "HardyScript-";
+    for (const char *p = prefix; *p; p++) out[pos++] = *p;
     for (int p = 0; p < 3; p++) {
         if (p > 0) out[pos++] = '-';
         out[pos++] = hex[(parts[p] >> 12) & 0xF];
@@ -99,7 +99,7 @@ void _start(void) {
     /* 立即输出 - 不等待 (避免看门狗复位) */
     uart_puts("\r\n");
     uart_puts("================================\r\n");
-    uart_puts("  SNAR Device Identity Report\r\n");
+    uart_puts("  HardyScript Device Identity Report\r\n");
     uart_puts("  Powered by HardyScript\r\n");
     uart_puts("================================\r\n\r\n");
     
@@ -124,7 +124,7 @@ void _start(void) {
     uart_puts("\r\n");
     
     /* 生成并输出设备唯一 ID */
-    char device_id[19];
+    char device_id[28];
     generate_device_id(mac, device_id);
     
     uart_puts("Device ID: ");

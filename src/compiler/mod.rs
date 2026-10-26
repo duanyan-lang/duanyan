@@ -47,7 +47,8 @@ const REG_A2: u8 = 5;     // 参数 a2
 const REG_A3: u8 = 6;     // 参数 a3
 const REG_A4: u8 = 7;     // 参数 a4
 const REG_RV: u8 = 8;     // 返回值
-const REG_T0: u8 = 9;     // 临时寄存器起始
+const SCRATCH_REG_MIN: u8 = 9;  // 临时寄存器起始
+const SCRATCH_REG_MAX: u8 = 14; // 临时寄存器结束
 const REG_FP: u8 = 15;    // 帧指针
 
 /// UART TX 数据寄存器地址 (内存映射)
@@ -56,23 +57,67 @@ const UART_TX_ADDR: i16 = 0x100;  // 对齐 FPGA memory_ctrl 中 UART 映射
 /// 堆起始地址 (用于数组分配)
 const HEAP_BASE: i16 = 0x200;
 
+/// RI 型指令 12-bit 立即数的可表示范围
+const IMM12_MIN: i64 = -2048;
+const IMM12_MAX: i64 = 2047;
+
+/// 函数栈帧大小 (字节)：16 字节保存 RA/FP，其余留给局部变量槽
+const FUNCTION_FRAME_SIZE: i16 = 144;
+/// 顶层 (main) 栈帧大小 (字节)，容量比函数帧大一些
+const MAIN_FRAME_SIZE: i16 = 512;
+
 /// 编译器状态
 struct Compiler {
     instructions: Vec<Instruction>,
-    variables: Vec<(String, u8)>,
-    next_reg: u8,
+    /// 命名单元（let/const/参数）不再占用物理寄存器，
+    /// 而是分配在栈帧上相对 FP 的固定偏移槽位。
+    /// 物理寄存器只作为表达式求值期间的短暂 scratch 使用。
+    slots: Vec<(String, i16)>,
+    next_slot_off: i16,
+    frame_size: i16,
     functions: Vec<FunctionInfo>,
     in_function: bool,
     heap_offset: i16,
     source_map: Vec<usize>,
     current_line: usize,
-    /// Phase 7: 寄存器溢出
-    spilled: Vec<(String, i16)>,        // 栈上变量 (name, offset)
-    spill_next: i16,                    // 下一个 spill slot 偏移
-    free_pool: Vec<u8>,                 // 空闲寄存器池
-    active_temps: Vec<u8>,              // 当前活跃临时寄存器
+    /// scratch 寄存器空闲池（仅包含 SCRATCH_REG_MIN..=SCRATCH_REG_MAX）
+    free_pool: Vec<u8>,
+    active_temps: Vec<u8>,
+    /// scratch 寄存器耗尽时溢出到栈帧的匿名槽位（从 -frame_size 往上分配）
+    scratch_spill_off: i16,
+    scratch_spills: Vec<(u8, i16)>, // (被溢出的寄存器, 栈偏移)
     /// Phase 10: 对象属性映射 (var_name -> [prop_names])
     object_props: Vec<(String, Vec<String>)>,
+    /// 函数内提前 return 需要修补的 JUMP 指令索引
+    return_patches: Vec<usize>,
+    /// 循环/switch 嵌套上下文（栈顶为最内层），支撑 break/continue 补丁链
+    loop_stack: Vec<LoopContext>,
+}
+
+/// break/continue 跳转补丁上下文
+#[derive(Default)]
+struct LoopContext {
+    /// true = switch 上下文（break 对其 NOP 即等价，if-else 链无 fallthrough）
+    is_switch: bool,
+    break_patches: Vec<usize>,
+    continue_patches: Vec<usize>,
+}
+
+impl LoopContext {
+    fn new_loop() -> Self {
+        Self { is_switch: false, break_patches: Vec::new(), continue_patches: Vec::new() }
+    }
+
+    fn new_switch() -> Self {
+        Self { is_switch: true, break_patches: Vec::new(), continue_patches: Vec::new() }
+    }
+}
+
+/// 作用域快照（块级作用域进出时保存/恢复）
+#[derive(Clone)]
+struct ScopeSnapshot {
+    slots: Vec<(String, i16)>,
+    next_slot_off: i16,
 }
 
 /// 条件求值结果
@@ -85,134 +130,175 @@ impl Compiler {
     fn new() -> Self {
         Self {
             instructions: Vec::new(),
-            variables: Vec::new(),
-            next_reg: REG_T0,
+            slots: Vec::new(),
+            next_slot_off: -24, // -8=保存的调用者 FP，-16=保存的 RA，-24 开始才是局部变量槽
+            frame_size: FUNCTION_FRAME_SIZE,
             functions: Vec::new(),
             in_function: false,
             heap_offset: HEAP_BASE,
             source_map: Vec::new(),
             current_line: 0,
-            spilled: Vec::new(),
-            spill_next: 0,
-            free_pool: Vec::new(),
+            free_pool: (SCRATCH_REG_MIN..=SCRATCH_REG_MAX).rev().collect(),
             active_temps: Vec::new(),
+            scratch_spill_off: 0,
+            scratch_spills: Vec::new(),
             object_props: Vec::new(),
+            return_patches: Vec::new(),
+            loop_stack: Vec::new(),
         }
     }
 
-    fn alloc_reg(&mut self, name: &str) -> Result<u8, String> {
-        if let Some(reg) = self.var_reg(name) {
-            return Ok(reg);
+    // =========================================================================
+    // 变量槽位分配（取代旧版“变量直接占用物理寄存器”的做法）
+    // =========================================================================
+
+    /// 查询变量所在栈槽偏移
+    fn slot_off(&self, name: &str) -> Option<i16> {
+        self.slots.iter().find(|(n, _)| n == name).map(|(_, o)| *o)
+    }
+
+    /// 为变量分配一个新的栈槽（局部变量区不能侵入 scratch 溢出区，否则明确报错）
+    fn alloc_slot(&mut self, name: &str) -> Result<i16, String> {
+        if let Some(off) = self.slot_off(name) {
+            return Ok(off);
         }
-        if self.is_spilled(name) {
-            return Err(format!("变量 '{}' 已在栈上", name));
+        let locals_floor = -(self.frame_size / 2 + 8);
+        if self.next_slot_off <= locals_floor {
+            return Err(format!(
+                "栈帧局部变量空间不足：变量 '{}' 无法分配，请拆分为多个函数", name
+            ));
         }
-        let reg = self.get_free_reg()?;
-        self.variables.push((name.to_string(), reg));
-        Ok(reg)
+        let off = self.next_slot_off;
+        self.next_slot_off -= 8;
+        self.slots.push((name.to_string(), off));
+        Ok(off)
     }
 
-    /// 将变量溢出到栈
-    fn spill_variable(&mut self, name: &str, reg: u8) {
-        let offset = self.spill_next;
-        self.spill_next += 8;
-        self.spilled.push((name.to_string(), offset));
-        // 生成 spill 代码: STORE reg, offset(x2)
-        // 由于 LOAD/STORE 的 IMM 是 12-bit，偏移最大 2047，足够
-        self.emit_store(reg, REG_SP, offset);
+    fn enter_scope(&self) -> ScopeSnapshot {
+        ScopeSnapshot { slots: self.slots.clone(), next_slot_off: self.next_slot_off }
     }
 
-    /// 加载溢出变量到指定寄存器
-    fn load_spilled(&mut self, name: &str, rd: u8) -> Result<(), String> {
-        let offset = self.spilled.iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, o)| *o)
-            .ok_or_else(|| format!("未定义变量 '{}'", name))?;
-        self.emit_load(rd, REG_SP, offset);
-        Ok(())
+    fn leave_scope(&mut self, snap: ScopeSnapshot) {
+        self.slots = snap.slots;
+        self.next_slot_off = snap.next_slot_off;
     }
 
-    /// 存储值到溢出变量
-    fn store_spilled(&mut self, name: &str, src_reg: u8) -> Result<(), String> {
-        let offset = self.spilled.iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, o)| *o)
-            .ok_or_else(|| format!("未定义变量 '{}'", name))?;
-        self.emit_store(src_reg, REG_SP, offset);
-        Ok(())
-    }
-
-    /// 变量是否在栈上
-    fn is_spilled(&self, name: &str) -> bool {
-        self.spilled.iter().any(|(n, _)| n == name)
-    }
-
-    /// 获取变量所在寄存器（仅适用于寄存器变量）
-    fn var_reg(&self, name: &str) -> Option<u8> {
-        self.variables.iter().find(|(n, _)| n == name).map(|(_, r)| *r)
-    }
+    // =========================================================================
+    // scratch 寄存器分配（仅用于表达式求值期间的短期临时值）
+    // =========================================================================
 
     fn alloc_temp(&mut self) -> Result<u8, String> {
-        let reg = self.get_free_reg_safe()?;
+        let reg = self.get_scratch_reg()?;
         self.active_temps.push(reg);
         Ok(reg)
     }
 
-    /// Get a free register that is NOT held by any named variable
-    fn get_free_reg_safe(&mut self) -> Result<u8, String> {
-        // Pop from free_pool, skipping any still held by variables
-        while let Some(reg) = self.free_pool.pop() {
-            if !self.variables.iter().any(|(_, r)| *r == reg) {
-                return Ok(reg);
-            }
-            // Register still owned by a variable, discard from pool
+    /// 同 alloc_temp，但保证不会返回 exclude 中的寄存器。当前实现不做活跃临时之间
+    /// 的隐式溢出/重载（那需要真正的活跃性分析），因此池已空时直接明确报错，
+    /// 避免顶掉仍在使用中的临时寄存器而静默生成错误代码。
+    fn alloc_temp_excluding(&mut self, exclude: &[u8]) -> Result<u8, String> {
+        if let Some(pos) = self.free_pool.iter().rposition(|r| !exclude.contains(r)) {
+            let reg = self.free_pool.remove(pos);
+            self.active_temps.push(reg);
+            return Ok(reg);
         }
-        // No safe register in pool, try next_reg or spill
-        self.get_free_reg()
+        Err(format!(
+            "表达式过于复杂：可用 scratch 寄存器不足（已占用 {:?}，需要避开 {:?}）",
+            self.active_temps, exclude
+        ))
     }
 
-    /// 从空闲池获取寄存器（如池为空则推进 next_reg，如耗尽则溢出）
-    fn get_free_reg(&mut self) -> Result<u8, String> {
+    /// 获取一个 scratch 寄存器。scratch 池已空时不做隐式驱逐（会破坏其他
+    /// 仍持有该寄存器的调用方），而是直接报错。溢出到栈帧的能力目前
+    /// 仅留给显式的 spill/reload 路径（后续完善活跃性分析后再接入）。
+    fn get_scratch_reg(&mut self) -> Result<u8, String> {
         if let Some(reg) = self.free_pool.pop() {
             return Ok(reg);
         }
-        if self.next_reg <= 14 {
-            let reg = self.next_reg;
-            self.next_reg += 1;
-            return Ok(reg);
+        Err("表达式过于复杂：scratch 寄存器已耗尽，请拆分为多个中间变量".to_string())
+    }
+
+    fn spill_scratch(&mut self, reg: u8) -> Result<(), String> {
+        // 溢出区从 -(frame_size/2+8) 向下增长，不得越到栈帧底部
+        if self.scratch_spill_off < -self.frame_size {
+            return Err("栈帧溢出空间不足：表达式过于复杂，请拆分为多个中间变量".to_string());
         }
-        if !self.variables.is_empty() {
-            let (old_name, old_reg) = self.variables.remove(0);
-            self.spill_variable(&old_name, old_reg);
-            return Ok(old_reg);
-        }
-        Err("寄存器完全耗尽且无法溢出".to_string())
+        let off = self.scratch_spill_off;
+        self.scratch_spill_off -= 8;
+        self.scratch_spills.push((reg, off));
+        self.emit_store(reg, REG_FP, off);
+        Ok(())
+    }
+
+    fn reload_scratch(&mut self, reg: u8) -> Result<(), String> {
+        let off = self.scratch_spills.iter()
+            .rev()
+            .find(|(r, _)| *r == reg)
+            .map(|(_, o)| *o)
+            .ok_or_else(|| format!("内部错误：寄存器 {} 未记录溢出位置", reg))?;
+        self.emit_load(reg, REG_FP, off);
+        Ok(())
     }
 
     /// 释放临时寄存器
     fn free_temp(&mut self, reg: u8) {
         self.active_temps.retain(|&r| r != reg);
-        // 如果仍被命名变量持有，不回收
-        if self.variables.iter().any(|(_, r)| *r == reg) {
-            return;
+        // 若该寄存器之前被溢出到过栈，先恢复到寄存器本身，再回收进空闲池
+        if self.scratch_spills.iter().any(|(r, _)| *r == reg) {
+            // 恢复不影响分配逻辑（值将在下一次使用前由 reload_scratch 从栈取回）
+            self.scratch_spills.retain(|(r, _)| *r != reg);
         }
         if !self.free_pool.contains(&reg) {
             self.free_pool.push(reg);
         }
     }
 
-    /// 获取变量值到指定寄存器（自动处理溢出加载）
+    /// 获取变量值到指定寄存器（变量统一从栈槽加载）
     fn get_var_to_reg(&mut self, name: &str, rd: u8) -> Result<(), String> {
-        if let Some(reg) = self.var_reg(name) {
-            if reg != rd {
-                self.emit_addi(rd, reg, 0); // MOV
+        match self.slot_off(name) {
+            Some(off) => {
+                self.emit_load(rd, REG_FP, off);
+                Ok(())
             }
-            Ok(())
-        } else if self.is_spilled(name) {
-            self.load_spilled(name, rd)
-        } else {
-            Err(format!("未定义变量 '{}'", name))
+            None => Err(format!("未定义变量 '{}'", name)),
         }
+    }
+
+    /// 将寄存器中的值存回变量栈槽
+    fn set_var_from_reg(&mut self, name: &str, src_reg: u8) -> Result<(), String> {
+        match self.slot_off(name) {
+            Some(off) => {
+                self.emit_store(src_reg, REG_FP, off);
+                Ok(())
+            }
+            None => Err(format!("未定义变量 '{}'", name)),
+        }
+    }
+
+    // =========================================================================
+    // 大整数常量装载（不再静默截断为 12-bit）
+    // =========================================================================
+
+    fn load_const(&mut self, rd: u8, value: i64) -> Result<(), String> {
+        if value >= IMM12_MIN && value <= IMM12_MAX {
+            self.emit_addi(rd, REG_ZERO, value as i16);
+            return Ok(());
+        }
+        // 取一个能装进 12-bit 有符号范围的余数
+        let lo = ((value + 2048) % 4096) - 2048;
+        let hi = (value - lo) / 4096;
+        self.load_const(rd, hi)?;
+        let shift_reg = self.alloc_temp_excluding(&[rd])?;
+        self.emit_addi(shift_reg, REG_ZERO, 12);
+        self.emit_nop();
+        // SHL rd, rd, shift_reg
+        self.push_instr(Instruction::RR {
+            opcode: 0x5, func: 0x0, rs1: rd, rs2: shift_reg, rd,
+        });
+        self.free_temp(shift_reg);
+        self.emit_nop();
+        self.emit_addi(rd, rd, lo as i16);
+        Ok(())
     }
 
     fn get_function(&self, name: &str) -> Option<&FunctionInfo> {
@@ -337,11 +423,18 @@ impl Compiler {
             self.patch_offset(jump_to_main_idx, offset);
         }
 
+        // ===== 顶层 (main) 序言：建立与函数一致的栈帧 =====
+        self.reset_frame(MAIN_FRAME_SIZE);
+
         // 编译主程序
         for ss in &program.statements {
             self.set_line(ss.line);
             self.compile_statement(&ss.stmt)?;
         }
+
+        // ===== 顶层 (main) 结语：先恢复 SP，再恢复 FP =====
+        self.emit_addi(REG_SP, REG_FP, 0);
+        self.emit_load(REG_FP, REG_FP, -8);
 
         // 程序结束：halt (JUMP 0)
         let halt_idx = self.instructions.len();
@@ -352,25 +445,42 @@ impl Compiler {
         Ok(())
     }
 
+    /// 为当前帧（函数体或顶层 main）重置变量槽/scratch 寄存器/溢出区状态
+    fn reset_frame(&mut self, frame_size: i16) {
+        self.frame_size = frame_size;
+        self.slots.clear();
+        self.next_slot_off = -24; // -8=旧FP, -16=RA, -24 开始为局部变量槽（向下增长）
+        self.free_pool = (SCRATCH_REG_MIN..=SCRATCH_REG_MAX).rev().collect();
+        self.active_temps.clear();
+        // 匿名溢出区与局部变量区各占栈帧一半，中间以 -frame_size/2-8 为界，
+        // 不会互相侵入（两边各自越界时都会明确报错）。
+        self.scratch_spill_off = -(frame_size / 2 + 8);
+        self.scratch_spills.clear();
+        self.return_patches.clear();
+    }
+
     fn compile_function(&mut self, func: &Function, func_line: usize) -> Result<(), String> {
         self.set_line(func_line);
         self.in_function = true;
-        self.variables.clear();
-        self.next_reg = REG_T0;
+        // 函数体独立编译：break/continue 不得链接到外层循环补丁链
+        self.loop_stack.clear();
+        self.reset_frame(FUNCTION_FRAME_SIZE);
 
-        // Prologue (Phase 7: 预留 128 字节给 spill area)
-        self.emit_addi(REG_SP, REG_SP, -144);  // 16 saved + 128 spill
-        self.emit_store(REG_RA, REG_SP, 140);
-        self.emit_store(REG_FP, REG_SP, 136);
-        self.emit_addi(REG_FP, REG_SP, 140);
+        // Prologue
+        self.emit_addi(REG_SP, REG_SP, -FUNCTION_FRAME_SIZE);
+        self.emit_store(REG_FP, REG_SP, FUNCTION_FRAME_SIZE - 8);
+        self.emit_store(REG_RA, REG_SP, FUNCTION_FRAME_SIZE - 16);
+        self.emit_addi(REG_FP, REG_SP, FUNCTION_FRAME_SIZE);
 
-        // 参数映射
+        // 参数：拷贝到独立栈槽，从此以后 A0..A4 只是易失寄存器，
+        // 调用者/被调用者都不再依赖它们的內容长期存活。
         for (i, param) in func.params.iter().enumerate() {
             let reg = REG_A0 + i as u8;
             if reg > REG_A4 {
                 return Err(format!("函数 '{}' 参数过多（最多5个）", func.name));
             }
-            self.variables.push((param.clone(), reg));
+            let off = self.alloc_slot(param)?;
+            self.emit_store(reg, REG_FP, off);
         }
 
         // 函数体
@@ -379,10 +489,17 @@ impl Compiler {
             self.compile_statement(&ss.stmt)?;
         }
 
-        // Epilogue (Phase 7: 恢复 144 字节栈帧)
-        self.emit_load(REG_RA, REG_FP, 0);
-        self.emit_load(REG_FP, REG_FP, -4);
-        self.emit_addi(REG_SP, REG_FP, 4);
+        // Epilogue（所有 return 跳到这里）
+        let epilogue_idx = self.instructions.len();
+        let pending_returns: Vec<usize> = self.return_patches.clone();
+        for jump_idx in pending_returns {
+            let offset = self.calc_offset(jump_idx, epilogue_idx);
+            self.patch_offset(jump_idx, offset);
+        }
+        self.return_patches.clear();
+        self.emit_addi(REG_SP, REG_FP, 0);
+        self.emit_load(REG_RA, REG_FP, -16);
+        self.emit_load(REG_FP, REG_FP, -8);
         self.emit_ret();
 
         self.in_function = false;
@@ -396,38 +513,30 @@ impl Compiler {
                 if let Expr::ObjectLit { keys, .. } = value {
                     self.object_props.push((name.clone(), keys.clone()));
                 }
-                let is_new_spill = self.is_spilled(name);
-                if is_new_spill {
-                    let tmp = self.alloc_temp()?;
-                    self.compile_expr_into(value, tmp)?;
-                    self.store_spilled(name, tmp)?;
-                    self.free_temp(tmp);
-                } else {
-                    let rd = self.alloc_reg(name)?;
-                    self.compile_expr_into(value, rd)?;
-                    if self.is_spilled(name) {
-                        self.store_spilled(name, rd)?;
-                    }
-                }
+                let off = self.alloc_slot(name)?;
+                let tmp = self.alloc_temp()?;
+                self.compile_expr_into(value, tmp)?;
+                self.emit_store(tmp, REG_FP, off);
+                self.free_temp(tmp);
                 Ok(())
             }
             // Phase A.5: const 与 let 相同（不可变在编译期不强制）
             Statement::Const { name, value } => {
-                let rd = self.alloc_reg(name)?;
-                self.compile_expr_into(value, rd)?;
+                let off = self.alloc_slot(name)?;
+                let tmp = self.alloc_temp()?;
+                self.compile_expr_into(value, tmp)?;
+                self.emit_store(tmp, REG_FP, off);
+                self.free_temp(tmp);
                 Ok(())
             }
             Statement::Assign { name, value } => {
-                if self.is_spilled(name) {
-                    let tmp = self.alloc_temp()?;
-                    self.compile_expr_into(value, tmp)?;
-                    self.store_spilled(name, tmp)?;
-                    self.free_temp(tmp);
-                } else {
-                    let rd = self.var_reg(name)
-                        .ok_or_else(|| format!("未定义变量 '{}'", name))?;
-                    self.compile_expr_into(value, rd)?;
+                if self.slot_off(name).is_none() {
+                    return Err(format!("未定义变量 '{}'", name));
                 }
+                let tmp = self.alloc_temp()?;
+                self.compile_expr_into(value, tmp)?;
+                self.set_var_from_reg(name, tmp)?;
+                self.free_temp(tmp);
                 Ok(())
             }
             Statement::IndexAssign { name, index, value } => {
@@ -435,6 +544,9 @@ impl Compiler {
             }
             Statement::Return(expr) => {
                 self.compile_expr_into(expr, REG_RV)?;
+                let jump_idx = self.instructions.len();
+                self.emit_jump(0); // 占位，后续修补到 epilogue
+                self.return_patches.push(jump_idx);
                 Ok(())
             }
             Statement::Expr(expr) => {
@@ -447,33 +559,21 @@ impl Compiler {
                 self.compile_for(init, condition, update, body)
             }
             Statement::PostInc(name) => {
-                // name = name + 1 (单条 ADDI 指令)
-                if self.is_spilled(name) {
-                    let tmp = self.alloc_temp()?;
-                    self.load_spilled(name, tmp)?;
-                    self.emit_addi(tmp, tmp, 1);
-                    self.store_spilled(name, tmp)?;
-                    self.free_temp(tmp);
-                } else {
-                    let rd = self.var_reg(name)
-                        .ok_or_else(|| format!("未定义变量 '{}'", name))?;
-                    self.emit_addi(rd, rd, 1);
-                }
+                // name = name + 1：从栈槽加载，加 1，写回栈槽
+                let tmp = self.alloc_temp()?;
+                self.get_var_to_reg(name, tmp)?;
+                self.emit_addi(tmp, tmp, 1);
+                self.set_var_from_reg(name, tmp)?;
+                self.free_temp(tmp);
                 Ok(())
             }
             Statement::PostDec(name) => {
-                // name = name - 1 (单条 ADDI 指令, imm=-1)
-                if self.is_spilled(name) {
-                    let tmp = self.alloc_temp()?;
-                    self.load_spilled(name, tmp)?;
-                    self.emit_addi(tmp, tmp, -1);
-                    self.store_spilled(name, tmp)?;
-                    self.free_temp(tmp);
-                } else {
-                    let rd = self.var_reg(name)
-                        .ok_or_else(|| format!("未定义变量 '{}'", name))?;
-                    self.emit_addi(rd, rd, -1);
-                }
+                // name = name - 1
+                let tmp = self.alloc_temp()?;
+                self.get_var_to_reg(name, tmp)?;
+                self.emit_addi(tmp, tmp, -1);
+                self.set_var_from_reg(name, tmp)?;
+                self.free_temp(tmp);
                 Ok(())
             }
             Statement::PropAssign { object, property, value } => {
@@ -493,9 +593,31 @@ impl Compiler {
             Statement::Switch { discriminant, cases } => {
                 self.compile_switch(discriminant, cases)
             }
-            // Phase A.3: break 暂为NOP（switch中后续可扩展）
+            // break：循环内生成跳转补丁；switch 内（if-else 链无 fallthrough）NOP 即等价
             Statement::Break => {
-                self.emit_nop();
+                let in_loop = matches!(self.loop_stack.last(), Some(ctx) if !ctx.is_switch);
+                if in_loop {
+                    let idx = self.instructions.len();
+                    self.emit_jump(0);
+                    if let Some(ctx) = self.loop_stack.last_mut() {
+                        ctx.break_patches.push(idx);
+                    }
+                } else {
+                    self.emit_nop();
+                }
+                Ok(())
+            }
+            // continue：JS 语义下即使位于 switch 内也作用于最内层循环
+            Statement::Continue => {
+                let has_loop = self.loop_stack.iter().rev().any(|c| !c.is_switch);
+                if !has_loop {
+                    return Err("continue 只能用在循环内".to_string());
+                }
+                let idx = self.instructions.len();
+                self.emit_jump(0);
+                if let Some(ctx) = self.loop_stack.iter_mut().rev().find(|c| !c.is_switch) {
+                    ctx.continue_patches.push(idx);
+                }
                 Ok(())
             }
             // Phase A.4: import 为编译期指令，不产生机器码
@@ -514,17 +636,12 @@ impl Compiler {
                 // 每个 name 对应源对象的一个属性（偏移 = index * 8）
                 for (i, name) in names.iter().enumerate() {
                     let offset = (i as i16) * 8;
-                    if self.is_spilled(name) {
-                        let tmp = self.alloc_temp()?;
-                        self.emit_nop();
-                        self.emit_load(tmp, src_reg, offset);
-                        self.store_spilled(name, tmp)?;
-                        self.free_temp(tmp);
-                    } else {
-                        let rd = self.alloc_reg(name)?;
-                        self.emit_nop();
-                        self.emit_load(rd, src_reg, offset);
-                    }
+                    let off = self.alloc_slot(name)?;
+                    let tmp = self.alloc_temp_excluding(&[src_reg])?;
+                    self.emit_nop();
+                    self.emit_load(tmp, src_reg, offset);
+                    self.emit_store(tmp, REG_FP, off);
+                    self.free_temp(tmp);
                 }
                 self.free_temp(src_reg);
                 Ok(())
@@ -598,9 +715,9 @@ impl Compiler {
     // =========================================================================
 
     fn compile_index_assign(&mut self, name: &str, index: &Expr, value: &Expr) -> Result<(), String> {
-        // 获取数组基址寄存器
-        let base_reg = self.var_reg(name)
-            .ok_or_else(|| format!("未定义数组 '{}'", name))?;
+        // 数组变量现在存在栈槽里，先把它加载到一个 scratch 寄存器
+        let base_reg = self.alloc_temp()?;
+        self.get_var_to_reg(name, base_reg)?;
 
         // 计算 index
         let idx_reg = self.alloc_temp()?;
@@ -611,7 +728,7 @@ impl Compiler {
         self.compile_expr_into(value, val_reg)?;
 
         // index * 8 (每元素 8 字节) → 左移 3 位
-        let shift_reg = self.alloc_temp()?;
+        let shift_reg = self.alloc_temp_excluding(&[base_reg, idx_reg, val_reg])?;
         self.emit_addi(shift_reg, REG_ZERO, 3);
         self.emit_nop();
         self.push_instr(Instruction::RR {
@@ -628,6 +745,10 @@ impl Compiler {
         self.emit_nop();
         self.emit_store(val_reg, idx_reg, 0);
 
+        self.free_temp(shift_reg);
+        self.free_temp(val_reg);
+        self.free_temp(idx_reg);
+        self.free_temp(base_reg);
         Ok(())
     }
 
@@ -638,13 +759,14 @@ impl Compiler {
         // 将基址加载到 rd
         self.emit_addi(rd, REG_ZERO, base_addr);
 
-        // 初始化各元素
+        // 初始化各元素：使用专门的 scratch，不再复用固定寄存器（避免与 rd 冲突）
         for (i, elem) in elements.iter().enumerate() {
-            let tmp = REG_T0; // 复用 t0
+            let tmp = self.alloc_temp_excluding(&[rd])?;
             self.compile_expr_into(elem, tmp)?;
             let offset = (i as i16) * 8;
             self.emit_nop();
             self.emit_store(tmp, rd, offset);
+            self.free_temp(tmp);
         }
 
         Ok(())
@@ -677,6 +799,9 @@ impl Compiler {
         self.emit_nop();
         self.emit_load(rd, idx_reg, 0);
 
+        self.free_temp(shift_reg);
+        self.free_temp(idx_reg);
+        self.free_temp(base_reg);
         Ok(())
     }
 
@@ -855,13 +980,16 @@ impl Compiler {
 
         if cond.zero_means_true {
             self.emit_bez(cond.reg, 8);
+            self.free_temp(cond.reg);
             let jump_to_else_idx = self.instructions.len();
             self.emit_jump(0);
 
+            let snap = self.enter_scope();
             for ss in then_body {
                 self.set_line(ss.line);
                 self.compile_statement(&ss.stmt)?;
             }
+            self.leave_scope(snap);
 
             if let Some(else_stmts) = else_body {
                 let jump_to_end_idx = self.instructions.len();
@@ -871,10 +999,12 @@ impl Compiler {
                 let offset = self.calc_offset(jump_to_else_idx, else_start_idx);
                 self.patch_offset(jump_to_else_idx, offset);
 
+                let snap2 = self.enter_scope();
                 for ss in else_stmts {
                     self.set_line(ss.line);
                     self.compile_statement(&ss.stmt)?;
                 }
+                self.leave_scope(snap2);
 
                 let end_idx = self.instructions.len();
                 let offset = self.calc_offset(jump_to_end_idx, end_idx);
@@ -887,11 +1017,14 @@ impl Compiler {
         } else {
             let bez_idx = self.instructions.len();
             self.emit_bez(cond.reg, 0);
+            self.free_temp(cond.reg);
 
+            let snap = self.enter_scope();
             for ss in then_body {
                 self.set_line(ss.line);
                 self.compile_statement(&ss.stmt)?;
             }
+            self.leave_scope(snap);
 
             if let Some(else_stmts) = else_body {
                 let jump_to_end_idx = self.instructions.len();
@@ -901,10 +1034,12 @@ impl Compiler {
                 let offset = self.calc_offset(bez_idx, else_start_idx);
                 self.patch_offset(bez_idx, offset);
 
+                let snap2 = self.enter_scope();
                 for ss in else_stmts {
                     self.set_line(ss.line);
                     self.compile_statement(&ss.stmt)?;
                 }
+                self.leave_scope(snap2);
 
                 let end_idx = self.instructions.len();
                 let offset = self.calc_offset(jump_to_end_idx, end_idx);
@@ -927,6 +1062,9 @@ impl Compiler {
         update: &Statement,
         body: &[SourceStatement],
     ) -> Result<(), String> {
+        // 0. 循环自身是一个作用域：初始化变量只在循环内可见
+        let outer_snap = self.enter_scope();
+
         // 1. 执行初始化
         self.compile_statement(init)?;
 
@@ -938,18 +1076,25 @@ impl Compiler {
         self.free_condition_temps(cond.reg);
 
         // 3. 条件分支 (与 while 相同逻辑)
+        self.loop_stack.push(LoopContext::new_loop());
         if cond.zero_means_true {
             self.emit_bez(cond.reg, 8);
+            self.free_temp(cond.reg);
             let jump_exit_idx = self.instructions.len();
             self.emit_jump(0);
 
             // 4. 循环体
+            let body_snap = self.enter_scope();
             for ss in body {
                 self.set_line(ss.line);
                 self.compile_statement(&ss.stmt)?;
             }
+            self.leave_scope(body_snap);
+            let ctx = self.loop_stack.pop().unwrap_or_default();
 
-            // 5. 更新表达式
+            // 5. 更新表达式（continue 跳转到此处）
+            let update_start_idx = self.instructions.len();
+            self.patch_jumps(&ctx.continue_patches, update_start_idx);
             self.compile_statement(update)?;
 
             // 6. 跳回循环开始
@@ -957,21 +1102,28 @@ impl Compiler {
             let back_offset = self.calc_offset(jump_back_idx, loop_start_idx);
             self.emit_jump(back_offset);
 
-            // 7. 修补退出偏移
+            // 7. 修补退出偏移（break 跳转到此处）
             let end_idx = self.instructions.len();
             let exit_offset = self.calc_offset(jump_exit_idx, end_idx);
             self.patch_offset(jump_exit_idx, exit_offset);
+            self.patch_jumps(&ctx.break_patches, end_idx);
         } else {
             let bez_exit_idx = self.instructions.len();
             self.emit_bez(cond.reg, 0);
+            self.free_temp(cond.reg);
 
             // 4. 循环体
+            let body_snap = self.enter_scope();
             for ss in body {
                 self.set_line(ss.line);
                 self.compile_statement(&ss.stmt)?;
             }
+            self.leave_scope(body_snap);
+            let ctx = self.loop_stack.pop().unwrap_or_default();
 
-            // 5. 更新表达式
+            // 5. 更新表达式（continue 跳转到此处）
+            let update_start_idx = self.instructions.len();
+            self.patch_jumps(&ctx.continue_patches, update_start_idx);
             self.compile_statement(update)?;
 
             // 6. 跳回循环开始
@@ -979,14 +1131,17 @@ impl Compiler {
             let back_offset = self.calc_offset(jump_back_idx, loop_start_idx);
             self.emit_jump(back_offset);
 
-            // 7. 修补退出偏移
+            // 7. 修补退出偏移（break 跳转到此处）
             let end_idx = self.instructions.len();
             let exit_offset = self.calc_offset(bez_exit_idx, end_idx);
             self.patch_offset(bez_exit_idx, exit_offset);
+            self.patch_jumps(&ctx.break_patches, end_idx);
         }
 
+        self.leave_scope(outer_snap);
         Ok(())
     }
+
     fn compile_while(&mut self, condition: &Expr, body: &[SourceStatement]) -> Result<(), String> {
         let loop_start_idx = self.instructions.len();
 
@@ -994,15 +1149,23 @@ impl Compiler {
         self.emit_nop();
         self.free_condition_temps(cond.reg);
 
+        self.loop_stack.push(LoopContext::new_loop());
         if cond.zero_means_true {
             self.emit_bez(cond.reg, 8);
+            self.free_temp(cond.reg);
             let jump_exit_idx = self.instructions.len();
             self.emit_jump(0);
 
+            let body_snap = self.enter_scope();
             for ss in body {
                 self.set_line(ss.line);
                 self.compile_statement(&ss.stmt)?;
             }
+            self.leave_scope(body_snap);
+            let ctx = self.loop_stack.pop().unwrap_or_default();
+
+            // continue → 重新求值条件
+            self.patch_jumps(&ctx.continue_patches, loop_start_idx);
 
             let jump_back_idx = self.instructions.len();
             let back_offset = self.calc_offset(jump_back_idx, loop_start_idx);
@@ -1011,14 +1174,22 @@ impl Compiler {
             let end_idx = self.instructions.len();
             let exit_offset = self.calc_offset(jump_exit_idx, end_idx);
             self.patch_offset(jump_exit_idx, exit_offset);
+            self.patch_jumps(&ctx.break_patches, end_idx);
         } else {
             let bez_exit_idx = self.instructions.len();
             self.emit_bez(cond.reg, 0);
+            self.free_temp(cond.reg);
 
+            let body_snap = self.enter_scope();
             for ss in body {
                 self.set_line(ss.line);
                 self.compile_statement(&ss.stmt)?;
             }
+            self.leave_scope(body_snap);
+            let ctx = self.loop_stack.pop().unwrap_or_default();
+
+            // continue → 重新求值条件
+            self.patch_jumps(&ctx.continue_patches, loop_start_idx);
 
             let jump_back_idx = self.instructions.len();
             let back_offset = self.calc_offset(jump_back_idx, loop_start_idx);
@@ -1027,9 +1198,18 @@ impl Compiler {
             let end_idx = self.instructions.len();
             let exit_offset = self.calc_offset(bez_exit_idx, end_idx);
             self.patch_offset(bez_exit_idx, exit_offset);
+            self.patch_jumps(&ctx.break_patches, end_idx);
         }
 
         Ok(())
+    }
+
+    /// 批量回填跳转补丁（break/continue 链）
+    fn patch_jumps(&mut self, idxs: &[usize], target: usize) {
+        for &idx in idxs {
+            let offset = self.calc_offset(idx, target);
+            self.patch_offset(idx, offset);
+        }
     }
 
     fn compile_condition(&mut self, expr: &Expr) -> Result<CondResult, String> {
@@ -1139,16 +1319,112 @@ impl Compiler {
                 });
                 self.free_temp(tmp);
             }
+            // Sqrt/Pow 需要循环，COUNPRE64 本机引擎不提供（已封存线）；
+            // 产品路径请使用 --target esp32 等 C 目标（生成 hardy_isqrt/hardy_ipow helper）
+            MathOp::Sqrt | MathOp::Pow => {
+                return Err(format!(
+                    "Math.{:?} 需要循环实现，本机 COUNPRE64 引擎不支持，请使用 --target esp32 等 C 目标", op));
+            }
         }
         Ok(())
+    }
+
+    /// 将任意表达式求值为规范的 0/1 布尔值，写入 rd。
+    /// 比较运算符使用 compile_condition 已经正确的 SUB/移位逻辑，
+    /// && / || 使用真正的短路跳转（不依赖按位与/或，也不会因两个
+    /// 操作数都映射到同一 opcode 而静默丢失 ||）。
+    fn compile_expr_to_bool(&mut self, expr: &Expr, rd: u8) -> Result<(), String> {
+        match expr {
+            Expr::BinOp { op: BinOp::And, left, right } => {
+                // if (!a) { rd=0 } else { rd = bool(b) }
+                self.compile_expr_to_bool(left, rd)?;
+                let bez_idx = self.instructions.len();
+                self.emit_bez(rd, 0); // rd==0：短路，跳到 end（rd 已经就是 0）
+                self.compile_expr_to_bool(right, rd)?;
+                let end_idx = self.instructions.len();
+                let off = self.calc_offset(bez_idx, end_idx);
+                self.patch_offset(bez_idx, off);
+                Ok(())
+            }
+            Expr::BinOp { op: BinOp::Or, left, right } => {
+                // if (a) { rd=1 } else { rd = bool(b) }
+                self.compile_expr_to_bool(left, rd)?;
+                let bez_idx = self.instructions.len();
+                self.emit_bez(rd, 0); // rd==0：需要求值右边，跳到 eval_right
+                let jump_end_idx = self.instructions.len();
+                self.emit_jump(0); // rd!=0：短路，保持 rd=1，跳到 end
+                let eval_right_idx = self.instructions.len();
+                let off = self.calc_offset(bez_idx, eval_right_idx);
+                self.patch_offset(bez_idx, off);
+                self.compile_expr_to_bool(right, rd)?;
+                let end_idx = self.instructions.len();
+                let off = self.calc_offset(jump_end_idx, end_idx);
+                self.patch_offset(jump_end_idx, off);
+                Ok(())
+            }
+            _ => {
+                // 非逻辑连接词：统一走 compile_condition（处理比较）或普通求值，
+                // 然后将结果规范化为 0/1。
+                let cond = self.compile_condition(expr)?;
+                self.normalize_cond_to_bool(cond, rd)
+            }
+        }
+    }
+
+    /// 将 compile_condition 返回的 (reg, zero_means_true) 规范化为 rd 里的 0/1。
+    fn normalize_cond_to_bool(&mut self, cond: CondResult, rd: u8) -> Result<(), String> {
+        self.emit_nop();
+        // 注意：不能释放 rd —— 在嵌套表达式（如 (a>0)-(b<0)）中，rd 由外层
+        // BinOp 臂持有并已装入左侧结果；若在此释放，alloc_temp 会把 rd 重新
+        // 分配给右侧的 scratch 寄存器，踩掉左侧活值（表现为 62/63 类错误值）。
+        let to_free: Vec<u8> = self.active_temps.iter()
+            .filter(|&&r| r != cond.reg && r != rd)
+            .copied()
+            .collect();
+        for r in to_free {
+            self.free_temp(r);
+        }
+
+        if cond.zero_means_true {
+            let bez_idx = self.instructions.len();
+            self.emit_bez(cond.reg, 0); // reg==0 → true 分支
+            self.addi_imm(rd, 0); // false: rd=0
+            let jump_end_idx = self.instructions.len();
+            self.emit_jump(0);
+            let true_start = self.instructions.len();
+            let off = self.calc_offset(bez_idx, true_start);
+            self.patch_offset(bez_idx, off);
+            self.addi_imm(rd, 1); // true: rd=1
+            let end_idx = self.instructions.len();
+            let off = self.calc_offset(jump_end_idx, end_idx);
+            self.patch_offset(jump_end_idx, off);
+        } else {
+            let bez_idx = self.instructions.len();
+            self.emit_bez(cond.reg, 0); // reg==0 → false 分支
+            self.addi_imm(rd, 1); // true: rd=1
+            let jump_end_idx = self.instructions.len();
+            self.emit_jump(0);
+            let false_start = self.instructions.len();
+            let off = self.calc_offset(bez_idx, false_start);
+            self.patch_offset(bez_idx, off);
+            self.addi_imm(rd, 0); // false: rd=0
+            let end_idx = self.instructions.len();
+            let off = self.calc_offset(jump_end_idx, end_idx);
+            self.patch_offset(jump_end_idx, off);
+        }
+
+        self.free_temp(cond.reg);
+        Ok(())
+    }
+
+    fn addi_imm(&mut self, rd: u8, imm: i16) {
+        self.emit_addi(rd, REG_ZERO, imm);
     }
 
     fn compile_expr_into(&mut self, expr: &Expr, rd: u8) -> Result<(), String> {
         match expr {
             Expr::Number(n) => {
-                let imm = *n as i16;
-                self.emit_addi(rd, REG_ZERO, imm);
-                Ok(())
+                self.load_const(rd, *n)
             }
             Expr::StringLit(_s) => {
                 // 字符串作为表达式 → 返回首字符 ASCII 值
@@ -1183,27 +1459,31 @@ impl Compiler {
                 Ok(())
             }
             Expr::BinOp { op, left, right } => {
-                self.compile_expr_into(left, rd)?;
-                let tmp = self.alloc_temp()?;
-                self.compile_expr_into(right, tmp)?;
-                self.emit_nop();
-                let (opcode, func) = match op {
-                    BinOp::Add => (0x0, 0x0),
-                    BinOp::Sub => (0x1, 0x0),
-                    BinOp::Mul => (0x7, 0x8),
-                    BinOp::Div => (0x7, 0xC),
-                    BinOp::Mod => (0x7, 0xE),
-                    BinOp::Eq | BinOp::StrictEq
-                    | BinOp::NotEq | BinOp::StrictNotEq
-                    | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => (0x1, 0x0),
-                    BinOp::And | BinOp::Or => (0x2, 0x0),
-                };
-                self.push_instr(Instruction::RR {
-                    opcode, func,
-                    rs1: rd, rs2: tmp, rd,
-                });
-                self.free_temp(tmp);
-                Ok(())
+                match op {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                        self.compile_expr_into(left, rd)?;
+                        let tmp = self.alloc_temp()?;
+                        self.compile_expr_into(right, tmp)?;
+                        self.emit_nop();
+                        let (opcode, func) = match op {
+                            BinOp::Add => (0x0, 0x0),
+                            BinOp::Sub => (0x1, 0x0),
+                            BinOp::Mul => (0x7, 0x8),
+                            BinOp::Div => (0x7, 0xC),
+                            BinOp::Mod => (0x7, 0xE),
+                            _ => unreachable!(),
+                        };
+                        self.push_instr(Instruction::RR {
+                            opcode, func,
+                            rs1: rd, rs2: tmp, rd,
+                        });
+                        self.free_temp(tmp);
+                        Ok(())
+                    }
+                    // 比较/逻辑运算符在“值上下文”中必须产生规范的 0/1 布尔结果，
+                    // 不能像旧版那样静默退化为原始 SUB/AND 数值。
+                    _ => self.compile_expr_to_bool(expr, rd),
+                }
             }
             // Phase A: 布尔值 → 0/1
             Expr::Bool(b) => {
@@ -1287,14 +1567,27 @@ impl Compiler {
                     param_count: params.len(),
                     addr,
                 });
-                // 编译函数体
+                // 编译函数体（需要快照/恢复当前帧的全部分配状态，因为
+                // compile_function 会调用 reset_frame 重置 slots/free_pool 等）
                 let saved_in_function = self.in_function;
-                let saved_vars = self.variables.clone();
-                let saved_next_reg = self.next_reg;
+                let saved_slots = self.slots.clone();
+                let saved_next_slot_off = self.next_slot_off;
+                let saved_frame_size = self.frame_size;
+                let saved_free_pool = self.free_pool.clone();
+                let saved_active_temps = self.active_temps.clone();
+                let saved_scratch_spill_off = self.scratch_spill_off;
+                let saved_scratch_spills = self.scratch_spills.clone();
+                let saved_return_patches = self.return_patches.clone();
                 self.compile_function(&func, 0)?;
                 self.in_function = saved_in_function;
-                self.variables = saved_vars;
-                self.next_reg = saved_next_reg;
+                self.slots = saved_slots;
+                self.next_slot_off = saved_next_slot_off;
+                self.frame_size = saved_frame_size;
+                self.free_pool = saved_free_pool;
+                self.active_temps = saved_active_temps;
+                self.scratch_spill_off = saved_scratch_spill_off;
+                self.scratch_spills = saved_scratch_spills;
+                self.return_patches = saved_return_patches;
                 // 将函数地址存入变量
                 self.emit_addi(rd, REG_ZERO, addr as i16);
                 Ok(())
@@ -1380,6 +1673,9 @@ impl Compiler {
     // =========================================================================
 
     fn compile_switch(&mut self, discriminant: &Expr, cases: &[SwitchCase]) -> Result<(), String> {
+        // switch 上下文：break 在内层时 NOP 即等价（if-else 链无 fallthrough），
+        // 但需压栈以免循环内的 break/continue 误链接到外层循环
+        self.loop_stack.push(LoopContext::new_switch());
         // 计算判别表达式的值到临时寄存器
         let disc_reg = self.alloc_temp()?;
         self.compile_expr_into(discriminant, disc_reg)?;
@@ -1438,6 +1734,7 @@ impl Compiler {
             self.patch_offset(j, offset);
         }
 
+        self.loop_stack.pop();
         self.free_temp(disc_reg);
         Ok(())
     }
@@ -1469,17 +1766,16 @@ impl Compiler {
     }
 
     fn compile_prop_assign(&mut self, object: &str, property: &str, value: &Expr) -> Result<(), String> {
-        let orig_reg = self.var_reg(object)
-            .ok_or_else(|| format!("undefined object '{}'", object))?;
+        if self.slot_off(object).is_none() {
+            return Err(format!("undefined object '{}'", object));
+        }
         let obj_expr = Expr::Ident(object.to_string());
         let offset = self.get_prop_offset(&obj_expr, property)?;
-        // Save base address to stack (protect against spills during value eval)
-        self.emit_store(orig_reg, REG_SP, -8);
+        // 基址从栈槽加载到专门的 scratch（不再需要临时存到 SP-8 躲避覆盖）
+        let base_reg = self.alloc_temp()?;
+        self.get_var_to_reg(object, base_reg)?;
         let val_reg = self.alloc_temp()?;
         self.compile_expr_into(value, val_reg)?;
-        // Reload base address from stack
-        let base_reg = self.alloc_temp()?;
-        self.emit_load(base_reg, REG_SP, -8);
         self.emit_nop();
         self.emit_store(val_reg, base_reg, offset);
         self.free_temp(val_reg);

@@ -76,6 +76,8 @@ struct CCodeGenerator {
     array_vars: Vec<(String, usize)>,
     /// Phase 2.4: 是否需要数组边界检查 helper
     needs_arr_helper: bool,
+    /// 语言完备性批 2: Math.sqrt/pow 需要整数 helper
+    needs_math_helper: bool,
     /// Phase 3.3: 中断函数跟踪 (func_name, timer, period_us)
     interrupt_fns: Vec<(String, String, u32)>,
     /// Phase 4: 芯片信息 API (hardy:esp32 Chip)
@@ -194,6 +196,25 @@ static void hardy_pin_hi(u32 pin) {
 static void hardy_pin_lo(u32 pin) {
     if (pin >= 32) HARDY_REG(HARDY_GPIO_BASE + 0x18) = 1u << (pin - 32);
     else HARDY_REG(HARDY_GPIO_BASE + 0x0C) = 1u << pin;
+}
+/* GPIO 统一 API 包装: JS 侧 GPIO.output/high/low/read 生成的是 hardy_gpio_*
+ * 调用（与其它后端同名），bare HAL 内部用 pin_setup/hi/lo 实现。
+ * 缺少这层包装时 blink 类程序直接 gcc 报 implicit declaration (2026-10 网站阶段 0 实测发现) */
+static inline void hardy_gpio_output(int pin) { hardy_pin_setup((u32)pin); }
+static inline void hardy_gpio_high(int pin) { hardy_pin_hi((u32)pin); }
+static inline void hardy_gpio_low(int pin)  { hardy_pin_lo((u32)pin); }
+static inline void hardy_gpio_input_pullup(int pin) {
+    u32 p = (u32)pin;
+    /* FUN_IE(bit12) + FUN_WPU(bit11) 上拉输入；清输出使能 (ENABLE_W1TC 0x28/0x34) */
+    HARDY_REG(HARDY_IOMUX_BASE + p * 4) = (1u << 12) | (1u << 11);
+    HARDY_REG(HARDY_GPIO_BASE + 0x554 + p * 4) = p;
+    if (pin >= 32) HARDY_REG(HARDY_GPIO_BASE + 0x34) = 1u << (pin - 32);
+    else HARDY_REG(HARDY_GPIO_BASE + 0x28) = 1u << pin;
+}
+static inline int hardy_gpio_read(int pin) {
+    /* GPIO_IN_REG=0x3C (pin<32), GPIO_IN1_REG=0x40 */
+    if (pin >= 32) return (int)((HARDY_REG(HARDY_GPIO_BASE + 0x40) >> (pin - 32)) & 1u);
+    return (int)((HARDY_REG(HARDY_GPIO_BASE + 0x3C) >> pin) & 1u);
 }
 /* RMT 初始化: 通道0 单发模式, 输出路由到 GPIO48 (信号81) */
 static void hardy_rmt_init(void) {
@@ -367,6 +388,7 @@ impl CCodeGenerator {
             object_vars: Vec::new(),
             array_vars: Vec::new(),
             needs_arr_helper: false,
+            needs_math_helper: false,
             interrupt_fns: Vec::new(),
             needs_chip_info: false,
         }
@@ -487,6 +509,24 @@ impl CCodeGenerator {
             self.output.push_str("static inline int32_t _hardy_arr_get(int32_t* arr, int32_t len, int32_t idx) {\n");
             self.output.push_str("    if (idx < 0 || idx >= len) { while(1); /* ARRAY_OOB */ }\n");
             self.output.push_str("    return arr[idx];\n");
+            self.output.push_str("}\n\n");
+        }
+
+        // 语言完备性批 2: Math.sqrt/pow 整数 helper（无 libm，裸机可用）
+        if self.needs_math_helper {
+            self.output.push_str("/* HardyScript integer math helpers (no libm) */\n");
+            self.output.push_str("static int32_t hardy_isqrt(int32_t n) {\n");
+            self.output.push_str("    if (n < 0) return 0;\n");
+            self.output.push_str("    if (n == 0) return 0;\n");
+            self.output.push_str("    int32_t x = n;\n");
+            self.output.push_str("    int32_t y = (x + 1) / 2;\n");
+            self.output.push_str("    while (y < x) { x = y; y = (x + n / x) / 2; }\n");
+            self.output.push_str("    return x;\n");
+            self.output.push_str("}\n");
+            self.output.push_str("static int32_t hardy_ipow(int32_t b, int32_t e) {\n");
+            self.output.push_str("    int32_t r = 1;\n");
+            self.output.push_str("    while (e > 0) { if (e & 1) r *= b; b *= b; e >>= 1; }\n");
+            self.output.push_str("    return r;\n");
             self.output.push_str("}\n\n");
         }
 
@@ -932,15 +972,16 @@ impl CCodeGenerator {
                     self.output.push_str("static const char* hardy_chip_sdk_version(void) {\n");
                     self.output.push_str("    return esp_get_idf_version();\n");
                     self.output.push_str("}\n");
-                    // 设备唯一 ID: MAC → SHA-256 → "SNAR-XXXX-XXXX-XXXX"
-                    self.output.push_str("static char _hardy_device_id[20];\n");
+                    // 设备唯一 ID: MAC → SHA-256 → "HardyScript-XXXX-XXXX-XXXX"
+                    // 缓冲 28 = 前缀 12 + 12 hex + 2 连字符 + NUL（旧 SNAR- 时代为 20）
+                    self.output.push_str("static char _hardy_device_id[28];\n");
                     self.output.push_str("static const char* hardy_chip_device_id(void) {\n");
                     self.output.push_str("    uint8_t mac[6] = {0};\n");
                     self.output.push_str("    esp_efuse_mac_get_default(mac);\n");
                     self.output.push_str("    uint8_t hash[32];\n");
                     self.output.push_str("    mbedtls_sha256(mac, 6, hash, 0);\n");
                     self.output.push_str("    snprintf(_hardy_device_id, sizeof(_hardy_device_id),\n");
-                    self.output.push_str("        \"SNAR-%02X%02X-%02X%02X-%02X%02X\",\n");
+                    self.output.push_str("        \"HardyScript-%02X%02X-%02X%02X-%02X%02X\",\n");
                     self.output.push_str("        hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);\n");
                     self.output.push_str("    return _hardy_device_id;\n");
                     self.output.push_str("}\n");
@@ -1924,6 +1965,7 @@ impl CCodeGenerator {
                 Ok(code)
             }
             Statement::Break => Ok(format!("{}break;\n", pad)),
+            Statement::Continue => Ok(format!("{}continue;\n", pad)),
             Statement::PostInc(name) => Ok(format!("{}{}++;\n", pad, name)),
             Statement::PostDec(name) => Ok(format!("{}{}--;\n", pad, name)),
             Statement::PropAssign { object, property, value } => {
@@ -2473,6 +2515,18 @@ impl CCodeGenerator {
                         Ok(format!("(({} < {}) ? {} : {})", a, b, a, b))
                     }
                     MathOp::Abs => Ok(format!("(({} < 0) ? -({}) : ({}))", a, a, a)),
+                    MathOp::Sqrt => {
+                        self.needs_math_helper = true;
+                        Ok(format!("hardy_isqrt({})", a))
+                    }
+                    MathOp::Pow => {
+                        self.needs_math_helper = true;
+                        if args.len() < 2 {
+                            return Err("Math.pow 需要 2 个参数".to_string());
+                        }
+                        let b = self.generate_expr(&args[1])?;
+                        Ok(format!("hardy_ipow({}, {})", a, b))
+                    }
                     _ => Ok(a),
                 }
             }
@@ -2578,6 +2632,23 @@ impl CCodeGenerator {
                     "slice" if args.len() == 1 => {
                         let start = self.generate_expr(&args[0])?;
                         Ok(format!("({} + {})", obj, start))
+                    }
+                    // 语言完备性批 2：纯表达式形式的谓词/访问器（返回 0/1 或字符码）
+                    "startsWith" if !args.is_empty() => {
+                        let p = self.generate_expr(&args[0])?;
+                        Ok(format!("(strncmp({}, {}, strlen({})) == 0 ? 1 : 0)", obj, p, p))
+                    }
+                    "endsWith" if !args.is_empty() => {
+                        let p = self.generate_expr(&args[0])?;
+                        Ok(format!("(strlen({}) >= strlen({}) && strcmp({} + strlen({}) - strlen({}), {}) == 0 ? 1 : 0)", obj, p, obj, obj, p, p))
+                    }
+                    "includes" if !args.is_empty() => {
+                        let p = self.generate_expr(&args[0])?;
+                        Ok(format!("(strstr({}, {}) != 0 ? 1 : 0)", obj, p))
+                    }
+                    "charCodeAt" if !args.is_empty() => {
+                        let idx = self.generate_expr(&args[0])?;
+                        Ok(format!("(int32_t){}[{}]", obj, idx))
                     }
                     _ => Ok(format!("/* unknown string method: {} */ 0", method)),
                 }
