@@ -1,5 +1,5 @@
 # 把最新 release 同步到 PATH 上的 bin\duanyan.exe。
-# 本机 `duanyan` 命令解析到 C:\OPENSNAR\DUANYAN\bin\duanyan.exe（PATH 直连，
+# 本机 `duanyan` 命令解析到 C:\DuanYanOS\DUANYAN\bin\duanyan.exe（PATH 直连，
 # ~/.cargo/bin 里没有 duanyan），删掉它 = 命令消失；不同步它 = 停留在旧版。
 # 用法：每次 cargo build --release 之后跑一次本脚本。
 $ErrorActionPreference = "Stop"

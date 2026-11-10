@@ -272,7 +272,7 @@ pub fn generate_wcet_report(results: &[WcetResult], target: &CTarget) -> String 
     let model = get_timing_model(target);
     let mut report = String::new();
 
-    report.push_str("=== HardyScript WCET Report ===\n");
+    report.push_str("=== DUANYAN WCET Report ===\n");
     report.push_str(&format!("Target: {} @ {}MHz\n\n", model.name, model.clock_mhz));
     report.push_str(&format!(
         "{:<20}{:>12}{:>10}{:>10}  {:>6}\n",

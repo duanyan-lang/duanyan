@@ -3,7 +3,7 @@
 //! 支持项目级别的 Registry 配置:
 //! ```ini
 //! registry=https://packages.hardy.dev
-//! token=hardy_xxxxxxxxxxxx
+//! token=duanyan_xxxxxxxxxxxx
 //! scope=@my-team
 //! ```
 
@@ -134,14 +134,14 @@ mod tests {
     #[test]
     fn test_parse_hardyrc() {
         let content = r#"
-# Hardy Registry 配置
+# DUANYAN-Registry 配置
 registry=https://packages.hardy.dev
-token=hardy_abc123
+token=duanyan_abc123
 scope=@my-team
 "#;
         let rc = HardyRc::parse(content);
         assert_eq!(rc.registry, "https://packages.hardy.dev");
-        assert_eq!(rc.token, Some("hardy_abc123".to_string()));
+        assert_eq!(rc.token, Some("duanyan_abc123".to_string()));
         assert_eq!(rc.scope, Some("@my-team".to_string()));
     }
 

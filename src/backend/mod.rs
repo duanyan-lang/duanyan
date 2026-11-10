@@ -130,7 +130,7 @@ pub fn emit_hex(instructions: &[Instruction], path: &str) -> Result<(), String> 
         .map_err(|e| format!("无法创建文件 '{}': {}", path, e))?;
 
     // 写入文件头注释
-    writeln!(file, "// HardyScript 编译输出 - COUNPRE64 机器码")
+    writeln!(file, "// DUANYAN 编译输出 - COUNPRE64 机器码")
         .map_err(|e| e.to_string())?;
     writeln!(file, "// 格式: Verilog  compatible")
         .map_err(|e| e.to_string())?;

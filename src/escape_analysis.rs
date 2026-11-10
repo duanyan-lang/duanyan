@@ -456,7 +456,7 @@ fn analyze_global_vars(statements: &[SourceStatement]) -> HashMap<String, VarInf
 /// 生成内存布局报告
 pub fn generate_memory_report(analysis: &ProgramAnalysis) -> String {
     let mut report = String::new();
-    report.push_str("=== HardyScript Memory Layout Report ===\n\n");
+    report.push_str("=== DUANYAN Memory Layout Report ===\n\n");
 
     // 全局变量
     if !analysis.globals.is_empty() {

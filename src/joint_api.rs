@@ -1,15 +1,15 @@
-//! 关节抽象 API（HardyScript v1.6 P0）
+//! 关节抽象 API（DUANYAN v1.6 P0）
 //!
-//! 镜像 DUANYAN v1.5 `src/joint_api.rs`（单一真值口径）：「统一入口是关节而非引脚，
+//! 镜像 DuanYanX v1.5 `src/joint_api.rs`（单一真值口径）：「统一入口是关节而非引脚，
 //! 每关节独立绑定后端，PWM/总线可混搭」。上位机只见关节号与角度；PCA9685 通道号 /
 //! ZX361 舵机 ID / 总线脉宽换算全部由绑定表吸收。
 //!
-//! 与 DUANYAN 的差异（宿主适配，语义不变）：
-//! - `JointSpec.name` 用 `String`（HardyScript 是 std 宿主，非 no_std `&'static str`）。
-//! - DUANYAN 的 `set_deg`/`read_frame` 直接产 `mode_b_proto::Frame`；HardyScript P0 阶段
+//! 与 DuanYanX 的差异（宿主适配，语义不变）：
+//! - `JointSpec.name` 用 `String`（DUANYAN 是 std 宿主，非 no_std `&'static str`）。
+//! - DuanYanX 的 `set_deg`/`read_frame` 直接产 `mode_b_proto::Frame`；DUANYAN P0 阶段
 //!   `modeb_proto` 尚未落地（P3），故改为产**路由意图** `JointRoute`/`ReadRoute`，
 //!   把「PWM→0x20 静态定位载荷」「BUS→0x30 同步项 (id,pwm,ms)」「PWM→0x21 查询」
-//!   「BUS→0x31 ASCII 透传」显式表达。数值与 DUANYAN 完全一致（见测试断言），
+//!   「BUS→0x31 ASCII 透传」显式表达。数值与 DuanYanX 完全一致（见测试断言），
 //!   P3 的 `modeb_proto` 直接消费这些路由意图组帧即可，无需再改本模块。
 //!
 //! 回读语义统一：
@@ -209,7 +209,7 @@ mod tests {
                     min_deg: 0.0, max_deg: 270.0, home_deg: 135.0 }
     }
 
-    // 以下 7 例镜像 DUANYAN/src/joint_api.rs 测试，数值断言一致（Frame→JointRoute 表达差异）
+    // 以下 7 例镜像 DuanYanX/src/joint_api.rs 测试，数值断言一致（Frame→JointRoute 表达差异）
     #[test]
     fn test_neck_as_built_bindings() {
         let a = JointApi::neck_as_built();

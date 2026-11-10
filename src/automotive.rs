@@ -273,7 +273,7 @@ pub struct FailOpConfig {
 /// 生成 Fail-Operational C 代码
 pub fn generate_failop_code(config: &FailOpConfig) -> String {
     let mut code = String::new();
-    code.push_str(&format!("/* HardyScript AD: Fail-Operational — {} */\n", config.system_name));
+    code.push_str(&format!("/* DUANYAN AD: Fail-Operational — {} */\n", config.system_name));
     code.push_str(&format!("/* Primary: {}, Backup: {} */\n\n", config.primary_asil.as_str(), config.backup_asil.as_str()));
 
     // 状态机
@@ -346,7 +346,7 @@ pub fn generate_failop_code(config: &FailOpConfig) -> String {
 pub struct AutosarRunnable {
     /// Runnable 名称
     pub name: String,
-    /// 对应 HardyScript 函数
+    /// 对应 DUANYAN 函数
     pub hs_function: String,
     /// 触发类型
     pub trigger: RunnableTrigger,
@@ -386,7 +386,7 @@ pub struct AutosarSwc {
 /// 生成 AUTOSAR SWC 骨架 C 代码
 pub fn generate_autosar_swc(swc: &AutosarSwc) -> String {
     let mut code = String::new();
-    code.push_str(&format!("/* HardyScript AD: AUTOSAR SWC — {} */\n", swc.name));
+    code.push_str(&format!("/* DUANYAN AD: AUTOSAR SWC — {} */\n", swc.name));
     code.push_str(&format!("/* Runnables: {} */\n\n", swc.runnables.len()));
 
     // RTE 类型头
@@ -424,8 +424,8 @@ pub fn generate_autosar_swc(swc: &AutosarSwc) -> String {
             code.push_str(&format!("    /* {}_Read() */\n", port));
         }
 
-        // 调用 HardyScript 编译的函数
-        code.push_str(&format!("    _hardy_{}();\n", r.hs_function));
+        // 调用 DUANYAN 编译的函数
+        code.push_str(&format!("    _duanyan_{}();\n", r.hs_function));
 
         // 写入端口
         for port in &r.write_ports {
@@ -441,7 +441,7 @@ pub fn generate_autosar_swc(swc: &AutosarSwc) -> String {
 /// 生成 AUTOSAR 调度表 (BSW Scheduler)
 pub fn generate_autosar_schedule(runnables: &[AutosarRunnable]) -> String {
     let mut code = String::new();
-    code.push_str("/* HardyScript AD: AUTOSAR OS Schedule Table */\n\n");
+    code.push_str("/* DUANYAN AD: AUTOSAR OS Schedule Table */\n\n");
 
     // 按周期排序
     let mut sorted: Vec<&AutosarRunnable> = runnables.iter()
@@ -555,7 +555,7 @@ mod tests {
         assert!(code.contains("AUTOSAR SWC"));
         assert!(code.contains("LaneKeeping"));
         assert!(code.contains("LKAS_Calc"));
-        assert!(code.contains("_hardy_laneKeepCalc"));
+        assert!(code.contains("_duanyan_laneKeepCalc"));
         assert!(code.contains("Rte_LaneKeeping.h"));
     }
 

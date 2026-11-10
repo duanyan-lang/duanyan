@@ -1,12 +1,12 @@
-//! v1.6 P3: Mode-B 线协议编解码（std 宿主移植，镜像 DUANYAN `mode_b_proto.rs`）
+//! v1.6 P3: Mode-B 线协议编解码（std 宿主移植，镜像 DuanYanX `mode_b_proto.rs`）
 //!
 //! 与 ESP32-S3 真机固件实测线协议严格对齐（当前固件 `uart_linkm6.bin`，位啮 UART）：
 //!   帧格式:  0xAA 0x55 LEN CMD PAYLOAD[LEN] CRC8
 //!   CRC8:    多项式 0x07，初值 0，覆盖 LEN..PAYLOAD（2+LEN 字节）
-//!   传输:    每帧前置 'U' 校准突发（位啮自校准），由 C helper `_hardy_modeb_send` 承担
+//!   传输:    每帧前置 'U' 校准突发（位啮自校准），由 C helper `_duanyan_modeb_send` 承担
 //!
 //! 诚实边界：本模块只做「字节级一致」的帧编解码镜像，供
-//!   - codegen 吐出的 C 侧 `_hardy_modeb_send`（组帧 + crc8 + UART 写 + 'U' 突发）对照；
+//!   - codegen 吐出的 C 侧 `_duanyan_modeb_send`（组帧 + crc8 + UART 写 + 'U' 突发）对照；
 //!   - `--target duanyan-spine` 编译路径的协议绑定与单测；
 //! 不替换、不重新实现真机固件的位啮时序（那是 uart_linkm6 的领域）。
 //!

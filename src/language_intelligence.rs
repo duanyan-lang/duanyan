@@ -1,6 +1,6 @@
 //! DUANYAN 语言智能引擎
 //!
-//! 为 IDE 提供 HardyScript 专属智能服务：
+//! 为 IDE 提供 DUANYAN 专属智能服务：
 //! - 实时诊断 (语法/语义/确定性违规)
 //! - 上下文补全 (关键字/硬件API/数学函数/行业API)
 //! - 悬停信息 (函数签名/变量类型/WCET标注)
@@ -187,7 +187,7 @@ fn check_common_mistakes(source: &str, diags: &mut Vec<Diagnostic>) {
                 severity: Severity::Error,
                 line: line_num,
                 col: 1,
-                message: "禁止 new: HardyScript 无堆分配，使用 let 声明栈变量".into(),
+                message: "禁止 new: DUANYAN 无堆分配，使用 let 声明栈变量".into(),
                 code: "HS102".into(),
             });
         }
@@ -220,7 +220,7 @@ fn check_common_mistakes(source: &str, diags: &mut Vec<Diagnostic>) {
                 severity: Severity::Hint,
                 line: line_num,
                 col: 1,
-                message: "HardyScript 中 == 即为严格相等，无需 ===".into(),
+                message: "DUANYAN 中 == 即为严格相等，无需 ===".into(),
                 code: "HS301".into(),
             });
         }
@@ -231,7 +231,7 @@ fn check_common_mistakes(source: &str, diags: &mut Vec<Diagnostic>) {
                 severity: Severity::Warning,
                 line: line_num,
                 col: 1,
-                message: "建议用 let/const 替代 var (HardyScript 无变量提升)".into(),
+                message: "建议用 let/const 替代 var (DUANYAN 无变量提升)".into(),
                 code: "HS302".into(),
             });
         }

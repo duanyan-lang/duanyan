@@ -207,7 +207,7 @@ pub fn safety_check(config: &CollaborativeSafetyConfig, force_n: f64, speed_mm_s
 /// 生成机器人控制 C 代码
 pub fn generate_robot_control_code(dof: usize, impedance: &ImpedanceParams, safety: &CollaborativeSafetyConfig) -> String {
     let mut code = String::new();
-    code.push_str(&format!("/* HardyScript RB: Embodied Robot Control — {} DOF */\n\n", dof));
+    code.push_str(&format!("/* DUANYAN RB: Embodied Robot Control — {} DOF */\n\n", dof));
 
     // 关节结构
     code.push_str(&format!("#define ROBOT_DOF {}\n\n", dof));

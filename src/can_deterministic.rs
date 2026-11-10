@@ -325,32 +325,32 @@ pub enum WatchdogAction {
 /// 生成看门狗 C 代码
 pub fn generate_watchdog_code(config: &WatchdogConfig, target: &crate::c_codegen::CTarget) -> String {
     let mut code = String::new();
-    code.push_str("/* HardyScript W3: Watchdog Integration */\n");
+    code.push_str("/* DUANYAN W3: Watchdog Integration */\n");
 
     match target {
         crate::c_codegen::CTarget::Esp32 => {
             code.push_str("#include \"esp_task_wdt.h\"\n\n");
             code.push_str(&format!(
-                "static inline void _hardy_wdt_init(void) {{\n    esp_task_wdt_init({}, true);\n    esp_task_wdt_add(NULL);\n}}\n\n",
+                "static inline void _duanyan_wdt_init(void) {{\n    esp_task_wdt_init({}, true);\n    esp_task_wdt_add(NULL);\n}}\n\n",
                 config.timeout_ms / 1000
             ));
-            code.push_str("static inline void _hardy_wdt_feed(void) {\n    esp_task_wdt_reset();\n}\n\n");
+            code.push_str("static inline void _duanyan_wdt_feed(void) {\n    esp_task_wdt_reset();\n}\n\n");
         }
         crate::c_codegen::CTarget::Stm32 => {
             code.push_str("/* STM32 IWDG */\n");
             code.push_str(&format!(
-                "static inline void _hardy_wdt_init(void) {{\n    IWDG->KR = 0x5555;\n    IWDG->PR = 4; /* /64 */\n    IWDG->RLR = {};\n    IWDG->KR = 0xCCCC; /* start */\n}}\n\n",
+                "static inline void _duanyan_wdt_init(void) {{\n    IWDG->KR = 0x5555;\n    IWDG->PR = 4; /* /64 */\n    IWDG->RLR = {};\n    IWDG->KR = 0xCCCC; /* start */\n}}\n\n",
                 config.timeout_ms * 40 / 1000 // 40kHz LSI / 64
             ));
-            code.push_str("static inline void _hardy_wdt_feed(void) {\n    IWDG->KR = 0xAAAA;\n}\n\n");
+            code.push_str("static inline void _duanyan_wdt_feed(void) {\n    IWDG->KR = 0xAAAA;\n}\n\n");
         }
         _ => {
             code.push_str("/* Generic watchdog (software) */\n");
             code.push_str(&format!(
-                "static volatile uint32_t _hardy_wdt_counter = 0;\nstatic const uint32_t _HARDY_WDT_LIMIT = {};\n\n",
+                "static volatile uint32_t _duanyan_wdt_counter = 0;\nstatic const uint32_t _DUANYAN_WDT_LIMIT = {};\n\n",
                 config.timeout_ms / config.feed_period_ms
             ));
-            code.push_str("static inline void _hardy_wdt_feed(void) {\n    _hardy_wdt_counter = 0;\n}\n\n");
+            code.push_str("static inline void _duanyan_wdt_feed(void) {\n    _duanyan_wdt_counter = 0;\n}\n\n");
         }
     }
 
@@ -414,14 +414,14 @@ pub enum FaultKind {
 /// 生成故障安全状态机 C 代码
 pub fn generate_safestate_code(config: &SafeStateConfig) -> String {
     let mut code = String::new();
-    code.push_str(&format!("/* HardyScript W3: Fail-Safe State Machine — {} */\n\n", config.system_name));
+    code.push_str(&format!("/* DUANYAN W3: Fail-Safe State Machine — {} */\n\n", config.system_name));
 
-    code.push_str("typedef enum {\n    SYS_NORMAL = 0,\n    SYS_FAULT_DETECTED,\n    SYS_SAFE_STATE,\n} _hardy_sys_state_t;\n\n");
-    code.push_str("static volatile _hardy_sys_state_t _hardy_state = SYS_NORMAL;\n\n");
+    code.push_str("typedef enum {\n    SYS_NORMAL = 0,\n    SYS_FAULT_DETECTED,\n    SYS_SAFE_STATE,\n} _duanyan_sys_state_t;\n\n");
+    code.push_str("static volatile _duanyan_sys_state_t _duanyan_state = SYS_NORMAL;\n\n");
 
     // 进入安全状态函数
-    code.push_str("static inline void _hardy_enter_safe_state(void) {\n");
-    code.push_str("    _hardy_state = SYS_SAFE_STATE;\n");
+    code.push_str("static inline void _duanyan_enter_safe_state(void) {\n");
+    code.push_str("    _duanyan_state = SYS_SAFE_STATE;\n");
     for out in &config.safe_outputs {
         match out.kind {
             SafeOutputKind::GpioLow => code.push_str(&format!("    /* {} → LOW */\n", out.name)),
@@ -434,8 +434,8 @@ pub fn generate_safestate_code(config: &SafeStateConfig) -> String {
     code.push_str("}\n\n");
 
     // 故障检测函数
-    code.push_str("static inline void _hardy_check_faults(void) {\n");
-    code.push_str("    if (_hardy_state != SYS_NORMAL) return;\n");
+    code.push_str("static inline void _duanyan_check_faults(void) {\n");
+    code.push_str("    if (_duanyan_state != SYS_NORMAL) return;\n");
     for trigger in &config.triggers {
         code.push_str(&format!("    /* Check: {} ({:?}) */\n", trigger.name, trigger.kind));
     }
@@ -451,7 +451,7 @@ pub fn generate_safestate_code(config: &SafeStateConfig) -> String {
 /// 生成 CAN 调度报告
 pub fn generate_can_report(schedule: &TtcanSchedule, baudrate: u32) -> String {
     let mut r = String::new();
-    r.push_str("=== HardyScript CAN Schedule (Phase W3) ===\n");
+    r.push_str("=== DUANYAN CAN Schedule (Phase W3) ===\n");
     r.push_str(&format!("Baudrate: {} kbps\n", baudrate));
     r.push_str(&format!("Base cycle: {} μs\n", schedule.base_cycle_us));
     r.push_str(&format!("Bus utilization: {:.1}%\n", schedule.bus_utilization * 100.0));
@@ -558,7 +558,7 @@ mod tests {
         };
         let code = generate_watchdog_code(&config, &CTarget::Esp32);
         assert!(code.contains("esp_task_wdt_init"));
-        assert!(code.contains("_hardy_wdt_feed"));
+        assert!(code.contains("_duanyan_wdt_feed"));
     }
 
     #[test]
@@ -578,7 +578,7 @@ mod tests {
         };
         let code = generate_safestate_code(&config);
         assert!(code.contains("SYS_SAFE_STATE"));
-        assert!(code.contains("_hardy_enter_safe_state"));
+        assert!(code.contains("_duanyan_enter_safe_state"));
         assert!(code.contains("MotorController"));
         assert!(code.contains("PWM_A"));
     }

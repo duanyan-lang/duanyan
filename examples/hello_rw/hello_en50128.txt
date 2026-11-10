@@ -14,7 +14,7 @@ Redundancy: 2oo3 or 2oo2D with diverse software
   Boundary value analysis                       Mandatory
   Error guessing                                Highly Recommended
 
---- HardyScript Coverage (0 functions) ---
+--- DUANYAN Coverage (0 functions) ---
   [ok] No dynamic allocation → no memory corruption
   [ok] WCET proven → timing guarantees
   [ok] Bounded loops → termination guaranteed

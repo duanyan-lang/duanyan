@@ -21,7 +21,7 @@ pub struct MisraRule {
     pub description: String,
     /// 强制级别
     pub level: MisraLevel,
-    /// 是否由 HardyScript 自动保证
+    /// 是否由 DUANYAN 自动保证
     pub auto_guaranteed: bool,
 }
 
@@ -60,8 +60,8 @@ pub struct MisraViolation {
     pub severity: MisraLevel,
 }
 
-/// HardyScript 自动保证的 MISRA 规则
-pub fn hardyscript_misra_guarantees() -> Vec<MisraRule> {
+/// DUANYAN 自动保证的 MISRA 规则
+pub fn duanyan_misra_guarantees() -> Vec<MisraRule> {
     vec![
         MisraRule { id: "1.3".into(), description: "No undefined or critical unspecified behaviour".into(), level: MisraLevel::Required, auto_guaranteed: true },
         MisraRule { id: "2.1".into(), description: "All source files shall compile without errors".into(), level: MisraLevel::Required, auto_guaranteed: true },
@@ -90,7 +90,7 @@ pub fn hardyscript_misra_guarantees() -> Vec<MisraRule> {
 
 /// 执行 MISRA 合规评估
 pub fn assess_misra_compliance() -> MisraCompliance {
-    let rules = hardyscript_misra_guarantees();
+    let rules = duanyan_misra_guarantees();
     let total = rules.len();
     let auto = rules.iter().filter(|r| r.auto_guaranteed).count();
     let manual = total - auto;
@@ -228,7 +228,7 @@ pub enum TraceStatus {
 /// 生成追踪矩阵报告
 pub fn generate_traceability_matrix(entries: &[TraceEntry]) -> String {
     let mut r = String::new();
-    r.push_str("=== HardyScript Requirements Traceability Matrix (Phase W5) ===\n\n");
+    r.push_str("=== DUANYAN Requirements Traceability Matrix (Phase W5) ===\n\n");
 
     r.push_str(&format!("{:<10}{:<30}{:<20}{:<20}{:<15}{:<6}{:<10}\n",
         "Req ID", "Description", "JS Source", "C Target", "Test Case", "ASIL", "Status"));
@@ -423,7 +423,7 @@ pub fn generate_certification_summary(
 ) -> String {
     let mut r = String::new();
     r.push_str("╔══════════════════════════════════════════════════════════╗\n");
-    r.push_str("║   HardyScript Certification Evidence Package (W5)      ║\n");
+    r.push_str("║   DUANYAN Certification Evidence Package (W5)      ║\n");
     r.push_str("╚══════════════════════════════════════════════════════════╝\n\n");
 
     r.push_str(&format!("Target Platform:  {}\n", target_name));
@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_misra_guarantees() {
-        let rules = hardyscript_misra_guarantees();
+        let rules = duanyan_misra_guarantees();
         assert!(rules.len() >= 20);
         // malloc/free 必须自动保证
         let malloc_rule = rules.iter().find(|r| r.id == "21.3").unwrap();

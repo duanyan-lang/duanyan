@@ -401,10 +401,10 @@ pub struct MpuRegion {
 /// 生成 MPU 配置 C 代码 (Cortex-M)
 pub fn generate_mpu_config(regions: &[MpuRegion]) -> String {
     let mut code = String::new();
-    code.push_str("/* HardyScript W4: MPU Memory Protection Configuration */\n");
+    code.push_str("/* DUANYAN W4: MPU Memory Protection Configuration */\n");
     code.push_str("/* Auto-generated — do not edit */\n\n");
     code.push_str("#include \"stm32f4xx.h\"\n\n");
-    code.push_str("void _hardy_mpu_init(void) {\n");
+    code.push_str("void _duanyan_mpu_init(void) {\n");
     code.push_str("    MPU->CTRL = 0; /* Disable MPU */\n\n");
 
     for (i, region) in regions.iter().enumerate().take(8) {

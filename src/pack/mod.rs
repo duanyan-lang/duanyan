@@ -1,4 +1,4 @@
-//! Hardy PACK - 包管理器
+//! DUANYAN PACK - 包管理器
 //!
 //! 子命令:
 //!   init    - 初始化项目
@@ -49,7 +49,7 @@ pub fn dispatch(args: &[String]) {
 
 /// 打印 pack 子命令帮助
 pub fn print_pack_usage() {
-    println!("Hardy PACK - 包管理器");
+    println!("DUANYAN PACK - 包管理器");
     println!();
     println!("用法: duanyan pack <指令>");
     println!();
@@ -112,8 +112,8 @@ fn cmd_init() {
     });
 
     // 创建 .duanyan 目录
-    let hardy_dir = cwd.join(".duanyan").join("packages");
-    fs::create_dir_all(&hardy_dir).ok();
+    let duanyan_dir = cwd.join(".duanyan").join("packages");
+    fs::create_dir_all(&duanyan_dir).ok();
 
     // 创建 .gitignore (如果不存在)
     let gitignore = cwd.join(".gitignore");
@@ -229,7 +229,7 @@ fn install_package(
     let version = constraint.best_match(&pkg_info.versions)
         .ok_or_else(|| format!("无匹配版本 (可用: {})", pkg_info.versions.join(", ")))?;
 
-    // 3. 下载 .hardy 包
+    // 3. 下载 .duanyan 包
     let data = client.download(name, &version)?;
 
     // 4. 校验和

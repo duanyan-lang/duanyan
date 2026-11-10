@@ -27,14 +27,14 @@ try {
 }
 
 // Build from source
-console.log("\x1b[36m⚙ Building HardyScript compiler from source...\x1b[0m");
+console.log("\x1b[36m⚙ Building DUANYAN compiler from source...\x1b[0m");
 try {
   execSync("cargo build --release", {
     cwd: root,
     stdio: "inherit",
     timeout: 300000, // 5 min timeout
   });
-  console.log("\x1b[32m✓ HardyScript built successfully!\x1b[0m");
+  console.log("\x1b[32m✓ DUANYAN built successfully!\x1b[0m");
   console.log(`  Binary: ${targetBin}`);
 } catch (err) {
   console.log("\x1b[33m⚠ Build failed. You can build manually later:\x1b[0m");

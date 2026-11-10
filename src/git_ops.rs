@@ -1,4 +1,4 @@
-//! HardyScript Git Operations
+//! DUANYAN Git Operations
 //!
 //! Phase H: Git 集成模块
 //! 通过 CLI 封装 git 命令，提供 IDE 和 CLI 可用的 Git 操作接口
@@ -327,13 +327,13 @@ pub fn git_init(dir: &Path) -> Result<String, String> {
 /// 生成 .gitignore 内容
 pub fn git_generate_gitignore(board: &str) -> String {
     let mut content = String::new();
-    content.push_str("# HardyScript 项目 .gitignore\n");
+    content.push_str("# DUANYAN 项目 .gitignore\n");
     content.push_str("# 自动生成 by duanyan git hooks install\n\n");
 
     content.push_str("# 构建产物\n");
     content.push_str("build/\n*.hex\n*.bin\n*.rom\n*.asm\n*.map\n\n");
 
-    content.push_str("# Hardy 工具链\n");
+    content.push_str("# DUANYAN 工具链\n");
     content.push_str(".duanyan/\nduanyan.lock\n\n");
 
     content.push_str("# IDE\n");
@@ -371,7 +371,7 @@ pub fn git_install_hooks(dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("创建 hooks 目录失败: {}", e))?;
 
     let hook_content = r#"#!/bin/sh
-# HardyScript pre-commit hook
+# DUANYAN pre-commit hook
 # 自动运行 duanyan lint 检查
 
 echo "Running duanyan lint..."

@@ -57,18 +57,18 @@ pub fn calculate_pool_size(analysis: &ProgramAnalysis) -> usize {
 pub fn generate_pool_c_code(config: &PoolConfig) -> String {
     let mut code = String::new();
 
-    code.push_str("/* HardyScript Memory Pool — compile-time generated, zero heap alloc */\n");
-    code.push_str(&format!("static uint8_t _hardy_pool[{}];\n", config.pool_size));
-    code.push_str("static uint32_t _hardy_pool_offset = 0;\n\n");
+    code.push_str("/* DUANYAN Memory Pool — compile-time generated, zero heap alloc */\n");
+    code.push_str(&format!("static uint8_t _duanyan_pool[{}];\n", config.pool_size));
+    code.push_str("static uint32_t _duanyan_pool_offset = 0;\n\n");
 
     // 分配函数
-    code.push_str("static void* _hardy_pool_alloc(uint32_t size) {\n");
+    code.push_str("static void* _duanyan_pool_alloc(uint32_t size) {\n");
     code.push_str(&format!(
         "    uint32_t aligned = (size + {}) & ~{};\n",
         config.alignment - 1,
         config.alignment - 1
     ));
-    code.push_str("    if (_hardy_pool_offset + aligned > sizeof(_hardy_pool)) {\n");
+    code.push_str("    if (_duanyan_pool_offset + aligned > sizeof(_duanyan_pool)) {\n");
     if config.panic_on_overflow {
         code.push_str("        /* 硬错误：池溢出，编译期预算不足 */\n");
         code.push_str("        while(1); /* halt — POOL_OVERFLOW */\n");
@@ -76,25 +76,25 @@ pub fn generate_pool_c_code(config: &PoolConfig) -> String {
         code.push_str("        return (void*)0; /* null on overflow */\n");
     }
     code.push_str("    }\n");
-    code.push_str("    void* ptr = &_hardy_pool[_hardy_pool_offset];\n");
-    code.push_str("    _hardy_pool_offset += aligned;\n");
+    code.push_str("    void* ptr = &_duanyan_pool[_duanyan_pool_offset];\n");
+    code.push_str("    _duanyan_pool_offset += aligned;\n");
     code.push_str("    return ptr;\n");
     code.push_str("}\n\n");
 
     // 重置函数 (用于测试或循环使用)
-    code.push_str("static inline void _hardy_pool_reset(void) {\n");
-    code.push_str("    _hardy_pool_offset = 0;\n");
+    code.push_str("static inline void _duanyan_pool_reset(void) {\n");
+    code.push_str("    _duanyan_pool_offset = 0;\n");
     code.push_str("}\n\n");
 
     // 使用量查询
-    code.push_str("static inline uint32_t _hardy_pool_used(void) {\n");
-    code.push_str("    return _hardy_pool_offset;\n");
+    code.push_str("static inline uint32_t _duanyan_pool_used(void) {\n");
+    code.push_str("    return _duanyan_pool_offset;\n");
     code.push_str("}\n\n");
 
     // 剩余量查询
-    code.push_str("static inline uint32_t _hardy_pool_free(void) {\n");
+    code.push_str("static inline uint32_t _duanyan_pool_free(void) {\n");
     code.push_str(&format!(
-        "    return {} - _hardy_pool_offset;\n",
+        "    return {} - _duanyan_pool_offset;\n",
         config.pool_size
     ));
     code.push_str("}\n\n");
@@ -105,7 +105,7 @@ pub fn generate_pool_c_code(config: &PoolConfig) -> String {
 /// 生成内存布局报告 (用于 --check-memory 命令)
 pub fn generate_memory_layout_report(analysis: &ProgramAnalysis, config: &PoolConfig) -> String {
     let mut report = String::new();
-    report.push_str("=== HardyScript Memory Pool Report ===\n\n");
+    report.push_str("=== DUANYAN Memory Pool Report ===\n\n");
     report.push_str(&format!("Pool size:       {} bytes\n", config.pool_size));
     report.push_str(&format!("Alignment:       {} bytes\n", config.alignment));
     report.push_str(&format!("Panic on overflow: {}\n\n", config.panic_on_overflow));
@@ -196,11 +196,11 @@ mod tests {
     fn test_generate_pool_c_code() {
         let config = PoolConfig { pool_size: 1024, ..Default::default() };
         let code = generate_pool_c_code(&config);
-        assert!(code.contains("static uint8_t _hardy_pool[1024]"), "应生成池数组");
-        assert!(code.contains("_hardy_pool_alloc"), "应生成分配函数");
-        assert!(code.contains("_hardy_pool_reset"), "应生成重置函数");
-        assert!(code.contains("_hardy_pool_used"), "应生成使用量查询");
-        assert!(code.contains("_hardy_pool_free"), "应生成剩余量查询");
+        assert!(code.contains("static uint8_t _duanyan_pool[1024]"), "应生成池数组");
+        assert!(code.contains("_duanyan_pool_alloc"), "应生成分配函数");
+        assert!(code.contains("_duanyan_pool_reset"), "应生成重置函数");
+        assert!(code.contains("_duanyan_pool_used"), "应生成使用量查询");
+        assert!(code.contains("_duanyan_pool_free"), "应生成剩余量查询");
         assert!(code.contains("while(1)"), "溢出应 halt");
         assert!(!code.contains("malloc"), "零 malloc");
     }
@@ -240,8 +240,8 @@ mod tests {
         assert!(!code.contains("malloc"), "生成的代码不应包含 malloc");
         assert!(!code.contains("calloc"), "生成的代码不应包含 calloc");
         assert!(!code.contains("realloc"), "生成的代码不应包含 realloc");
-        // 检查独立的 free() 调用 (排除 _hardy_pool_free)
-        let without_pool_free = code.replace("_hardy_pool_free", "");
+        // 检查独立的 free() 调用 (排除 _duanyan_pool_free)
+        let without_pool_free = code.replace("_duanyan_pool_free", "");
         assert!(!without_pool_free.contains("free("), "生成的代码不应包含 free");
     }
 }

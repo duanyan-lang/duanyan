@@ -1,4 +1,4 @@
-/* HardyScript IC: Multi-Axis Motion Control */
+/* DUANYAN IC: Multi-Axis Motion Control */
 /* Axes: 2 */
 
 typedef struct {

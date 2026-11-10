@@ -17,7 +17,7 @@ pub fn cmd_build_industry(source: &str, input_file: &str, target: &str) {
     let base_dir = Path::new(input_file).parent().unwrap_or(Path::new("."));
     let out_dir = base_dir.join(format!("{}_{}", stem, target));
 
-    println!("[HardyScript] 行业编译: {} --target {}", input_file, target);
+    println!("[DUANYAN] 行业编译: {} --target {}", input_file, target);
     println!();
 
     // 解析源码
@@ -187,7 +187,7 @@ fn cmd_industry_ad(ast: &parser::Program, stem: &str, out_dir: &Path) {
 /// RT: 嵌入式 RTOS
 #[cfg(feature = "domains")]
 fn cmd_industry_rt(ast: &parser::Program, stem: &str, out_dir: &Path) {
-    use crate::hardy_rtos::*;
+    use crate::rtos::*;
 
     println!("   [嵌入式 RTOS] 微内核 / IPC / BSP / 形式化验证");
     println!();
@@ -234,7 +234,7 @@ fn cmd_industry_rt(ast: &parser::Program, stem: &str, out_dir: &Path) {
 
     // 输出
     let _ = fs::create_dir_all(out_dir);
-    let kernel_path = out_dir.join("hardy_rtos.c");
+    let kernel_path = out_dir.join("rtos.c");
     let bsp_path = out_dir.join("startup.c");
     let ld_path = out_dir.join("memory.ld");
     let tla_path = out_dir.join(format!("{}.tla", stem));
@@ -499,7 +499,7 @@ fn cmd_industry_edu(ast: &parser::Program, stem: &str, out_dir: &Path) {
     // 课程大纲
     let curriculum = generate_curriculum();
     let mut curriculum_text = String::new();
-    curriculum_text.push_str("=== HardyScript 嵌入式课程大纲 ===\n\n");
+    curriculum_text.push_str("=== DUANYAN 嵌入式课程大纲 ===\n\n");
     for unit in &curriculum {
         curriculum_text.push_str(&format!("[{}] {}\n", unit.level.as_str(), unit.title));
         for obj in &unit.objectives {

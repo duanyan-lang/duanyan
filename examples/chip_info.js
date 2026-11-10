@@ -1,11 +1,11 @@
 // chip_info.js — ESP32-S3 自报家门 + 设备唯一 ID
 // 让芯片介绍自己的硬件配置，并生成产品级设备标识
-import { Chip } from "hardy:esp32";
-import { Timer } from "hardy:hw";
+import { Chip } from "duanyan:esp32";
+import { Timer } from "duanyan:hw";
 
 console.log("================================");
 console.log("  ESP32-S3 Self Introduction");
-console.log("  Powered by HardyScript");
+console.log("  Powered by DUANYAN");
 console.log("================================");
 console.log("");
 

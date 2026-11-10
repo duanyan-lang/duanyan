@@ -317,7 +317,7 @@ fn is_builtin_allowed(name: &str) -> bool {
 /// 生成实时性分析报告
 pub fn generate_realtime_report(results: &[RealtimeCheckResult]) -> String {
     let mut report = String::new();
-    report.push_str("=== HardyScript Realtime Analysis Report ===\n\n");
+    report.push_str("=== DUANYAN Realtime Analysis Report ===\n\n");
 
     for result in results {
         let status = if result.passed { "PASS" } else { "FAIL" };

@@ -826,7 +826,7 @@ impl Compiler {
     // =========================================================================
 
     fn compile_call(&mut self, name: &str, args: &[Expr], rd: u8) -> Result<(), String> {
-        // Phase C.3: 硬件 API 静态链接 — 拦截 hardy:hw 调用
+        // Phase C.3: 硬件 API 静态链接 — 拦截 duanyan:hw 调用
         if let Some(hw_call) = self.try_compile_hw_call(name, args, rd)? {
             return Ok(());
         }
@@ -877,7 +877,7 @@ impl Compiler {
 
     // =========================================================================
     // Phase C.3: 硬件 API 静态链接
-    // 拦截 hardy:hw 调用，生成内存映射 I/O 指令
+    // 拦截 duanyan:hw 调用，生成内存映射 I/O 指令
     // =========================================================================
 
     fn try_compile_hw_call(&mut self, name: &str, args: &[Expr], rd: u8) -> Result<Option<()>, String> {
@@ -1351,7 +1351,7 @@ impl Compiler {
                 self.free_temp(tmp);
             }
             // Sqrt/Pow 需要循环，COUNPRE64 本机引擎不提供（已封存线）；
-            // 产品路径请使用 --target esp32 等 C 目标（生成 hardy_isqrt/hardy_ipow helper）
+            // 产品路径请使用 --target esp32 等 C 目标（生成 duanyan_isqrt/duanyan_ipow helper）
             MathOp::Sqrt | MathOp::Pow => {
                 return Err(format!(
                     "Math.{:?} 需要循环实现，本机 COUNPRE64 引擎不支持，请使用 --target esp32 等 C 目标", op));

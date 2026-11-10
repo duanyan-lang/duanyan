@@ -73,7 +73,7 @@ pub struct Do178cObjective {
     pub id: String,
     pub description: String,
     pub dal: DalLevel,
-    /// HardyScript 是否自动满足
+    /// DUANYAN 是否自动满足
     pub auto_satisfied: bool,
     /// 满足方式
     pub method: String,
@@ -87,7 +87,7 @@ pub fn generate_do178c_matrix(target_dal: DalLevel) -> Vec<Do178cObjective> {
     objectives.push(Do178cObjective {
         id: "1.1".into(), description: "Software Planning Process".into(),
         dal: target_dal, auto_satisfied: true,
-        method: "HardyScript build config = PSAC (Plan for Software Aspects of Certification)".into(),
+        method: "DUANYAN build config = PSAC (Plan for Software Aspects of Certification)".into(),
     });
     objectives.push(Do178cObjective {
         id: "5.1".into(), description: "Software Requirements Standards".into(),
@@ -97,7 +97,7 @@ pub fn generate_do178c_matrix(target_dal: DalLevel) -> Vec<Do178cObjective> {
     objectives.push(Do178cObjective {
         id: "6.1".into(), description: "Software Design Standards".into(),
         dal: target_dal, auto_satisfied: true,
-        method: "HardyScript AOT: no dynamic dispatch, no GC, deterministic layout".into(),
+        method: "DUANYAN AOT: no dynamic dispatch, no GC, deterministic layout".into(),
     });
     objectives.push(Do178cObjective {
         id: "6.3".into(), description: "Coupling analysis".into(),
@@ -121,7 +121,7 @@ pub fn generate_do178c_matrix(target_dal: DalLevel) -> Vec<Do178cObjective> {
     objectives.push(Do178cObjective {
         id: "8.1".into(), description: "Requirements-based test cases".into(),
         dal: target_dal, auto_satisfied: false,
-        method: "User provides test vectors; HardyScript generates MC/DC (W5)".into(),
+        method: "User provides test vectors; DUANYAN generates MC/DC (W5)".into(),
     });
     objectives.push(Do178cObjective {
         id: "8.3".into(), description: "Structural coverage analysis".into(),
@@ -153,7 +153,7 @@ pub fn generate_do178c_matrix(target_dal: DalLevel) -> Vec<Do178cObjective> {
         objectives.push(Do178cObjective {
             id: "TQL-1".into(), description: "Tool Qualification (DO-330)".into(),
             dal: target_dal, auto_satisfied: false,
-            method: "HardyScript compiler = TQL-5 development tool; qualification kit required".into(),
+            method: "DUANYAN compiler = TQL-5 development tool; qualification kit required".into(),
         });
     }
 
@@ -189,7 +189,7 @@ pub struct Arinc653Process {
     pub wcet_us: u64,
     /// 栈大小
     pub stack_bytes: usize,
-    /// 对应 HardyScript 函数
+    /// 对应 DUANYAN 函数
     pub hs_function: String,
 }
 
@@ -257,7 +257,7 @@ pub fn plan_arinc653_schedule(
 /// 生成 ARINC 653 分区配置 C 代码
 pub fn generate_arinc653_config(schedule: &Arinc653Schedule) -> String {
     let mut code = String::new();
-    code.push_str("/* HardyScript AV: ARINC 653 Partition Configuration */\n");
+    code.push_str("/* DUANYAN AV: ARINC 653 Partition Configuration */\n");
     code.push_str(&format!("/* Major Time Frame: {}μs */\n", schedule.major_frame_us));
     code.push_str(&format!("/* Partitions: {}, Utilization: {:.1}% */\n\n",
         schedule.partitions.len(), schedule.time_utilization * 100.0));
@@ -315,7 +315,7 @@ pub fn generate_arinc653_config(schedule: &Arinc653Schedule) -> String {
         code.push_str(&format!("/* Partition: {} entry point */\n", p.name));
         code.push_str(&format!("void _partition_{}_main(void) {{\n", p.name.to_lowercase()));
         for proc in &p.processes {
-            code.push_str(&format!("    _hardy_{}();  /* {} period={}μs */\n",
+            code.push_str(&format!("    _duanyan_{}();  /* {} period={}μs */\n",
                 proc.hs_function, proc.name, proc.period_us));
         }
         code.push_str("}\n\n");
@@ -370,7 +370,7 @@ impl FloatDeterminismConfig {
 /// 生成浮点确定性 C 代码
 pub fn generate_float_determinism_code(config: &FloatDeterminismConfig) -> String {
     let mut code = String::new();
-    code.push_str("/* HardyScript AV: Float Determinism Layer */\n");
+    code.push_str("/* DUANYAN AV: Float Determinism Layer */\n");
     code.push_str("/* Guarantees: bit-exact results across all target platforms */\n\n");
 
     // 编译器标志
@@ -388,12 +388,12 @@ pub fn generate_float_determinism_code(config: &FloatDeterminismConfig) -> Strin
     // NaN 确定性处理
     if config.nan_deterministic {
         code.push_str("/* NaN Determinism: replace NaN with deterministic sentinel */\n");
-        code.push_str("#define HARDY_NAN_SENTINEL 0x7F800001u\n\n");
-        code.push_str("static inline float _hardy_float_guard(float x) {\n");
+        code.push_str("#define DUANYAN_NAN_SENTINEL 0x7F800001u\n\n");
+        code.push_str("static inline float _duanyan_float_guard(float x) {\n");
         code.push_str("    uint32_t bits;\n");
         code.push_str("    __builtin_memcpy(&bits, &x, 4);\n");
         code.push_str("    if ((bits & 0x7FFFFFFFu) > 0x7F800000u) {\n");
-        code.push_str("        bits = HARDY_NAN_SENTINEL;\n");
+        code.push_str("        bits = DUANYAN_NAN_SENTINEL;\n");
         code.push_str("        __builtin_memcpy(&x, &bits, 4);\n");
         code.push_str("    }\n");
         code.push_str("    return x;\n");
@@ -408,7 +408,7 @@ pub fn generate_float_determinism_code(config: &FloatDeterminismConfig) -> Strin
         code.push_str(&format!("static const float _sin_table[{}] = {{ /* generated */ }};\n", table_size));
         code.push_str(&format!("static const float _cos_table[{}] = {{ /* generated */ }};\n\n", table_size));
 
-        code.push_str("static inline float _hardy_sin(float x) {\n");
+        code.push_str("static inline float _duanyan_sin(float x) {\n");
         code.push_str(&format!("    /* Range reduction to [0, 2π) */\n"));
         code.push_str("    float r = x - 6.283185307f * (float)((int)(x * 0.159154943f));\n");
         code.push_str("    if (r < 0.0f) r += 6.283185307f;\n");
@@ -416,14 +416,14 @@ pub fn generate_float_determinism_code(config: &FloatDeterminismConfig) -> Strin
         code.push_str(&format!("    return _sin_table[idx % {}];\n", table_size));
         code.push_str("}\n\n");
 
-        code.push_str("static inline float _hardy_cos(float x) {\n");
-        code.push_str("    return _hardy_sin(x + 1.570796327f);\n");
+        code.push_str("static inline float _duanyan_cos(float x) {\n");
+        code.push_str("    return _duanyan_sin(x + 1.570796327f);\n");
         code.push_str("}\n\n");
     }
 
     // 确定性比较
     code.push_str("/* Deterministic float comparison (no epsilon ambiguity) */\n");
-    code.push_str("static inline int _hardy_feq(float a, float b, float eps) {\n");
+    code.push_str("static inline int _duanyan_feq(float a, float b, float eps) {\n");
     code.push_str("    float d = a - b;\n");
     code.push_str("    if (d < 0.0f) d = -d;\n");
     code.push_str("    return d <= eps;\n");
@@ -431,7 +431,7 @@ pub fn generate_float_determinism_code(config: &FloatDeterminismConfig) -> Strin
 
     // 确定性转换
     code.push_str("/* Deterministic float-to-int (round toward zero, saturate) */\n");
-    code.push_str("static inline int32_t _hardy_f2i(float x) {\n");
+    code.push_str("static inline int32_t _duanyan_f2i(float x) {\n");
     code.push_str("    if (x > 2147483647.0f) return 2147483647;\n");
     code.push_str("    if (x < -2147483648.0f) return -2147483648;\n");
     code.push_str("    return (int32_t)x;\n");
@@ -471,7 +471,7 @@ pub enum TmrOutputType {
 /// 生成 TMR 表决 C 代码
 pub fn generate_tmr_code(config: &TmrConfig) -> String {
     let mut code = String::new();
-    code.push_str(&format!("/* HardyScript AV: TMR Voting — {} */\n", config.system_name));
+    code.push_str(&format!("/* DUANYAN AV: TMR Voting — {} */\n", config.system_name));
     code.push_str(&format!("/* Channels: {}, Diverse: {} */\n\n",
         config.channels, config.diverse_compilation));
 
@@ -579,7 +579,7 @@ pub fn generate_avionics_certification_report(
     report.push_str(&format!("Diverse Compilation: {}\n", tmr.diverse_compilation));
     report.push_str(&format!("Vote Period: {}μs\n\n", tmr.vote_period_us));
 
-    report.push_str("--- HardyScript Auto-Satisfied Objectives ---\n");
+    report.push_str("--- DUANYAN Auto-Satisfied Objectives ---\n");
     let objectives = generate_do178c_matrix(dal);
     let auto_count = objectives.iter().filter(|o| o.auto_satisfied).count();
     report.push_str(&format!("Total Objectives: {}\n", objectives.len()));
@@ -667,10 +667,10 @@ mod tests {
         let config = FloatDeterminismConfig::dal_a();
         let code = generate_float_determinism_code(&config);
         assert!(code.contains("-ffp-contract=off"));
-        assert!(code.contains("_hardy_sin"));
+        assert!(code.contains("_duanyan_sin"));
         assert!(code.contains("_sin_table"));
-        assert!(code.contains("HARDY_NAN_SENTINEL"));
-        assert!(code.contains("_hardy_f2i"));
+        assert!(code.contains("DUANYAN_NAN_SENTINEL"));
+        assert!(code.contains("_duanyan_f2i"));
     }
 
     #[test]

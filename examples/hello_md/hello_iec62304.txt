@@ -6,7 +6,7 @@ Verification Activities Required: 5
 
 --- Software Units ---
 
---- HardyScript Auto-Guarantees ---
+--- DUANYAN Auto-Guarantees ---
   [ok] No dynamic memory allocation (no heap)
   [ok] Bounded execution time (WCET proven)
   [ok] No undefined behavior (type-safe compilation)
@@ -14,4 +14,4 @@ Verification Activities Required: 5
   [ok] Traceable: source → binary 1:1 mapping
 
 --- SOUP (Software of Unknown Provenance) ---
-  None: HardyScript generates standalone C with zero external dependencies.
+  None: DUANYAN generates standalone C with zero external dependencies.

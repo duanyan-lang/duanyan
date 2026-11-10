@@ -1,6 +1,6 @@
 //! Registry API 客户端
 //!
-//! 与 Hardy Registry 服务器通信
+//! 与 DUANYAN-Registry 服务器通信
 
 use super::http;
 use super::json::JsonValue;
@@ -57,7 +57,7 @@ impl RegistryClient {
         Ok(PackageInfo { name: pkg_name, description, versions, latest })
     }
 
-    /// 下载指定版本的 .hardy 包
+    /// 下载指定版本的 .duanyan 包
     pub fn download(&self, name: &str, version: &str) -> Result<Vec<u8>, String> {
         let url = format!("{}/api/packages/{}/{}", self.base_url, name, version);
         let resp = http::http_get(&url)?;

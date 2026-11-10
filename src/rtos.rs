@@ -1,13 +1,13 @@
 //! Phase RT: 嵌入式 RTOS 垂直模块
 //!
 //! 从 @periodic/@realtime 注解自动生成完整 RTOS 应用：
-//! - HardyRTOS 微内核生成 (抢占式 + 时间片)
+//! - DUANYAN RTOS 微内核生成 (抢占式 + 时间片)
 //! - 确定性 IPC (无锁消息队列 / PIP 互斥锁 / 零拷贝)
 //! - BSP 板级支持包自动生成
 //! - 形式化验证接口 (TLA+ / Spin)
 
 // =============================================================================
-// HardyRTOS 微内核
+// DUANYAN RTOS 微内核
 // =============================================================================
 
 /// RTOS 任务定义
@@ -22,7 +22,7 @@ pub struct RtosTask {
     pub period_us: u64,
     /// WCET (μs)
     pub wcet_us: u64,
-    /// 对应 HardyScript 函数
+    /// 对应 DUANYAN 函数
     pub hs_function: String,
 }
 
@@ -87,19 +87,19 @@ impl RtosTarget {
     }
 }
 
-/// 生成 HardyRTOS 微内核 C 代码
+/// 生成 DUANYAN RTOS 微内核 C 代码
 pub fn generate_rtos_kernel(config: &RtosConfig) -> String {
     let mut code = String::new();
-    code.push_str(&format!("/* HardyRTOS Microkernel — {} */\n", config.system_name));
+    code.push_str(&format!("/* DUANYAN RTOS Microkernel — {} */\n", config.system_name));
     code.push_str(&format!("/* Target: {} ({}) */\n", format!("{:?}", config.target), config.target.arch()));
     code.push_str(&format!("/* CPU: {} Hz, Tick: {}μs */\n", config.cpu_freq_hz, config.tick_us));
     code.push_str(&format!("/* Tasks: {}, Time-slice: {} */\n\n", config.tasks.len(), config.time_slicing));
 
     // 内核常量
-    code.push_str(&format!("#define HARDY_MAX_TASKS {}\n", config.tasks.len().max(8)));
-    code.push_str(&format!("#define HARDY_TICK_US {}\n", config.tick_us));
-    code.push_str(&format!("#define HARDY_CPU_HZ {}\n", config.cpu_freq_hz));
-    code.push_str(&format!("#define HARDY_CONTEXT_SIZE {} /* registers */\n\n", config.target.context_regs()));
+    code.push_str(&format!("#define DUANYAN_MAX_TASKS {}\n", config.tasks.len().max(8)));
+    code.push_str(&format!("#define DUANYAN_TICK_US {}\n", config.tick_us));
+    code.push_str(&format!("#define DUANYAN_CPU_HZ {}\n", config.cpu_freq_hz));
+    code.push_str(&format!("#define DUANYAN_CONTEXT_SIZE {} /* registers */\n\n", config.target.context_regs()));
 
     // TCB
     code.push_str("typedef struct {\n");
@@ -114,7 +114,7 @@ pub fn generate_rtos_kernel(config: &RtosConfig) -> String {
     code.push_str("    void    (*entry)(void);\n");
     code.push_str("} _tcb_t;\n\n");
 
-    code.push_str("static _tcb_t _tasks[HARDY_MAX_TASKS];\n");
+    code.push_str("static _tcb_t _tasks[DUANYAN_MAX_TASKS];\n");
     code.push_str("static volatile uint8_t _task_count = 0;\n");
     code.push_str("static volatile uint8_t _current = 0;\n");
     code.push_str("static volatile uint32_t _tick_count = 0;\n\n");
@@ -157,8 +157,8 @@ pub fn generate_rtos_kernel(config: &RtosConfig) -> String {
 
     // 系统调用
     code.push_str("/* Syscall 1: Create task */\n");
-    code.push_str("int hardy_create_task(void (*entry)(void), uint8_t prio, uint32_t stack_sz, uint32_t period_ticks) {\n");
-    code.push_str("    if (_task_count >= HARDY_MAX_TASKS) return -1;\n");
+    code.push_str("int duanyan_create_task(void (*entry)(void), uint8_t prio, uint32_t stack_sz, uint32_t period_ticks) {\n");
+    code.push_str("    if (_task_count >= DUANYAN_MAX_TASKS) return -1;\n");
     code.push_str("    _tcb_t *t = &_tasks[_task_count];\n");
     code.push_str("    t->entry = entry;\n");
     code.push_str("    t->priority = prio;\n");
@@ -169,21 +169,21 @@ pub fn generate_rtos_kernel(config: &RtosConfig) -> String {
     code.push_str("}\n\n");
 
     code.push_str("/* Syscall 2: Sleep (periodic wait) */\n");
-    code.push_str("void hardy_sleep_ticks(uint32_t ticks) {\n");
+    code.push_str("void duanyan_sleep_ticks(uint32_t ticks) {\n");
     code.push_str("    _tasks[_current].state = 3;\n");
     code.push_str("    _tasks[_current].next_wake = _tick_count + ticks;\n");
     code.push_str("    _yield();\n");
     code.push_str("}\n\n");
 
     code.push_str("/* Syscall 3: Yield */\n");
-    code.push_str("void hardy_yield(void) { _yield(); }\n\n");
+    code.push_str("void duanyan_yield(void) { _yield(); }\n\n");
 
     code.push_str("/* Syscall 4: Get tick count */\n");
-    code.push_str("uint32_t hardy_get_tick(void) { return _tick_count; }\n\n");
+    code.push_str("uint32_t duanyan_get_tick(void) { return _tick_count; }\n\n");
 
     code.push_str("/* Syscall 5: Critical section */\n");
-    code.push_str("void hardy_enter_critical(void) { __disable_irq(); }\n");
-    code.push_str("void hardy_exit_critical(void) { __enable_irq(); }\n");
+    code.push_str("void duanyan_enter_critical(void) { __disable_irq(); }\n");
+    code.push_str("void duanyan_exit_critical(void) { __enable_irq(); }\n");
 
     code
 }
@@ -223,7 +223,7 @@ pub struct IpcChannel {
 /// 生成 IPC C 代码
 pub fn generate_ipc_code(channels: &[IpcChannel]) -> String {
     let mut code = String::new();
-    code.push_str("/* HardyRTOS IPC Subsystem */\n\n");
+    code.push_str("/* DUANYAN RTOS IPC Subsystem */\n\n");
 
     for ch in channels {
         match ch.kind {
@@ -257,16 +257,16 @@ pub fn generate_ipc_code(channels: &[IpcChannel]) -> String {
                 code.push_str(&format!("static volatile uint8_t _mtx_{}_saved_prio = 0;\n\n", ch.name));
 
                 code.push_str(&format!("void mtx_{}_lock(void) {{\n", ch.name));
-                code.push_str("    hardy_enter_critical();\n");
-                code.push_str(&format!("    while (_mtx_{}_owner != 255) {{ hardy_yield(); }}\n", ch.name));
+                code.push_str("    duanyan_enter_critical();\n");
+                code.push_str(&format!("    while (_mtx_{}_owner != 255) {{ duanyan_yield(); }}\n", ch.name));
                 code.push_str(&format!("    _mtx_{}_owner = _current;\n", ch.name));
-                code.push_str("    hardy_exit_critical();\n}\n\n");
+                code.push_str("    duanyan_exit_critical();\n}\n\n");
 
                 code.push_str(&format!("void mtx_{}_unlock(void) {{\n", ch.name));
-                code.push_str("    hardy_enter_critical();\n");
+                code.push_str("    duanyan_enter_critical();\n");
                 code.push_str(&format!("    _tasks[_current].priority = _mtx_{}_saved_prio;\n", ch.name));
                 code.push_str(&format!("    _mtx_{}_owner = 255;\n", ch.name));
-                code.push_str("    hardy_exit_critical();\n}\n\n");
+                code.push_str("    duanyan_exit_critical();\n}\n\n");
             }
             IpcKind::ZeroCopyShm => {
                 code.push_str(&format!("/* Zero-Copy SHM: {} ({} bytes) {} → {} */\n",
@@ -286,15 +286,15 @@ pub fn generate_ipc_code(channels: &[IpcChannel]) -> String {
                 code.push_str(&format!("/* EventFlags: {} */\n", ch.name));
                 code.push_str(&format!("static volatile uint32_t _evt_{} = 0;\n\n", ch.name));
                 code.push_str(&format!("void evt_{}_set(uint32_t flags) {{\n", ch.name));
-                code.push_str("    hardy_enter_critical();\n");
+                code.push_str("    duanyan_enter_critical();\n");
                 code.push_str(&format!("    _evt_{} |= flags;\n", ch.name));
-                code.push_str("    hardy_exit_critical();\n}\n\n");
+                code.push_str("    duanyan_exit_critical();\n}\n\n");
                 code.push_str(&format!("uint32_t evt_{}_wait(uint32_t mask) {{\n", ch.name));
-                code.push_str(&format!("    while (!(_evt_{} & mask)) {{ hardy_yield(); }}\n", ch.name));
-                code.push_str("    hardy_enter_critical();\n");
+                code.push_str(&format!("    while (!(_evt_{} & mask)) {{ duanyan_yield(); }}\n", ch.name));
+                code.push_str("    duanyan_enter_critical();\n");
                 code.push_str(&format!("    uint32_t f = _evt_{} & mask;\n", ch.name));
                 code.push_str(&format!("    _evt_{} &= ~mask;\n", ch.name));
-                code.push_str("    hardy_exit_critical();\n");
+                code.push_str("    duanyan_exit_critical();\n");
                 code.push_str("    return f;\n}\n\n");
             }
         }
@@ -334,7 +334,7 @@ pub struct BspDesc {
 pub fn generate_bsp(desc: &BspDesc) -> (String, String) {
     // 启动代码
     let mut startup = String::new();
-    startup.push_str(&format!("/* HardyRTOS BSP: {} */\n", desc.board_name));
+    startup.push_str(&format!("/* DUANYAN RTOS BSP: {} */\n", desc.board_name));
     startup.push_str(&format!("/* Target: {} | Crystal: {}Hz → SysClk: {}Hz */\n\n",
         desc.target.arch(), desc.crystal_hz, desc.sysclk_hz));
 
@@ -381,7 +381,7 @@ pub fn generate_bsp(desc: &BspDesc) -> (String, String) {
 
     // 链接脚本
     let mut ld = String::new();
-    ld.push_str(&format!("/* HardyRTOS Linker Script: {} */\n", desc.board_name));
+    ld.push_str(&format!("/* DUANYAN RTOS Linker Script: {} */\n", desc.board_name));
     ld.push_str("MEMORY\n{\n");
     ld.push_str(&format!("    FLASH (rx)  : ORIGIN = 0x{:08X}, LENGTH = {}K\n",
         desc.flash_base, desc.flash_size / 1024));
@@ -424,8 +424,8 @@ pub fn generate_bsp(desc: &BspDesc) -> (String, String) {
 pub fn generate_tla_model(config: &RtosConfig) -> String {
     let mut tla = String::new();
     tla.push_str(&format!("---- MODULE {} ----\n", config.system_name.replace('-', "_")));
-    tla.push_str(&format!("\\* HardyRTOS scheduling model for {}\n", config.system_name));
-    tla.push_str("\\* Generated by HardyScript RT module\n\n");
+    tla.push_str(&format!("\\* DUANYAN RTOS scheduling model for {}\n", config.system_name));
+    tla.push_str("\\* Generated by DUANYAN RT module\n\n");
 
     tla.push_str("EXTENDS Integers, Sequences, FiniteSets, TLC\n\n");
 
@@ -476,7 +476,7 @@ pub fn generate_tla_model(config: &RtosConfig) -> String {
     tla.push_str("Fairness == \\A t \\in Tasks : <>(running = t)\n\n");
 
     // 任务实例化
-    tla.push_str(&format!("\\* Task parameters (from HardyScript @periodic annotations):\n"));
+    tla.push_str(&format!("\\* Task parameters (from DUANYAN @periodic annotations):\n"));
     for (i, task) in config.tasks.iter().enumerate() {
         let period_ticks = task.period_us / config.tick_us;
         let wcet_ticks = (task.wcet_us + config.tick_us - 1) / config.tick_us;
@@ -492,7 +492,7 @@ pub fn generate_tla_model(config: &RtosConfig) -> String {
 /// 生成 Spin/PROMELA 模型
 pub fn generate_spin_model(config: &RtosConfig) -> String {
     let mut spin = String::new();
-    spin.push_str(&format!("/* HardyRTOS Spin Model: {} */\n", config.system_name));
+    spin.push_str(&format!("/* DUANYAN RTOS Spin Model: {} */\n", config.system_name));
     spin.push_str("/* Verify: no deadlock, no priority inversion, deadlines met */\n\n");
 
     spin.push_str(&format!("#define N_TASKS {}\n", config.tasks.len()));
@@ -590,12 +590,12 @@ mod tests {
     fn test_rtos_kernel_generation() {
         let config = sample_config();
         let code = generate_rtos_kernel(&config);
-        assert!(code.contains("HardyRTOS Microkernel"));
+        assert!(code.contains("DUANYAN RTOS Microkernel"));
         assert!(code.contains("ARM Cortex-M"));
         assert!(code.contains("_tcb_t"));
         assert!(code.contains("SysTick_Handler"));
-        assert!(code.contains("hardy_create_task"));
-        assert!(code.contains("hardy_sleep_ticks"));
+        assert!(code.contains("duanyan_create_task"));
+        assert!(code.contains("duanyan_sleep_ticks"));
         assert!(code.contains("_schedule_next"));
     }
 

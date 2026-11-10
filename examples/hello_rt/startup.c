@@ -1,4 +1,4 @@
-/* HardyRTOS BSP: STM32F407VG */
+/* DUANYAN RTOS BSP: STM32F407VG */
 /* Target: ARM Cortex-M | Crystal: 8000000Hz → SysClk: 168000000Hz */
 
 __attribute__((section(".isr_vector")))

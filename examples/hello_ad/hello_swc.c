@@ -1,4 +1,4 @@
-/* HardyScript AD: AUTOSAR SWC — hello */
+/* DUANYAN AD: AUTOSAR SWC — hello */
 /* Runnables: 0 */
 
 #include "Rte.h"

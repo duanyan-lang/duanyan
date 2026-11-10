@@ -1,4 +1,4 @@
-//! Hardy - The HardyScript Compiler
+//! DUANYAN - AOT JavaScript/TypeScript 编译器（锻言体系·桥）
 //!
 //! 锻造主题命令行: 把 JavaScript/TypeScript 锻造成机器码
 //!
@@ -56,7 +56,7 @@ mod industrial_control; // Phase IC
 #[cfg(feature = "domains")]
 mod automotive;         // Phase AD
 #[cfg(feature = "domains")]
-mod hardy_rtos;         // Phase RT
+mod rtos;         // Phase RT
 #[cfg(feature = "domains")]
 mod avionics;           // Phase AV
 #[cfg(feature = "domains")]
@@ -73,17 +73,17 @@ mod robot_motion;       // v1.6 P2: robotics 复用的纯运动学/轨迹数学 
 mod robotics;           // Phase RB
 
 const BANNER: &str = r#"
-  _   _    _    ____  ____  __   __
- | | | |  / \  |  _ \|  _ \ \ \ / /
- | |_| | / _ \ | |_) | | | | \ V / 
- |  _  |/ ___ \|  _ <| |_| |  | |  
- |_| |_/_/   \_\_| \_\____/   |_|   v{VERSION}
+   ____   _   _     _     _   _ __   __   _     _   _ 
+  |  _ \ | | | |   / \   | \ | |\ \ / /  / \   | \ | |
+  | | | || | | |  / _ \  |  \| | \ V /  / _ \  |  \| |
+  | |_| || |_| | / ___ \ | |\  |  | |  / ___ \ | |\  |
+  |____/  \___/ /_/   \_\|_| \_|  |_| /_/   \_\|_| \_|  v{VERSION}
  
-  HardyScript — An AOT compiler that forges JavaScript into machine code.
-  HardyScript —— 把 JavaScript 锻造成机器码的 AOT 编译器。
+  DUANYAN — An AOT compiler that forges JavaScript into machine code.
+  DUANYAN — 把 JavaScript 锻造成机器码的 AOT 编译器。
 
-  JavaScript/TypeScript → Native Code → COUNPRE64 / ESP32 / Arduino / STM32 / RPi
-  Powered by 锻言 DUANYAN 端侧决策引擎 (On-Device AI Engine)
+  JavaScript/TypeScript → Native Code →  ESP32 / Arduino / STM32 / RPi
+  Powered by 锻言 DuanYanX 端侧决策引擎 (On-Device AI Engine)
 "#;
 
 fn main() {
@@ -730,7 +730,7 @@ fn cmd_flash(args: &[String]) {
 
         if emit_rom {
             let rom_path = base_dir.join(format!("{}_rom.v", stem));
-            firmware::emit_verilog_rom(&instructions, &rom_path, "hardyscript_rom")
+            firmware::emit_verilog_rom(&instructions, &rom_path, "duanyan_rom")
                 .unwrap_or_else(|e| eprintln!("生成 ROM 失败: {}", e));
             println!("Verilog ROM: {}", rom_path.display());
         }
@@ -1133,10 +1133,10 @@ fn cmd_init(_args: &[String]) {
         process::exit(1);
     }
 
-    let main_js = r#"// HardyScript 项目入口
-// 使用 hardy:hw 硬件API
+    let main_js = r#"// DUANYAN 项目入口
+// 使用 duanyan:hw 硬件API
 
-import { GPIO, Timer } from "hardy:hw";
+import { GPIO, Timer } from "duanyan:hw";
 
 let led = GPIO.output(13);
 
@@ -1159,7 +1159,7 @@ while (true) {
         let _ = std::fs::write(cwd.join(".gitignore"), gitignore);
     }
 
-    println!("已初始化 HardyScript 项目: {}", project_name);
+    println!("已初始化 DUANYAN 项目: {}", project_name);
     println!("   duanyan.json");
     println!("   src/main.js");
     println!("   .gitignore");
@@ -1176,7 +1176,7 @@ fn cmd_compat(args: &[String]) {
         eprintln!("用法: duanyan compat <input.js> [--convert]");
         eprintln!();
         println!("  分析源码中的 Espruino/Moddable 旧式 API");
-        println!("  --convert  输出转换后的 Hardy 标准代码");
+        println!("  --convert  输出转换后的 DUANYAN 标准代码");
         process::exit(1);
     }
 
@@ -1219,7 +1219,7 @@ fn cmd_compat(args: &[String]) {
     println!("  共检测 {} 处兼容性问题", total);
 
     if do_convert && total > 0 {
-        println!("\n--- 转换后的 Hardy 标准代码 ---");
+        println!("\n--- 转换后的 DUANYAN 标准代码 ---");
         let converted = compat::transform_moddable_import(&result.source).0;
         println!("{}", converted);
     } else if total > 0 {
@@ -1893,7 +1893,7 @@ fn cmd_workspace(args: &[String]) {
             }
         }
         _ => {
-            println!("Hardy Workspace - 多项目管理");
+            println!("DUANYAN Workspace - 多项目管理");
             println!();
             println!("用法: duanyan workspace <subcommand>");
             println!();
@@ -2073,7 +2073,7 @@ fn cmd_git_cli(args: &[String]) {
             }
         }
         _ => {
-            println!("Hardy Git - 版本控制集成");
+            println!("DUANYAN Git - 版本控制集成");
             println!();
             println!("用法: duanyan git <subcommand>");
             println!();
@@ -2137,7 +2137,7 @@ fn cmd_lint(args: &[String]) {
     }
 
     if show_rules {
-        println!("Hardy Lint 规则列表:");
+        println!("DUANYAN Lint 规则列表:");
         println!("{:-<70}", "");
         for rule in &config.rules {
             let sev = config.effective_severity(&rule.id);
@@ -2335,7 +2335,7 @@ fn cmd_ci(args: &[String]) {
             }
         }
         _ => {
-            println!("Hardy CI/CD - 持续集成管线");
+            println!("DUANYAN CI/CD - 持续集成管线");
             println!();
             println!("用法: duanyan ci <subcommand>");
             println!();

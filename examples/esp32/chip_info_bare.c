@@ -74,7 +74,7 @@ void _start(void) {
     uart_puts("\n");
     uart_puts("================================\n");
     uart_puts("  ESP32-S3 Self Introduction\n");
-    uart_puts("  Powered by HardyScript\n");
+    uart_puts("  Powered by DUANYAN\n");
     uart_puts("================================\n");
     uart_puts("\n");
 
@@ -113,7 +113,7 @@ void _start(void) {
     uart_puts("  All systems nominal. Ready!\n");
     uart_puts("================================\n");
     uart_puts("\n");
-    uart_puts("[HardyScript] Bare-metal boot OK.\n");
+    uart_puts("[DUANYAN] Bare-metal boot OK.\n");
 
     /* 无限循环，闪烁心跳 (写 UART 状态) */
     unsigned int count = 0;

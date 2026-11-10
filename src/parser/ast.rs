@@ -169,8 +169,8 @@ pub enum MathOp {
     Max,  // opcode=0x0, func=0xB
     Min,  // opcode=0x0, func=0xC
     Abs,  // opcode=0x0, func=0xD (单参数, rs2=0)
-    /// 整数平方根（仅 C 目标：hardy_isqrt helper）
+    /// 整数平方根（仅 C 目标：duanyan_isqrt helper）
     Sqrt,
-    /// 整数幂（仅 C 目标：hardy_ipow helper）
+    /// 整数幂（仅 C 目标：duanyan_ipow helper）
     Pow,
 }

@@ -1,14 +1,14 @@
-//! .hardy 打包/解包格式
+//! .duanyan 打包/解包格式
 //!
 //! 自定义归档格式:
-//! Header: "Hardy" magic(4) + version(u8) + file_count(u32 LE)
+//! Header: "DUAN" magic(4) + version(u8) + file_count(u32 LE)
 //! 每个文件: name_len(u16 LE) + name(UTF-8) + size(u64 LE) + content
 //! 末尾: SHA-256 checksum(32 bytes) 覆盖除 checksum 外的全部数据
 
 use std::fs;
 use std::path::Path;
 
-const MAGIC: &[u8; 4] = b"HARD";
+const MAGIC: &[u8; 4] = b"DUAN";
 const FORMAT_VERSION: u8 = 1;
 
 /// 归档中的文件
@@ -18,7 +18,7 @@ pub struct ArchiveEntry {
     pub data: Vec<u8>,
 }
 
-/// 打包目录为 .hardy 字节流
+/// 打包目录为 .duanyan 字节流
 pub fn pack(dir: &Path) -> Result<Vec<u8>, String> {
     let mut entries: Vec<ArchiveEntry> = Vec::new();
     collect_files(dir, dir, &mut entries)?;
@@ -50,10 +50,10 @@ pub fn pack(dir: &Path) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
-/// 解包 .hardy 字节流到目标目录
+/// 解包 .duanyan 字节流到目标目录
 pub fn unpack(data: &[u8], target: &Path) -> Result<Vec<String>, String> {
     if data.len() < 4 + 1 + 4 + 32 {
-        return Err("Hardy 归档: 数据太短".to_string());
+        return Err("DUANYAN 归档: 数据太短".to_string());
     }
 
     // Verify checksum
@@ -61,16 +61,16 @@ pub fn unpack(data: &[u8], target: &Path) -> Result<Vec<String>, String> {
     let expected = sha256(&data[..payload_len]);
     let actual = &data[payload_len..];
     if expected != actual {
-        return Err("Hardy 归档: 校验和不匹配 (文件损坏)".to_string());
+        return Err("DUANYAN 归档: 校验和不匹配 (文件损坏)".to_string());
     }
 
     // Header
     if &data[0..4] != MAGIC {
-        return Err("Hardy 归档: 无效 magic".to_string());
+        return Err("DUANYAN 归档: 无效 magic".to_string());
     }
     let version = data[4];
     if version != FORMAT_VERSION {
-        return Err(format!("Hardy 归档: 不支持的版本 {}", version));
+        return Err(format!("DUANYAN 归档: 不支持的版本 {}", version));
     }
     let file_count = u32::from_le_bytes([data[5], data[6], data[7], data[8]]) as usize;
 
@@ -79,21 +79,21 @@ pub fn unpack(data: &[u8], target: &Path) -> Result<Vec<String>, String> {
 
     for _ in 0..file_count {
         if pos + 2 > payload_len {
-            return Err("Hardy 归档: 截断的文件名长度".to_string());
+            return Err("DUANYAN 归档: 截断的文件名长度".to_string());
         }
         let name_len = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
         pos += 2;
 
         if pos + name_len > payload_len {
-            return Err("Hardy 归档: 截断的文件名".to_string());
+            return Err("DUANYAN 归档: 截断的文件名".to_string());
         }
         let name = std::str::from_utf8(&data[pos..pos + name_len])
-            .map_err(|_| "Hardy 归档: 无效 UTF-8 文件名")?
+            .map_err(|_| "DUANYAN 归档: 无效 UTF-8 文件名")?
             .to_string();
         pos += name_len;
 
         if pos + 8 > payload_len {
-            return Err("Hardy 归档: 截断的文件大小".to_string());
+            return Err("DUANYAN 归档: 截断的文件大小".to_string());
         }
         let mut size_bytes = [0u8; 8];
         size_bytes.copy_from_slice(&data[pos..pos + 8]);
@@ -101,7 +101,7 @@ pub fn unpack(data: &[u8], target: &Path) -> Result<Vec<String>, String> {
         pos += 8;
 
         if pos + size > payload_len {
-            return Err(format!("Hardy 归档: 文件 '{}' 数据截断", name));
+            return Err(format!("DUANYAN 归档: 文件 '{}' 数据截断", name));
         }
         let file_data = &data[pos..pos + size];
         pos += size;
@@ -130,7 +130,7 @@ fn collect_files(base: &Path, dir: &Path, entries: &mut Vec<ArchiveEntry>) -> Re
         let entry = entry.map_err(|e| format!("目录项错误: {}", e))?;
         let path = entry.path();
 
-        // 跳过隐藏文件和 .hardy 目录
+        // 跳过隐藏文件和 .duanyan 目录
         let file_name = entry.file_name();
         let name_str = file_name.to_string_lossy();
         if name_str.starts_with('.') { continue; }
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_pack_unpack() {
-        let dir = std::env::temp_dir().join("hardy_test_archive");
+        let dir = std::env::temp_dir().join("duanyan_test_archive");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("hello.js"), "console.log(42);").unwrap();
@@ -286,7 +286,7 @@ mod tests {
         let data = pack(&dir).unwrap();
         assert!(&data[0..4] == MAGIC);
 
-        let out_dir = std::env::temp_dir().join("hardy_test_unpack");
+        let out_dir = std::env::temp_dir().join("duanyan_test_unpack");
         let _ = fs::remove_dir_all(&out_dir);
         fs::create_dir_all(&out_dir).unwrap();
 

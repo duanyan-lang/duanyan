@@ -178,7 +178,7 @@ pub struct SafetyCommConfig {
 /// 生成安全通信协议 C 代码
 pub fn generate_safety_comm_code(config: &SafetyCommConfig) -> String {
     let mut code = String::new();
-    code.push_str(&format!("/* HardyScript RW: EN 50159 Safety Communication — {} */\n", config.system_name));
+    code.push_str(&format!("/* DUANYAN RW: EN 50159 Safety Communication — {} */\n", config.system_name));
     code.push_str(&format!("/* SIL: {} | Safety Code: {} bits */\n\n", config.sil.as_str(), config.safety_code_bits));
 
     // 安全层消息结构
@@ -265,7 +265,7 @@ pub fn generate_en50128_summary(system_name: &str, sil: RailwaySil, func_count: 
         report.push_str(&format!("  {:<45} {}\n", tech, req));
     }
 
-    report.push_str(&format!("\n--- HardyScript Coverage ({} functions) ---\n", func_count));
+    report.push_str(&format!("\n--- DUANYAN Coverage ({} functions) ---\n", func_count));
     report.push_str("  [ok] No dynamic allocation → no memory corruption\n");
     report.push_str("  [ok] WCET proven → timing guarantees\n");
     report.push_str("  [ok] Bounded loops → termination guaranteed\n");

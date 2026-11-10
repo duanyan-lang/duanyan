@@ -41,7 +41,7 @@ pub fn get_known_boards() -> Vec<BoardInfo> {
     vec![
         BoardInfo {
             name: "COUNPRE64-FPGA".to_string(),
-            description: "Gowin GW1NSR-4C FPGA 开发板 (HardyScript 原生目标)".to_string(),
+            description: "Gowin GW1NSR-4C FPGA 开发板 (DUANYAN 原生目标)".to_string(),
             mcu: "COUNPRE64 (Gowin GW1NSR-4C)".to_string(),
             frequency_mhz: 27,
             ram_kb: 32,
@@ -333,11 +333,11 @@ pub fn cmd_board_set(board_name: &str) {
             println!("   💡 下次 'duanyan build' 将自动使用此板子作为目标");
             println!("   💡 配置文件: .duanyan/board (当前目录)");
             // 写入 .duanyan/board 文件
-            let hardy_dir = std::path::Path::new(".duanyan");
-            if !hardy_dir.exists() {
-                let _ = std::fs::create_dir_all(hardy_dir);
+            let duanyan_dir = std::path::Path::new(".duanyan");
+            if !duanyan_dir.exists() {
+                let _ = std::fs::create_dir_all(duanyan_dir);
             }
-            let _ = std::fs::write(hardy_dir.join("board"), &board.name);
+            let _ = std::fs::write(duanyan_dir.join("board"), &board.name);
             return;
         }
     }

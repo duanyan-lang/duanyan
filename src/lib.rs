@@ -1,4 +1,4 @@
-//! HardyScript 编译器库
+//! DUANYAN 编译器库
 //!
 //! JavaScript → COUNPRE64 机器码 / ESP32 C 代码 / Arduino sketch / STM32 HAL / RPi 的完整编译流水线
 //! Phase E: STM32 + 树莓派后端 (AST → C → HAL/sysfs 项目)
@@ -14,11 +14,11 @@ pub mod firmware;
 pub mod config;
 pub mod hardware_api;
 pub mod hardware_sim;
-pub mod bus_zx361;        // v1.6 P0: ZX361 总线舵机 ASCII 协议 (移植自 DUANYAN)
-pub mod joint_api;        // v1.6 P0: 关节抽象 (Backend/JointSpec/路由, 镜像 DUANYAN)
-pub mod robot_safety;     // v1.6 P1: 执行器安全护栏 (负载/温度/堵转, 镜像 DUANYAN safety_policy)
+pub mod bus_zx361;        // v1.6 P0: ZX361 总线舵机 ASCII 协议 (移植自 DuanYanX)
+pub mod joint_api;        // v1.6 P0: 关节抽象 (Backend/JointSpec/路由, 镜像 DuanYanX)
+pub mod robot_safety;     // v1.6 P1: 执行器安全护栏 (负载/温度/堵转, 镜像 DuanYanX safety_policy)
 pub mod robot_motion;     // v1.6 P2: 机器人纯运动学/轨迹数学 (无门禁单一真源, robotics 下沉复用)
-pub mod modeb_proto;      // v1.6 P3: Mode-B 线协议编解码 (镜像 DUANYAN mode_b_proto, 黄金帧字节一致)
+pub mod modeb_proto;      // v1.6 P3: Mode-B 线协议编解码 (镜像 DuanYanX mode_b_proto, 黄金帧字节一致)
 pub mod board;
 pub mod compat;
 pub mod stdlib;
@@ -50,7 +50,7 @@ pub mod industrial_control; // Phase IC: 工业控制 (IEC61131/EtherCAT/SIL3/�
 #[cfg(feature = "domains")]
 pub mod automotive;         // Phase AD: 自动驾驶 (CAN FD/混合关键性/Fail-Op/AUTOSAR)
 #[cfg(feature = "domains")]
-pub mod hardy_rtos;         // Phase RT: 嵌入式RTOS (微内核/IPC/BSP/形式化验证)
+pub mod rtos;         // Phase RT: 嵌入式RTOS (微内核/IPC/BSP/形式化验证)
 #[cfg(feature = "domains")]
 pub mod avionics;           // Phase AV: 航空电子 (DO-178C/ARINC653/浮点确定/TMR)
 #[cfg(feature = "domains")]

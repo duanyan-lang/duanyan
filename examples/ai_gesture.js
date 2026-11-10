@@ -1,9 +1,9 @@
 // examples/ai_gesture.js — 锻言Mini 手势识别示例
-// 使用 hardy:ai 模块在 ESP32 上进行端侧AI推理
-// hardy build examples/ai_gesture.js --target esp32
+// 使用 duanyan:ai 模块在 ESP32 上进行端侧AI推理
+// duanyan build examples/ai_gesture.js --target esp32
 
-import { GPIO, Timer } from "hardy:hw";
-import { Brain } from "hardy:ai";
+import { GPIO, Timer } from "duanyan:hw";
+import { Brain } from "duanyan:ai";
 
 Brain.init("/sd/duanyan/gesture-10m-int4.duanyan");
 

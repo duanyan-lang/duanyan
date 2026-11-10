@@ -29,7 +29,7 @@ impl Default for MonitorConfig {
 
 /// 启动监视器（当前为模拟模式）
 pub fn start_monitor(config: &MonitorConfig) -> Result<(), String> {
-    println!("📺 HardyScript 串口监视器");
+    println!("📺 DUANYAN 串口监视器");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("  端口: {}", config.port);
     println!("  波特率: {}", config.baud_rate);

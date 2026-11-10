@@ -1,7 +1,7 @@
-// HardyScript Raspberry Pi 示例 — LED 闪烁 (GPIO 17)
-// 编译: hardy build examples/rpi_blink.js --target rpi
+// DUANYAN Raspberry Pi 示例 — LED 闪烁 (GPIO 17)
+// 编译: duanyan build examples/rpi_blink.js --target rpi
 
-import { GPIO, Timer } from "hardy:hw";
+import { GPIO, Timer } from "duanyan:hw";
 
 let led = GPIO.output(17);
 

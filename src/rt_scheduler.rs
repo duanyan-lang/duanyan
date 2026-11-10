@@ -290,7 +290,7 @@ pub fn analyze_priority_inversion(tasks: &[RtTask], rms: &RmsAnalysis) -> Priori
 /// 生成无锁环形缓冲区 C 代码
 pub fn generate_spsc_ring_buffer(name: &str, elem_type: &str, capacity: usize) -> String {
     let mut code = String::new();
-    code.push_str(&format!("/* HardyScript W2: Lock-free SPSC Ring Buffer */\n"));
+    code.push_str(&format!("/* DUANYAN W2: Lock-free SPSC Ring Buffer */\n"));
     code.push_str(&format!("/* {} : {} x {} slots */\n\n", name, elem_type, capacity));
 
     code.push_str(&format!(
@@ -383,7 +383,7 @@ pub fn prove_stack_safety(task_name: &str, call_chain: &[(String, usize)], alloc
 /// 生成 RMS 调度表报告
 pub fn generate_schedule_report(tasks: &[RtTask], rms: &RmsAnalysis) -> String {
     let mut r = String::new();
-    r.push_str("=== HardyScript Real-Time Schedule (Phase W2) ===\n");
+    r.push_str("=== DUANYAN Real-Time Schedule (Phase W2) ===\n");
     r.push_str("Algorithm: Rate-Monotonic Scheduling (RMS)\n\n");
 
     r.push_str(&format!(

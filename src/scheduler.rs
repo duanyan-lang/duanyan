@@ -103,11 +103,11 @@ impl Scheduler {
 
     fn generate_esp32_wrappers(&self) -> String {
         let mut code = String::new();
-        code.push_str("/* HardyScript Scheduler — FreeRTOS tasks */\n");
+        code.push_str("/* DUANYAN Scheduler — FreeRTOS tasks */\n");
         for task in &self.tasks {
             // 生成任务包装函数
             code.push_str(&format!(
-                "static void _hardy_task_{}(void* arg) {{\n", task.id
+                "static void _duanyan_task_{}(void* arg) {{\n", task.id
             ));
             code.push_str("    (void)arg;\n");
             if task.repeating {
@@ -134,7 +134,7 @@ impl Scheduler {
             // Phase 3.5: 使用任务优先级 (FreeRTOS: 数字越大优先级越高, 所以反转)
             let rt_priority = if task.priority == 0 { 5 } else { (6 - task.priority).min(5).max(1) };
             code.push_str(&format!(
-                "    xTaskCreate(_hardy_task_{}, \"task_{}\", {}, NULL, {}, NULL);\n",
+                "    xTaskCreate(_duanyan_task_{}, \"task_{}\", {}, NULL, {}, NULL);\n",
                 task.id, task.id, stack_size, rt_priority
             ));
         }
@@ -145,31 +145,31 @@ impl Scheduler {
 
     fn generate_arduino_wrappers(&self) -> String {
         let mut code = String::new();
-        code.push_str("/* HardyScript Scheduler — millis() cooperative */\n");
+        code.push_str("/* DUANYAN Scheduler — millis() cooperative */\n");
         // 生成每个任务的上次执行时间变量
         for task in &self.tasks {
             code.push_str(&format!(
-                "static uint32_t _hardy_task_{}_last = 0;\n", task.id
+                "static uint32_t _duanyan_task_{}_last = 0;\n", task.id
             ));
             if !task.repeating {
                 code.push_str(&format!(
-                    "static uint8_t _hardy_task_{}_done = 0;\n", task.id
+                    "static uint8_t _duanyan_task_{}_done = 0;\n", task.id
                 ));
             }
         }
         code.push('\n');
         // 生成调度器 poll 函数 (在 loop 中调用)
-        code.push_str("static inline void _hardy_scheduler_poll(void) {\n");
+        code.push_str("static inline void _duanyan_scheduler_poll(void) {\n");
         code.push_str("    uint32_t now = millis();\n");
         for task in &self.tasks {
             if task.repeating {
                 code.push_str(&format!(
-                    "    if (now - _hardy_task_{}_last >= {}) {{ {}(); _hardy_task_{}_last = now; }}\n",
+                    "    if (now - _duanyan_task_{}_last >= {}) {{ {}(); _duanyan_task_{}_last = now; }}\n",
                     task.id, task.interval_ms, task.func_name, task.id
                 ));
             } else {
                 code.push_str(&format!(
-                    "    if (!_hardy_task_{}_done && now - _hardy_task_{}_last >= {}) {{ {}(); _hardy_task_{}_done = 1; }}\n",
+                    "    if (!_duanyan_task_{}_done && now - _duanyan_task_{}_last >= {}) {{ {}(); _duanyan_task_{}_done = 1; }}\n",
                     task.id, task.id, task.interval_ms, task.func_name, task.id
                 ));
             }
@@ -183,7 +183,7 @@ impl Scheduler {
         let mut code = String::new();
         for task in &self.tasks {
             code.push_str(&format!(
-                "    _hardy_task_{}_last = millis();\n", task.id
+                "    _duanyan_task_{}_last = millis();\n", task.id
             ));
         }
         code
@@ -194,36 +194,36 @@ impl Scheduler {
         if self.tasks.is_empty() {
             return String::new();
         }
-        "    _hardy_scheduler_poll();\n".to_string()
+        "    _duanyan_scheduler_poll();\n".to_string()
     }
 
     // ========== STM32: 主循环 + HAL 延时 ==========
 
     fn generate_stm32_wrappers(&self) -> String {
         let mut code = String::new();
-        code.push_str("/* HardyScript Scheduler — main loop cooperative */\n");
+        code.push_str("/* DUANYAN Scheduler — main loop cooperative */\n");
         for task in &self.tasks {
             code.push_str(&format!(
-                "static uint32_t _hardy_task_{}_last = 0;\n", task.id
+                "static uint32_t _duanyan_task_{}_last = 0;\n", task.id
             ));
             if !task.repeating {
                 code.push_str(&format!(
-                    "static uint8_t _hardy_task_{}_done = 0;\n", task.id
+                    "static uint8_t _duanyan_task_{}_done = 0;\n", task.id
                 ));
             }
         }
         code.push('\n');
-        code.push_str("static inline void _hardy_scheduler_poll(void) {\n");
+        code.push_str("static inline void _duanyan_scheduler_poll(void) {\n");
         code.push_str("    uint32_t now = HAL_GetTick();\n");
         for task in &self.tasks {
             if task.repeating {
                 code.push_str(&format!(
-                    "    if (now - _hardy_task_{}_last >= {}) {{ {}(); _hardy_task_{}_last = now; }}\n",
+                    "    if (now - _duanyan_task_{}_last >= {}) {{ {}(); _duanyan_task_{}_last = now; }}\n",
                     task.id, task.interval_ms, task.func_name, task.id
                 ));
             } else {
                 code.push_str(&format!(
-                    "    if (!_hardy_task_{}_done && now - _hardy_task_{}_last >= {}) {{ {}(); _hardy_task_{}_done = 1; }}\n",
+                    "    if (!_duanyan_task_{}_done && now - _duanyan_task_{}_last >= {}) {{ {}(); _duanyan_task_{}_done = 1; }}\n",
                     task.id, task.id, task.interval_ms, task.func_name, task.id
                 ));
             }
@@ -241,11 +241,11 @@ impl Scheduler {
 
     fn generate_rpi_wrappers(&self) -> String {
         let mut code = String::new();
-        code.push_str("/* HardyScript Scheduler — pthread tasks */\n");
+        code.push_str("/* DUANYAN Scheduler — pthread tasks */\n");
         code.push_str("#include <pthread.h>\n\n");
         for task in &self.tasks {
             code.push_str(&format!(
-                "static void* _hardy_task_{}(void* arg) {{\n", task.id
+                "static void* _duanyan_task_{}(void* arg) {{\n", task.id
             ));
             code.push_str("    (void)arg;\n");
             if task.repeating {
@@ -268,7 +268,7 @@ impl Scheduler {
         let mut code = String::new();
         for task in &self.tasks {
             code.push_str(&format!(
-                "    {{ pthread_t t; pthread_create(&t, NULL, _hardy_task_{}, NULL); pthread_detach(t); }}\n",
+                "    {{ pthread_t t; pthread_create(&t, NULL, _duanyan_task_{}, NULL); pthread_detach(t); }}\n",
                 task.id
             ));
         }
@@ -313,15 +313,15 @@ mod tests {
         sched.add_interval("updateMotors", 1);
 
         let wrappers = sched.generate_task_wrappers(&CTarget::Esp32);
-        assert!(wrappers.contains("_hardy_task_0"), "应生成任务0包装");
-        assert!(wrappers.contains("_hardy_task_1"), "应生成任务1包装");
+        assert!(wrappers.contains("_duanyan_task_0"), "应生成任务0包装");
+        assert!(wrappers.contains("_duanyan_task_1"), "应生成任务1包装");
         assert!(wrappers.contains("readSensors()"), "应调用回调函数");
         assert!(wrappers.contains("vTaskDelay(pdMS_TO_TICKS(10))"), "应包含延时期望值");
         assert!(wrappers.contains("for (;;)"), "重复任务应有无限循环");
 
         let init = sched.generate_task_init(&CTarget::Esp32);
-        assert!(init.contains("xTaskCreate(_hardy_task_0"), "应创建任务0");
-        assert!(init.contains("xTaskCreate(_hardy_task_1"), "应创建任务1");
+        assert!(init.contains("xTaskCreate(_duanyan_task_0"), "应创建任务0");
+        assert!(init.contains("xTaskCreate(_duanyan_task_1"), "应创建任务1");
     }
 
     #[test]
@@ -341,8 +341,8 @@ mod tests {
         sched.add_interval("blink", 500);
 
         let wrappers = sched.generate_task_wrappers(&CTarget::ArduinoAvr);
-        assert!(wrappers.contains("_hardy_task_0_last"), "应生成时间戳变量");
-        assert!(wrappers.contains("_hardy_scheduler_poll"), "应生成 poll 函数");
+        assert!(wrappers.contains("_duanyan_task_0_last"), "应生成时间戳变量");
+        assert!(wrappers.contains("_duanyan_scheduler_poll"), "应生成 poll 函数");
         assert!(wrappers.contains("millis()"), "应使用 millis()");
         assert!(wrappers.contains("blink()"), "应调用回调");
     }
@@ -376,7 +376,7 @@ mod tests {
         let mut sched = Scheduler::new();
         sched.add_interval("tick", 50);
         let loop_call = sched.generate_arduino_loop_call();
-        assert!(loop_call.contains("_hardy_scheduler_poll()"), "loop 中应调用 poll");
+        assert!(loop_call.contains("_duanyan_scheduler_poll()"), "loop 中应调用 poll");
     }
 
     #[test]
@@ -396,10 +396,10 @@ mod tests {
 
         let init = sched.generate_task_init(&CTarget::Esp32);
         // priority 0 → FreeRTOS 5 (最高)
-        assert!(init.contains("xTaskCreate(_hardy_task_0, \"task_0\", 2048, NULL, 5, NULL)"),
+        assert!(init.contains("xTaskCreate(_duanyan_task_0, \"task_0\", 2048, NULL, 5, NULL)"),
             "优先级 0 应映射为 FreeRTOS 5");
         // priority 2 → FreeRTOS 4
-        assert!(init.contains("xTaskCreate(_hardy_task_1, \"task_1\", 2048, NULL, 4, NULL)"),
+        assert!(init.contains("xTaskCreate(_duanyan_task_1, \"task_1\", 2048, NULL, 4, NULL)"),
             "优先级 2 应映射为 FreeRTOS 4");
     }
 

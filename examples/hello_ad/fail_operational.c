@@ -1,4 +1,4 @@
-/* HardyScript AD: Fail-Operational — hello */
+/* DUANYAN AD: Fail-Operational — hello */
 /* Primary: ASIL-D, Backup: ASIL-B */
 
 typedef enum {

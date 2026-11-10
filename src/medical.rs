@@ -64,7 +64,7 @@ impl SoftwareClass {
 pub struct MedicalSoftwareUnit {
     /// 单元名称
     pub name: String,
-    /// 对应 HardyScript 函数
+    /// 对应 DUANYAN 函数
     pub hs_function: String,
     /// 安全分类
     pub safety_class: SoftwareClass,
@@ -133,8 +133,8 @@ pub fn generate_iec62304_report(units: &[MedicalSoftwareUnit], device_name: &str
         }
     }
 
-    // HardyScript 自动保证
-    report.push_str("\n--- HardyScript Auto-Guarantees ---\n");
+    // DUANYAN 自动保证
+    report.push_str("\n--- DUANYAN Auto-Guarantees ---\n");
     report.push_str("  [ok] No dynamic memory allocation (no heap)\n");
     report.push_str("  [ok] Bounded execution time (WCET proven)\n");
     report.push_str("  [ok] No undefined behavior (type-safe compilation)\n");
@@ -148,7 +148,7 @@ pub fn generate_iec62304_report(units: &[MedicalSoftwareUnit], device_name: &str
 
     // SOUP 清单
     report.push_str("\n--- SOUP (Software of Unknown Provenance) ---\n");
-    report.push_str("  None: HardyScript generates standalone C with zero external dependencies.\n");
+    report.push_str("  None: DUANYAN generates standalone C with zero external dependencies.\n");
 
     report
 }
@@ -156,7 +156,7 @@ pub fn generate_iec62304_report(units: &[MedicalSoftwareUnit], device_name: &str
 /// 生成故障安全代码 (医疗级)
 pub fn generate_medical_failsafe(unit: &MedicalSoftwareUnit) -> String {
     let mut code = String::new();
-    code.push_str(&format!("/* HardyScript MD: Medical Failsafe — {} */\n", unit.name));
+    code.push_str(&format!("/* DUANYAN MD: Medical Failsafe — {} */\n", unit.name));
     code.push_str(&format!("/* Safety Class: {} | Risk: {:?} */\n\n", unit.safety_class.as_str(), unit.risk_level));
 
     // 看门狗 + 安全状态

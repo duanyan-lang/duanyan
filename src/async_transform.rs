@@ -169,7 +169,7 @@ pub fn generate_c_state_machine(sm: &StateMachine) -> String {
     let mut code = String::new();
 
     // 1. 生成上下文结构体
-    code.push_str(&format!("/* async function {}() — 由 HardyScript v1.5 自动生成 */\n", sm.name));
+    code.push_str(&format!("/* async function {}() — 由 DUANYAN v1.5 自动生成 */\n", sm.name));
     code.push_str(&format!("typedef struct {{\n"));
     code.push_str("    uint8_t state;\n");
     for var in &sm.ctx_vars {
@@ -179,7 +179,7 @@ pub fn generate_c_state_machine(sm: &StateMachine) -> String {
     code.push_str(&format!("}} {}_ctx;\n\n", sm.name));
 
     // 2. 生成 poll 函数
-    code.push_str(&format!("hardy_status_t {}_poll({}_ctx* ctx) {{\n", sm.name, sm.name));
+    code.push_str(&format!("duanyan_status_t {}_poll({}_ctx* ctx) {{\n", sm.name, sm.name));
     code.push_str("    switch (ctx->state) {\n");
 
     for state in &sm.states {
@@ -194,17 +194,17 @@ pub fn generate_c_state_machine(sm: &StateMachine) -> String {
             // 发起异步操作
             code.push_str(&format!("            /* await: {} */\n", format_expr_brief(await_expr)));
             code.push_str(&format!("            ctx->state = {};\n", state.next_state));
-            code.push_str("            return HARDY_PENDING;\n");
+            code.push_str("            return DUANYAN_PENDING;\n");
         } else if state.is_final {
             code.push_str("            ctx->state = 255; /* done */\n");
-            code.push_str("            return HARDY_READY;\n");
+            code.push_str("            return DUANYAN_READY;\n");
         }
 
         code.push_str("\n");
     }
 
     code.push_str("    }\n");
-    code.push_str("    return HARDY_READY;\n");
+    code.push_str("    return DUANYAN_READY;\n");
     code.push_str("}\n");
 
     code
@@ -214,49 +214,49 @@ pub fn generate_c_state_machine(sm: &StateMachine) -> String {
 pub fn generate_c_event_loop(target: &str) -> String {
     let mut code = String::new();
 
-    code.push_str("/* hardy_event_loop.h — 由 HardyScript v1.5 自动生成 */\n");
-    code.push_str("#ifndef HARDY_EVENT_LOOP_H\n");
-    code.push_str("#define HARDY_EVENT_LOOP_H\n\n");
+    code.push_str("/* duanyan_event_loop.h — 由 DUANYAN v1.5 自动生成 */\n");
+    code.push_str("#ifndef DUANYAN_EVENT_LOOP_H\n");
+    code.push_str("#define DUANYAN_EVENT_LOOP_H\n\n");
     code.push_str("#include <stdint.h>\n");
     code.push_str("#include <stdbool.h>\n\n");
 
     // 状态枚举
     code.push_str("typedef enum {\n");
-    code.push_str("    HARDY_PENDING = 0,\n");
-    code.push_str("    HARDY_READY = 1,\n");
-    code.push_str("    HARDY_ERROR = -1\n");
-    code.push_str("} hardy_status_t;\n\n");
+    code.push_str("    DUANYAN_PENDING = 0,\n");
+    code.push_str("    DUANYAN_READY = 1,\n");
+    code.push_str("    DUANYAN_ERROR = -1\n");
+    code.push_str("} duanyan_status_t;\n\n");
 
     // 任务结构体
-    code.push_str("typedef struct hardy_task {\n");
-    code.push_str("    hardy_status_t (*poll)(void* ctx);\n");
+    code.push_str("typedef struct duanyan_task {\n");
+    code.push_str("    duanyan_status_t (*poll)(void* ctx);\n");
     code.push_str("    void* ctx;\n");
-    code.push_str("    struct hardy_task* next;\n");
-    code.push_str("} hardy_task_t;\n\n");
+    code.push_str("    struct duanyan_task* next;\n");
+    code.push_str("} duanyan_task_t;\n\n");
 
     // 任务链表
-    code.push_str("static hardy_task_t* hardy_task_head = NULL;\n\n");
+    code.push_str("static duanyan_task_t* duanyan_task_head = NULL;\n\n");
 
     // 注册任务
-    code.push_str("void hardy_spawn(hardy_status_t (*poll_fn)(void*), void* ctx) {\n");
-    code.push_str("    static hardy_task_t tasks[16];\n");
+    code.push_str("void duanyan_spawn(duanyan_status_t (*poll_fn)(void*), void* ctx) {\n");
+    code.push_str("    static duanyan_task_t tasks[16];\n");
     code.push_str("    static int task_count = 0;\n");
     code.push_str("    if (task_count >= 16) return;\n");
-    code.push_str("    hardy_task_t* t = &tasks[task_count++];\n");
+    code.push_str("    duanyan_task_t* t = &tasks[task_count++];\n");
     code.push_str("    t->poll = poll_fn;\n");
     code.push_str("    t->ctx = ctx;\n");
-    code.push_str("    t->next = hardy_task_head;\n");
-    code.push_str("    hardy_task_head = t;\n");
+    code.push_str("    t->next = duanyan_task_head;\n");
+    code.push_str("    duanyan_task_head = t;\n");
     code.push_str("}\n\n");
 
     // 事件循环
-    code.push_str("void hardy_event_loop_run(void) {\n");
-    code.push_str("    while (hardy_task_head) {\n");
-    code.push_str("        hardy_task_t** pp = &hardy_task_head;\n");
+    code.push_str("void duanyan_event_loop_run(void) {\n");
+    code.push_str("    while (duanyan_task_head) {\n");
+    code.push_str("        duanyan_task_t** pp = &duanyan_task_head;\n");
     code.push_str("        while (*pp) {\n");
-    code.push_str("            hardy_task_t* t = *pp;\n");
-    code.push_str("            hardy_status_t s = t->poll(t->ctx);\n");
-    code.push_str("            if (s == HARDY_READY || s == HARDY_ERROR) {\n");
+    code.push_str("            duanyan_task_t* t = *pp;\n");
+    code.push_str("            duanyan_status_t s = t->poll(t->ctx);\n");
+    code.push_str("            if (s == DUANYAN_READY || s == DUANYAN_ERROR) {\n");
     code.push_str("                *pp = t->next; /* 移除完成的任务 */\n");
     code.push_str("            } else {\n");
     code.push_str("                pp = &t->next;\n");
@@ -278,7 +278,7 @@ pub fn generate_c_event_loop(target: &str) -> String {
 
     code.push_str("    }\n");
     code.push_str("}\n\n");
-    code.push_str("#endif /* HARDY_EVENT_LOOP_H */\n");
+    code.push_str("#endif /* DUANYAN_EVENT_LOOP_H */\n");
 
     code
 }
@@ -418,7 +418,7 @@ pub fn analyze_coroutine_frame(func: &Function) -> Result<CoroutineFrame, String
 /// 生成协程帧报告 (Phase 3.4)
 pub fn generate_coroutine_report(frames: &[CoroutineFrame]) -> String {
     let mut report = String::new();
-    report.push_str("=== HardyScript Coroutine Frame Report ===\n\n");
+    report.push_str("=== DUANYAN Coroutine Frame Report ===\n\n");
     report.push_str("Function            Frame(B)  States  ZeroAlloc  RT-Safe\n");
     report.push_str("───────────────────────────────────────────────────────────\n");
 
@@ -494,8 +494,8 @@ mod tests {
         assert!(c_code.contains("typedef struct"));
         assert!(c_code.contains("readSensor_ctx"));
         assert!(c_code.contains("readSensor_poll"));
-        assert!(c_code.contains("HARDY_PENDING"));
-        assert!(c_code.contains("HARDY_READY"));
+        assert!(c_code.contains("DUANYAN_PENDING"));
+        assert!(c_code.contains("DUANYAN_READY"));
         assert!(c_code.contains("switch (ctx->state)"));
     }
 
@@ -503,16 +503,16 @@ mod tests {
     fn test_generate_c_event_loop_esp32() {
         let code = generate_c_event_loop("esp32");
         assert!(code.contains("vTaskDelay"));
-        assert!(code.contains("hardy_event_loop_run"));
-        assert!(code.contains("hardy_spawn"));
-        assert!(code.contains("HARDY_PENDING"));
+        assert!(code.contains("duanyan_event_loop_run"));
+        assert!(code.contains("duanyan_spawn"));
+        assert!(code.contains("DUANYAN_PENDING"));
     }
 
     #[test]
     fn test_generate_c_event_loop_arduino() {
         let code = generate_c_event_loop("arduino");
         assert!(!code.contains("vTaskDelay"));
-        assert!(code.contains("hardy_event_loop_run"));
+        assert!(code.contains("duanyan_event_loop_run"));
         assert!(code.contains("裸轮询"));
     }
 
@@ -571,8 +571,8 @@ async function senseAndAct() {
         let c_code = generate_c_state_machine(&sm);
         assert!(c_code.contains("senseAndAct_ctx"));
         assert!(c_code.contains("senseAndAct_poll"));
-        assert!(c_code.contains("HARDY_PENDING"));
-        assert!(c_code.contains("HARDY_READY"));
+        assert!(c_code.contains("DUANYAN_PENDING"));
+        assert!(c_code.contains("DUANYAN_READY"));
     }
 
     #[test]
@@ -602,12 +602,12 @@ async function multiSense() {
         // ESP32 事件循环生成
         let code = generate_c_event_loop("esp32");
         assert!(code.contains("vTaskDelay"));
-        assert!(code.contains("hardy_task_t"));
-        assert!(code.contains("hardy_spawn"));
-        assert!(code.contains("hardy_event_loop_run"));
-        assert!(code.contains("HARDY_PENDING"));
-        assert!(code.contains("HARDY_READY"));
-        assert!(code.contains("HARDY_ERROR"));
+        assert!(code.contains("duanyan_task_t"));
+        assert!(code.contains("duanyan_spawn"));
+        assert!(code.contains("duanyan_event_loop_run"));
+        assert!(code.contains("DUANYAN_PENDING"));
+        assert!(code.contains("DUANYAN_READY"));
+        assert!(code.contains("DUANYAN_ERROR"));
     }
 
     #[test]
@@ -645,7 +645,7 @@ async function readSensor() {
 
         // 5. 事件循环
         let event_loop = generate_c_event_loop("esp32");
-        assert!(event_loop.contains("hardy_event_loop_run"));
+        assert!(event_loop.contains("duanyan_event_loop_run"));
     }
 
     // Phase 3.4: 无栈协程测试

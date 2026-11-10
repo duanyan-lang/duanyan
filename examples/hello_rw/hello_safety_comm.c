@@ -1,4 +1,4 @@
-/* HardyScript RW: EN 50159 Safety Communication — hello */
+/* DUANYAN RW: EN 50159 Safety Communication — hello */
 /* SIL: SIL 4 | Safety Code: 32 bits */
 
 typedef struct __attribute__((packed)) {

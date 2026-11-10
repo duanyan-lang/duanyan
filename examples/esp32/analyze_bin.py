@@ -1,5 +1,5 @@
 import sys
-data = open(r'c:\OPENSNAR\DUANYAN\examples\esp32\chip_info_v1.bin','rb').read()
+data = open(r'c:\DuanYanOS\DUANYAN\examples\esp32\chip_info_v1.bin','rb').read()
 print(f'Total size: {len(data)} bytes')
 print(f'Header: {data[0:8].hex()}')
 print(f'  magic=0x{data[0]:02x} segments={data[1]} spi=0x{data[2]:02x} size_freq=0x{data[3]:02x}')

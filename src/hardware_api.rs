@@ -1,4 +1,4 @@
-//! 硬件API模块 (hardy:hw)
+//! 硬件API模块 (duanyan:hw)
 //!
 //! 定义统一的硬件API接口规范和各平台的内存映射
 //! Phase B: 硬件API层
@@ -61,35 +61,35 @@ pub mod counpre64_map {
 /// 硬件API类型
 #[derive(Debug, Clone, PartialEq)]
 pub enum HardwareModule {
-    /// hardy:hw - 通用硬件API
+    /// duanyan:hw - 通用硬件API
     Core,
-    /// hardy:esp32 - ESP32扩展
+    /// duanyan:esp32 - ESP32扩展
     Esp32,
-    /// hardy:ai - 锻言AI
+    /// duanyan:ai - 锻言AI
     Ai,
-    /// hardy:sensor - 传感器
+    /// duanyan:sensor - 传感器
     Sensor,
-    /// hardy:motor - 电机/舵机控制
+    /// duanyan:motor - 电机/舵机控制
     Motor,
-    /// hardy:servo - 关节/舵机 (PCA9685 通道 + ZX361 总线 + 回读, v1.6 P0)
+    /// duanyan:servo - 关节/舵机 (PCA9685 通道 + ZX361 总线 + 回读, v1.6 P0)
     Servo,
-    /// hardy:robot - 机器人轨迹/运动学 (五次/梯形 + glide, v1.6 P2)
+    /// duanyan:robot - 机器人轨迹/运动学 (五次/梯形 + glide, v1.6 P2)
     Robot,
-    /// hardy:modeb - Mode-B 线协议直发 (帧头 AA 55 + crc8 + 'U' 突发, v1.6 P3)
+    /// duanyan:modeb - Mode-B 线协议直发 (帧头 AA 55 + crc8 + 'U' 突发, v1.6 P3)
     ModeB,
 }
 
 impl HardwareModule {
     pub fn from_import_source(source: &str) -> Option<Self> {
         match source {
-            "hardy:hw" => Some(Self::Core),
-            "hardy:esp32" => Some(Self::Esp32),
-            "hardy:ai" => Some(Self::Ai),
-            "hardy:sensor" => Some(Self::Sensor),
-            "hardy:motor" => Some(Self::Motor),
-            "hardy:servo" => Some(Self::Servo),
-            "hardy:robot" => Some(Self::Robot),
-            "hardy:modeb" => Some(Self::ModeB),
+            "duanyan:hw" => Some(Self::Core),
+            "duanyan:esp32" => Some(Self::Esp32),
+            "duanyan:ai" => Some(Self::Ai),
+            "duanyan:sensor" => Some(Self::Sensor),
+            "duanyan:motor" => Some(Self::Motor),
+            "duanyan:servo" => Some(Self::Servo),
+            "duanyan:robot" => Some(Self::Robot),
+            "duanyan:modeb" => Some(Self::ModeB),
             _ => None,
         }
     }
@@ -234,7 +234,7 @@ pub fn resolve_hardware_call(call_name: &str, args: &[i64]) -> Option<HardwareCa
         "Traj.sample" if args.len() >= 2 => Some(HardwareCall::TrajSample),
         "Traj.trapezoid" if args.len() >= 3 => Some(HardwareCall::TrajTrapezoid),
         "Joint.glide" if args.len() >= 5 => Some(HardwareCall::JointGlide { joint: args[0] as u8, steps: args[4] as u16 }),
-        // v1.6 P3: ModeB.* (hardy:modeb)
+        // v1.6 P3: ModeB.* (duanyan:modeb)
         "ModeB.send" if args.len() >= 3 => Some(HardwareCall::ModeBSend { cmd: args[0] as u8 }),
         "ModeB.frame" if args.len() >= 3 => Some(HardwareCall::ModeBFrame { cmd: args[0] as u8 }),
         "ModeB.jointSet" if args.len() >= 4 => Some(HardwareCall::ModeBJointSet { joint: args[0] as u8 }),
@@ -296,13 +296,13 @@ mod tests {
 
     #[test]
     fn test_hardware_module_parse() {
-        assert_eq!(HardwareModule::from_import_source("hardy:hw"), Some(HardwareModule::Core));
-        assert_eq!(HardwareModule::from_import_source("hardy:esp32"), Some(HardwareModule::Esp32));
-        assert_eq!(HardwareModule::from_import_source("hardy:ai"), Some(HardwareModule::Ai));
-        assert_eq!(HardwareModule::from_import_source("hardy:motor"), Some(HardwareModule::Motor));
-        assert_eq!(HardwareModule::from_import_source("hardy:servo"), Some(HardwareModule::Servo));
-        assert_eq!(HardwareModule::from_import_source("hardy:robot"), Some(HardwareModule::Robot));
-        assert_eq!(HardwareModule::from_import_source("hardy:modeb"), Some(HardwareModule::ModeB));
+        assert_eq!(HardwareModule::from_import_source("duanyan:hw"), Some(HardwareModule::Core));
+        assert_eq!(HardwareModule::from_import_source("duanyan:esp32"), Some(HardwareModule::Esp32));
+        assert_eq!(HardwareModule::from_import_source("duanyan:ai"), Some(HardwareModule::Ai));
+        assert_eq!(HardwareModule::from_import_source("duanyan:motor"), Some(HardwareModule::Motor));
+        assert_eq!(HardwareModule::from_import_source("duanyan:servo"), Some(HardwareModule::Servo));
+        assert_eq!(HardwareModule::from_import_source("duanyan:robot"), Some(HardwareModule::Robot));
+        assert_eq!(HardwareModule::from_import_source("duanyan:modeb"), Some(HardwareModule::ModeB));
         assert_eq!(HardwareModule::from_import_source("unknown"), None);
     }
 
@@ -407,7 +407,7 @@ mod tests {
     // v1.6 P2: Traj.* / Joint.glide 解析 + 模块
     #[test]
     fn test_resolve_robot_motion() {
-        assert_eq!(HardwareModule::from_import_source("hardy:robot"), Some(HardwareModule::Robot));
+        assert_eq!(HardwareModule::from_import_source("duanyan:robot"), Some(HardwareModule::Robot));
         assert_eq!(resolve_hardware_call("Traj.quintic", &[30, 120, 2]), Some(HardwareCall::TrajQuintic));
         assert_eq!(resolve_hardware_call("Traj.trapezoid", &[100, 50, 100]), Some(HardwareCall::TrajTrapezoid));
         assert_eq!(resolve_hardware_call("Joint.glide", &[0, 30, 120, 2, 20]),
@@ -417,7 +417,7 @@ mod tests {
     // v1.6 P3: ModeB.* 解析 + 模块
     #[test]
     fn test_resolve_modeb() {
-        assert_eq!(HardwareModule::from_import_source("hardy:modeb"), Some(HardwareModule::ModeB));
+        assert_eq!(HardwareModule::from_import_source("duanyan:modeb"), Some(HardwareModule::ModeB));
         assert_eq!(resolve_hardware_call("ModeB.send", &[0x12, 0, 0]),
                    Some(HardwareCall::ModeBSend { cmd: 0x12 }));
         assert_eq!(resolve_hardware_call("ModeB.frame", &[0x20, 0, 7]),

@@ -1,6 +1,6 @@
-//! HardyScript Project Configuration
+//! DUANYAN Project Configuration
 //!
-//! `duanyan.config.json` sits at the project root and tells HardyScript how to
+//! `duanyan.config.json` sits at the project root and tells DUANYAN how to
 //! compile, package, and flash the firmware.
 
 use std::collections::HashMap;

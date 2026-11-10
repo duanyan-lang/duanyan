@@ -61,7 +61,7 @@ pub fn generate_stm32_project(
 fn generate_makefile(stem: &str) -> String {
     let name = sanitize_name(stem);
     format!(
-r#"# HardyScript STM32 Makefile (auto-generated)
+r#"# DUANYAN STM32 Makefile (auto-generated)
 # 需要设置环境变量: STM32_HAL_PATH 指向 STM32 HAL 库根目录
 
 PREFIX  = arm-none-eabi-
@@ -110,7 +110,7 @@ debug: $(TARGET).elf
 }
 
 fn generate_linker_script() -> String {
-    r#"/* STM32F103C8T6 Linker Script (HardyScript auto-generated) */
+    r#"/* STM32F103C8T6 Linker Script (DUANYAN auto-generated) */
 MEMORY
 {
     FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 64K
@@ -150,7 +150,7 @@ SECTIONS
 }
 
 fn generate_openocd_cfg() -> String {
-    r#"# HardyScript OpenOCD config for STM32F103 (ST-Link)
+    r#"# DUANYAN OpenOCD config for STM32F103 (ST-Link)
 source [find interface/stlink.cfg]
 source [find target/stm32f1x.cfg]
 adapter speed 4000
@@ -161,7 +161,7 @@ fn sanitize_name(name: &str) -> String {
     let s: String = name.chars()
         .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
         .collect();
-    if s.is_empty() { "hardy_app".to_string() } else { s }
+    if s.is_empty() { "duanyan_app".to_string() } else { s }
 }
 
 #[cfg(test)]
@@ -172,7 +172,7 @@ mod tests {
     fn test_sanitize_name() {
         assert_eq!(sanitize_name("my-app"), "my_app");
         assert_eq!(sanitize_name("hello.c"), "hello_c");
-        assert_eq!(sanitize_name(""), "hardy_app");
+        assert_eq!(sanitize_name(""), "duanyan_app");
         assert_eq!(sanitize_name("blink"), "blink");
     }
 

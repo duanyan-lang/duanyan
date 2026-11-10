@@ -1,6 +1,6 @@
 //! Phase EDU: 教育平台垂直模块
 //!
-//! HardyScript 天然教育产品："用 JavaScript 写嵌入式"
+//! DUANYAN 天然教育产品："用 JavaScript 写嵌入式"
 //! - 渐进式课程生成 (LED → 传感器 → RTOS → 通信)
 //! - 编译可视化 (JS → AST → IR → ASM 逐步展示)
 //! - 交互式实验 (硬件仿真 + 即时反馈)
@@ -56,7 +56,7 @@ pub struct LessonUnit {
     pub level: CourseLevel,
     /// 学习目标
     pub objectives: Vec<String>,
-    /// 示例代码 (HardyScript JS)
+    /// 示例代码 (DUANYAN JS)
     pub example_code: String,
     /// 练习题
     pub exercises: Vec<Exercise>,
@@ -187,7 +187,7 @@ pub fn generate_compile_visualization(source: &str, stage: CompileStage) -> Stri
             out.push_str("生成的 C 代码 (片段):\n");
             out.push_str("```c\n");
             out.push_str("void app_main(void) {\n");
-            out.push_str("    /* 由 HardyScript 自动生成 */\n");
+            out.push_str("    /* 由 DUANYAN 自动生成 */\n");
             out.push_str("    /* 所有变量: 栈上分配, 无 malloc */\n");
             out.push_str("    /* 所有循环: 有界, WCET 可计算 */\n");
             out.push_str("}\n");
@@ -292,7 +292,7 @@ if (avg > 2048) {
             objectives: vec![
                 "理解实时系统的'截止期'概念".into(),
                 "掌握优先级调度原理".into(),
-                "用 HardyScript 生成 RTOS 任务".into(),
+                "用 DUANYAN 生成 RTOS 任务".into(),
             ],
             example_code: r#"function sensorTask() {
     let val = analogRead(0);
@@ -318,7 +318,7 @@ function commTask() {
 /// 生成学习进度报告
 pub fn generate_progress_report(student_name: &str, completed: &[CourseLevel]) -> String {
     let mut report = String::new();
-    report.push_str(&format!("=== HardyScript 学习进度: {} ===\n\n", student_name));
+    report.push_str(&format!("=== DUANYAN 学习进度: {} ===\n\n", student_name));
 
     let total_levels = 5;
     let done = completed.len();

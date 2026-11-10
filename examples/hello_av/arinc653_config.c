@@ -1,4 +1,4 @@
-/* HardyScript AV: ARINC 653 Partition Configuration */
+/* DUANYAN AV: ARINC 653 Partition Configuration */
 /* Major Time Frame: 10000μs */
 /* Partitions: 1, Utilization: 55.6% */
 

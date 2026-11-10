@@ -22,7 +22,7 @@ Channels: 3
 Diverse Compilation: true
 Vote Period: 1000μs
 
---- HardyScript Auto-Satisfied Objectives ---
+--- DUANYAN Auto-Satisfied Objectives ---
 Total Objectives: 12
 Auto-Satisfied by Compiler: 9
 Requires User Evidence: 3

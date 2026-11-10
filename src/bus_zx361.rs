@@ -1,8 +1,8 @@
-//! 众灵 ZX361 单总线舵机 ASCII 帧构造/解析（HardyScript v1.6 P0）
+//! 众灵 ZX361 单总线舵机 ASCII 帧构造/解析（DUANYAN v1.6 P0）
 //!
-//! 移植自 DUANYAN v1.5 `src/bus_zx361.rs`（单一真值口径），差异仅在宿主：
-//! DUANYAN 为 no_std（`extern crate alloc`），HardyScript 是 std 宿主，直接用 `std::string::String`。
-//! 协议串构造/解析逻辑逐字节一致，测试断言与 DUANYAN 输出完全相同，防两端漂移。
+//! 移植自 DuanYanX v1.5 `src/bus_zx361.rs`（单一真值口径），差异仅在宿主：
+//! DuanYanX 为 no_std（`extern crate alloc`），DUANYAN 是 std 宿主，直接用 `std::string::String`。
+//! 协议串构造/解析逻辑逐字节一致，测试断言与 DuanYanX 输出完全相同，防两端漂移。
 //!
 //! 协议源：《总线舵机说明书 V3.1》（杭州众灵）：单线半双工 115200 8N1。
 //! - 控制帧 `#ID(3位)P PWM(4位)T 时间(4位)!`，如 `#001P1500T0500!`

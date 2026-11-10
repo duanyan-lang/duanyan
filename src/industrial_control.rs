@@ -13,7 +13,7 @@
 /// IEC 61131-3 编程语言类型
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Iec61131Lang {
-    /// Structured Text (最接近 HardyScript)
+    /// Structured Text (最接近 DUANYAN)
     ST,
     /// Function Block Diagram
     FBD,
@@ -32,7 +32,7 @@ pub struct PlcPou {
     pub name: String,
     /// 类型
     pub kind: PouKind,
-    /// 对应 HardyScript 函数名
+    /// 对应 DUANYAN 函数名
     pub hs_function: String,
     /// 执行周期 (μs)
     pub cycle_us: u64,
@@ -96,8 +96,8 @@ impl PlcType {
             Self::Real => "float",
             Self::LReal => "double",
             Self::Time => "uint32_t",
-            Self::Timer => "_hardy_timer_t",
-            Self::Counter => "_hardy_counter_t",
+            Self::Timer => "_duanyan_timer_t",
+            Self::Counter => "_duanyan_counter_t",
         }
     }
 
@@ -114,7 +114,7 @@ impl PlcType {
     }
 }
 
-/// 从 HardyScript 函数生成 IEC 61131-3 ST 代码
+/// 从 DUANYAN 函数生成 IEC 61131-3 ST 代码
 pub fn generate_st_code(pou: &PlcPou, body_logic: &str) -> String {
     let mut code = String::new();
 
@@ -247,7 +247,7 @@ pub fn plan_ecat_schedule(slaves: &[EcatSlave], cycle_us: u64) -> EcatSchedule {
 /// 生成 EtherCAT 循环调度 C 代码
 pub fn generate_ecat_cyclic_code(schedule: &EcatSchedule) -> String {
     let mut code = String::new();
-    code.push_str("/* HardyScript IC: EtherCAT Cyclic Executive */\n");
+    code.push_str("/* DUANYAN IC: EtherCAT Cyclic Executive */\n");
     code.push_str(&format!("/* Cycle: {}μs, Slaves: {} */\n\n", schedule.cycle_us, schedule.slaves.len()));
 
     // 过程数据映像
@@ -261,7 +261,7 @@ pub fn generate_ecat_cyclic_code(schedule: &EcatSchedule) -> String {
     code.push_str("    /* 2. 接收输入过程数据 */\n");
     code.push_str("    _ecat_recv_inputs();\n");
     code.push_str("    /* 3. 执行用户逻辑 */\n");
-    code.push_str("    _hardy_plc_cycle();\n");
+    code.push_str("    _duanyan_plc_cycle();\n");
     code.push_str("    /* 4. 分布式时钟同步 */\n");
     code.push_str("    _ecat_dc_sync();\n");
     code.push_str("}\n\n");
@@ -333,7 +333,7 @@ pub struct SafetyPlcConfig {
 /// 生成 1oo2D 安全架构 C 代码
 pub fn generate_safety_plc_code(config: &SafetyPlcConfig) -> String {
     let mut code = String::new();
-    code.push_str(&format!("/* HardyScript IC: Safety PLC — {} */\n", config.name));
+    code.push_str(&format!("/* DUANYAN IC: Safety PLC — {} */\n", config.name));
     code.push_str(&format!("/* Architecture: 1oo2D, SIL {} */\n", match config.sil {
         SilLevel::Sil1 => "1", SilLevel::Sil2 => "2", SilLevel::Sil3 => "3", SilLevel::Sil4 => "4",
     }));
@@ -472,7 +472,7 @@ pub enum InterpolationKind {
 /// 生成运动控制 C 代码
 pub fn generate_motion_control_code(axes: &[MotionAxis]) -> String {
     let mut code = String::new();
-    code.push_str("/* HardyScript IC: Multi-Axis Motion Control */\n");
+    code.push_str("/* DUANYAN IC: Multi-Axis Motion Control */\n");
     code.push_str(&format!("/* Axes: {} */\n\n", axes.len()));
 
     // 轴结构体

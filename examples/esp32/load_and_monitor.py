@@ -6,7 +6,7 @@ import sys
 
 PORT = 'COM4'
 BAUD = 115200
-BIN_FILE = r'c:\OPENSNAR\DUANYAN\examples\esp32\test_uart.bin'
+BIN_FILE = r'c:\DuanYanOS\DUANYAN\examples\esp32\test_uart.bin'
 
 def sync_rom(ser):
     """发送 SLIP 同步包让 ROM 进入下载模式"""

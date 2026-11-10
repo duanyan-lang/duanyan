@@ -1658,12 +1658,12 @@ mod tests {
 
     #[test]
     fn test_parse_import() {
-        let tokens = tokenize("import { GPIO, UART } from \"hardy:hw\";").unwrap();
+        let tokens = tokenize("import { GPIO, UART } from \"duanyan:hw\";").unwrap();
         let program = parse(&tokens).unwrap();
         match &program.statements[0].stmt {
             Statement::Import { items, source } => {
                 assert_eq!(items, &vec!["GPIO".to_string(), "UART".to_string()]);
-                assert_eq!(source, "hardy:hw");
+                assert_eq!(source, "duanyan:hw");
             }
             _ => panic!("期望 Import"),
         }

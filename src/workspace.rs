@@ -1,4 +1,4 @@
-//! HardyScript Workspace - 多项目管理
+//! DUANYAN Workspace - 多项目管理
 //!
 //! Phase H: `duanyan workspace` 命令
 //! 支持 monorepo 多子项目统一管理、拓扑排序编译
@@ -253,17 +253,17 @@ pub fn workspace_init(dir: &Path, name: &str, monorepo: bool) -> Result<Workspac
     }
 
     // 创建 .duanyan/ 目录
-    let hardy_dir = dir.join(".duanyan");
-    fs::create_dir_all(&hardy_dir).map_err(|e| format!("创建目录失败: {}", e))?;
+    let duanyan_dir = dir.join(".duanyan");
+    fs::create_dir_all(&duanyan_dir).map_err(|e| format!("创建目录失败: {}", e))?;
 
     // 创建 boards.json
     let boards_json = "{\n  \"boards\": []\n}\n";
-    fs::write(hardy_dir.join("boards.json"), boards_json)
+    fs::write(duanyan_dir.join("boards.json"), boards_json)
         .map_err(|e| format!("写入 boards.json 失败: {}", e))?;
 
     // 创建 lint.json
     let lint_json = "{\n  \"rules\": {},\n  \"maxRamKb\": null,\n  \"maxFlashKb\": null\n}\n";
-    fs::write(hardy_dir.join("lint.json"), lint_json)
+    fs::write(duanyan_dir.join("lint.json"), lint_json)
         .map_err(|e| format!("写入 lint.json 失败: {}", e))?;
 
     // 创建 .gitignore

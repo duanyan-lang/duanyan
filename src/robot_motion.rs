@@ -1,8 +1,8 @@
-//! 机器人纯运动学/轨迹数学（HardyScript v1.6 P2）
+//! 机器人纯运动学/轨迹数学（DUANYAN v1.6 P2）
 //!
 //! 从 `robotics.rs`（domains 门禁）下沉的**纯数学单一真源**：DH 正运动学、数值 Jacobian、
 //! 五次多项式轨迹、梯形速度规划。下沉后：
-//! - **默认构建（无 domains）即可用/可测**，供 `hardy:robot` 编译器路径（`Traj.*`/`Joint.glide`）复用；
+//! - **默认构建（无 domains）即可用/可测**，供 `duanyan:robot` 编译器路径（`Traj.*`/`Joint.glide`）复用；
 //! - `robotics.rs`（domains）改为 `pub use crate::robot_motion::*`，只保留阻抗/ISO 15066/传感融合等垂直扩展。
 //!
 //! 语义与原 `robotics.rs` 逐位一致（见测试断言），防下沉回归。

@@ -1,4 +1,4 @@
-# HardyScript PowerShell Tab 补全脚本
+# DUANYAN PowerShell Tab 补全脚本
 # Phase B: 命令行增强
 
 # 用法: 在 PowerShell 中运行 .\scripts\duanyan-completion.ps1 或添加到 $PROFILE
@@ -32,7 +32,7 @@ $script:duanyanTemplates = @('blank', 'blinky', 'uart', 'button')
 
 $script:duanyanTargets = @('gowin', 'stm32', 'esp32', 'rpi-pico')
 
-function Get-HardyCompletions {
+function Get-DuanyanCompletions {
     param(
         [string]$wordToComplete,
         [System.Management.Automation.CommandAst]$commandAst
@@ -119,9 +119,9 @@ function Get-HardyCompletions {
 Register-ArgumentCompleter -Native -CommandName 'duanyan' -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
     
-    Get-HardyCompletions -wordToComplete $wordToComplete -commandAst $commandAst | ForEach-Object {
+    Get-DuanyanCompletions -wordToComplete $wordToComplete -commandAst $commandAst | ForEach-Object {
         [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     }
 }
 
-Write-Host "HardyScript Tab 补全已加载! 输入 'duanyan ' 后按 Tab 键尝试补全。" -ForegroundColor Green
+Write-Host "DUANYAN Tab 补全已加载! 输入 'duanyan ' 后按 Tab 键尝试补全。" -ForegroundColor Green

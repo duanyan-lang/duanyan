@@ -1,4 +1,4 @@
-/* HardyScript AV: TMR Voting — hello */
+/* DUANYAN AV: TMR Voting — hello */
 /* Channels: 3, Diverse: true */
 
 static float _ch_result[3];

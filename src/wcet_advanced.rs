@@ -527,7 +527,7 @@ pub fn generate_advanced_report(results: &[AdvancedWcetResult], target: &CTarget
     let model = get_timing_model(target);
     let mut r = String::new();
 
-    r.push_str("=== HardyScript Advanced WCET Report (Phase W1) ===\n");
+    r.push_str("=== DUANYAN Advanced WCET Report (Phase W1) ===\n");
     r.push_str(&format!("Target: {} @ {}MHz\n", model.name, model.clock_mhz));
     r.push_str(&format!("Peripheral model: loaded\n"));
     r.push_str(&format!("Interrupt model: loaded\n\n"));

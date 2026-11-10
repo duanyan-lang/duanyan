@@ -43,7 +43,7 @@ IR (三地址码):
 生成的 C 代码 (片段):
 ```c
 void app_main(void) {
-    /* 由 HardyScript 自动生成 */
+    /* 由 DUANYAN 自动生成 */
     /* 所有变量: 栈上分配, 无 malloc */
     /* 所有循环: 有界, WCET 可计算 */
 }

@@ -1,6 +1,6 @@
-//! 执行器安全护栏（HardyScript v1.6 P1）
+//! 执行器安全护栏（DUANYAN v1.6 P1）
 //!
-//! 移植自 DUANYAN v1.5 `src/safety_policy.rs`（单一真值口径）：把「臂/关节还能不能动」
+//! 移植自 DuanYanX v1.5 `src/safety_policy.rs`（单一真值口径）：把「臂/关节还能不能动」
 //! 收拢成单一策略点——总线回读（负载/温度/堵转）→ `evaluate()` 出动作
 //! （TorqueOff/Stop/AlarmLed/EscalateHost）。数值/优先级/迟滞与 daemon 侧完全一致
 //! （见测试断言），防两端漂移。差异仅：`EscalatePi`→`EscalateHost`（去项目专名）。
@@ -170,7 +170,7 @@ mod tests {
         SafetyLimits { load_max: 900, temp_max_c: 65.0, stall_ms: 3000 }
     }
 
-    // 以下 6 例镜像 DUANYAN/src/safety_policy.rs 测试（EscalatePi→EscalateHost），数值一致
+    // 以下 6 例镜像 DuanYanX/src/safety_policy.rs 测试（EscalatePi→EscalateHost），数值一致
     #[test]
     fn test_normal_passes() {
         let p = SafetyPolicy::with_defaults();

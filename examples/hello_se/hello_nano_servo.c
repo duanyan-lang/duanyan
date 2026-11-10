@@ -1,4 +1,4 @@
-/* HardyScript SE: Nano-Positioning Servo */
+/* DUANYAN SE: Nano-Positioning Servo */
 /* Axes: 2, Servo Period: 50μs */
 
 /* Fixed-point: 1 LSB = 0.1nm (Q22.10 format) */

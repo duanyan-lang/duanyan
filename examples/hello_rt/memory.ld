@@ -1,4 +1,4 @@
-/* HardyRTOS Linker Script: STM32F407VG */
+/* DUANYAN RTOS Linker Script: STM32F407VG */
 MEMORY
 {
     FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 1024K

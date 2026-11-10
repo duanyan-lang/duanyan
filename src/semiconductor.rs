@@ -248,7 +248,7 @@ pub fn compute_alignment_correction(
 /// 生成纳米级伺服控制 C 代码
 pub fn generate_nano_servo_code(axes: &[NanoAxis], gains: &PidGains) -> String {
     let mut code = String::new();
-    code.push_str("/* HardyScript SE: Nano-Positioning Servo */\n");
+    code.push_str("/* DUANYAN SE: Nano-Positioning Servo */\n");
     code.push_str(&format!("/* Axes: {}, Servo Period: {}μs */\n\n", axes.len(), axes[0].servo_period_us));
 
     // 固定点类型 (纳米精度)

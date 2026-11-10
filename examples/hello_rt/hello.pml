@@ -1,4 +1,4 @@
-/* HardyRTOS Spin Model: hello */
+/* DUANYAN RTOS Spin Model: hello */
 /* Verify: no deadlock, no priority inversion, deadlines met */
 
 #define N_TASKS 0

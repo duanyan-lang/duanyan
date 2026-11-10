@@ -1,4 +1,4 @@
-/* HardyScript RB: Embodied Robot Control — 6 DOF */
+/* DUANYAN RB: Embodied Robot Control — 6 DOF */
 
 #define ROBOT_DOF 6
 

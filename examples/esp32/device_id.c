@@ -5,7 +5,7 @@
  * 烧录: esptool write-flash 或 Flash Download Tool
  * 
  * 设备 ID 算法:
- *   MAC (eFuse 6字节) → FNV-1a 哈希 → "HardyScript-XXXX-XXXX-XXXX"
+ *   MAC (eFuse 6字节) → FNV-1a 哈希 → "DUANYAN-XXXX-XXXX-XXXX"
  *   每颗芯片全球唯一，适用于云服务认证/产品销售/联网通讯
  */
 
@@ -78,11 +78,11 @@ static void generate_device_id(const unsigned char mac[6], char out[28]) {
     mix[9] = h1 & 0xFF;
     unsigned int h2 = fnv1a_32(mix, 10);
     
-    /* 格式: HardyScript-XXXX-XXXX-XXXX (h1高16 + h1低16 + h2高16) */
+    /* 格式: DUANYAN-XXXX-XXXX-XXXX (h1高16 + h1低16 + h2高16) */
     const char hex[] = "0123456789ABCDEF";
     unsigned int parts[3] = { (h1 >> 16) & 0xFFFF, h1 & 0xFFFF, (h2 >> 16) & 0xFFFF };
     int pos = 0;
-    const char *prefix = "HardyScript-";
+    const char *prefix = "DUANYAN-";
     for (const char *p = prefix; *p; p++) out[pos++] = *p;
     for (int p = 0; p < 3; p++) {
         if (p > 0) out[pos++] = '-';
@@ -99,8 +99,8 @@ void _start(void) {
     /* 立即输出 - 不等待 (避免看门狗复位) */
     uart_puts("\r\n");
     uart_puts("================================\r\n");
-    uart_puts("  HardyScript Device Identity Report\r\n");
-    uart_puts("  Powered by HardyScript\r\n");
+    uart_puts("  DUANYAN Device Identity Report\r\n");
+    uart_puts("  Powered by DUANYAN\r\n");
     uart_puts("================================\r\n\r\n");
     
     /* 读取 eFuse MAC */

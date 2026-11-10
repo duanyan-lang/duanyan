@@ -1,11 +1,11 @@
-// robot_arm.js — HardyScript 机械臂抓取 Demo
-// 编译: hardy build robot_arm.js --target esp32
+// robot_arm.js — DUANYAN 机械臂抓取 Demo
+// 编译: duanyan build robot_arm.js --target esp32
 //
 // 演示: Servo 控制 + async/await + setInterval 调度
 // 硬件: ESP32-S3 + 3x SG90 舵机 + 电位器 (ADC)
 
-import { Servo } from "hardy:motor";
-import { ADC, Timer } from "hardy:hw";
+import { Servo } from "duanyan:motor";
+import { ADC, Timer } from "duanyan:hw";
 
 const GRIP = 13;
 const ELBOW = 12;

@@ -1,5 +1,5 @@
-// HardyScript 硬件示例: UART 串口输出
-// 运行: hardy run examples/uart_hw.js --hw
+// DUANYAN 硬件示例: UART 串口输出
+// 运行: duanyan run examples/uart_hw.js --hw
 
 UART.init(9600);
 UART.write(72);

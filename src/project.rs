@@ -1,7 +1,7 @@
 //! 项目模板生成模块
 //!
 //! Phase B: `duanyan new` 命令
-//! 快速创建 HardyScript 项目模板
+//! 快速创建 DUANYAN 项目模板
 
 use std::fs;
 use std::path::Path;
@@ -125,7 +125,7 @@ fn write_file(path: &Path, content: &str) -> Result<(), String> {
 }
 
 fn generate_blank_template() -> String {
-    r#"// HardyScript 空白项目
+    r#"// DUANYAN 空白项目
 // 在此编写你的代码
 
 let x = 42;
@@ -136,10 +136,10 @@ console.log(x);
 }
 
 fn generate_blinky_template() -> String {
-    r#"// HardyScript LED 闪烁示例
-// 使用 hardy:hw 硬件API
+    r#"// DUANYAN LED 闪烁示例
+// 使用 duanyan:hw 硬件API
 
-import { GPIO, Timer } from "hardy:hw";
+import { GPIO, Timer } from "duanyan:hw";
 
 let led = GPIO.output(13);
 
@@ -154,13 +154,13 @@ while (true) {
 }
 
 fn generate_uart_template() -> String {
-    r#"// HardyScript 串口通信示例
-// 使用 hardy:hw 硬件API
+    r#"// DUANYAN 串口通信示例
+// 使用 duanyan:hw 硬件API
 
-import { UART } from "hardy:hw";
+import { UART } from "duanyan:hw";
 
 UART.init(115200);
-UART.write("Hello from HardyScript!\r\n");
+UART.write("Hello from DUANYAN!\r\n");
 
 let counter = 0;
 while (true) {
@@ -174,10 +174,10 @@ while (true) {
 }
 
 fn generate_button_template() -> String {
-    r#"// HardyScript GPIO 按键控制示例
-// 使用 hardy:hw 硬件API
+    r#"// DUANYAN GPIO 按键控制示例
+// 使用 duanyan:hw 硬件API
 
-import { GPIO } from "hardy:hw";
+import { GPIO } from "duanyan:hw";
 
 let led = GPIO.output(13);
 let button = GPIO.input(2, "pullup");
