@@ -1,4 +1,4 @@
-# HardyScript
+# DUANYAN
 
 **An AOT compiler that forges JavaScript into machine code.**
 
@@ -35,8 +35,8 @@ npm install -g hardyscript
 Or build from source (requires [Rust](https://rustup.rs)):
 
 ```bash
-git clone https://github.com/hardyscript-cpu/HardyScript.git
-cd HardyScript
+git clone https://github.com/askai1649/DUANYAN.git
+cd DUANYAN
 cargo install --path .
 ```
 
@@ -44,28 +44,28 @@ cargo install --path .
 
 ```bash
 # Compile JS to firmware
-hardy build blink.js --target esp32
+duanyan build blink.js --target esp32
 
-# DUANYAN spine (脑体分离: Pi=脑, S3=脊髄) — 关节经 Mode-B 帧驱动
-hardy build spine.js --target duanyan-spine
+# DuanYanX spine (脑体分离: Pi=脑, S3=脊髄) — 关节经 Mode-B 帧驱动
+duanyan build spine.js --target duanyan-spine
 
 # Flash to board
-hardy flash output.hex --port COM4
+duanyan flash output.hex --port COM4
 
 # Serial monitor
-hardy monitor --port COM4
+duanyan monitor --port COM4
 
 # AI model generation (gesture recognition)
-hardy model generate --output gesture.duanyan
+duanyan model generate --output gesture.duanyan
 
 # Package manager
-hardy pack init
-hardy pack install math-utils
+duanyan pack init
+duanyan pack install math-utils
 ```
 
 ### Robotics Hardware Modules (v1.6)
 
-机器人对齐升级（以 DUANYAN 真机为单一真值口径镜像/移植，带字节级一致性测试）：
+机器人对齐升级（以 DuanYanX 真机为单一真值口径镜像/移植，带字节级一致性测试）：
 
 | Import | API | 说明 |
 |--------|-----|------|
@@ -109,8 +109,8 @@ setInterval(() => {
 ```
 
 ```bash
-hardy build blink.js --target esp32
-hardy flash blink.hex --port COM4
+duanyan build blink.js --target esp32
+duanyan flash blink.hex --port COM4
 ```
 
 That's it. No C. No toolchain setup. No SDK.
@@ -123,9 +123,9 @@ That's it. No C. No toolchain setup. No SDK.
 - **TypeScript support** — Full type annotation stripping
 - **async/await** — Event-driven embedded programming
 - **AI runtime** — On-device gesture recognition (Duanyan engine)
-- **Package manager** — `hardy pack` for embedded libraries
+- **Package manager** — `duanyan pack` for embedded libraries
 - **Serial tooling** — Built-in flasher + monitor
-- **CI/CD ready** — `hardy ci` for automated build pipelines
+- **CI/CD ready** — `duanyan ci` for automated build pipelines
 
 ## Architecture
 
@@ -158,15 +158,15 @@ JavaScript / TypeScript
 
 | Command | Description |
 |---------|-------------|
-| `hardy build <file>` | Compile JS/TS to firmware |
-| `hardy flash <hex>` | Flash firmware to board |
-| `hardy monitor` | Open serial monitor |
-| `hardy model generate` | Generate AI gesture model |
-| `hardy model convert` | Convert GGUF to Duanyan format |
-| `hardy model benchmark` | Generate ESP32 benchmark harness |
-| `hardy pack init/install/publish` | Package manager |
-| `hardy ci` | Run CI/CD pipeline |
-| `hardy lint <file>` | Static analysis |
+| `duanyan build <file>` | Compile JS/TS to firmware |
+| `duanyan flash <hex>` | Flash firmware to board |
+| `duanyan monitor` | Open serial monitor |
+| `duanyan model generate` | Generate AI gesture model |
+| `duanyan model convert` | Convert GGUF to Duanyan format |
+| `duanyan model benchmark` | Generate ESP32 benchmark harness |
+| `duanyan pack init/install/publish` | Package manager |
+| `duanyan ci` | Run CI/CD pipeline |
+| `duanyan lint <file>` | Static analysis |
 
 ## Building from Source
 
@@ -193,9 +193,9 @@ cargo install --path .
 
 ## License
 
-MIT © HardyScript Team
+MIT © DUANYAN Team
 
 ## Links
 
 - [npm](https://www.npmjs.com/package/hardyscript)
-- [Issues](https://github.com/hardyscript-cpu/HardyScript/issues)
+- [Issues](https://github.com/askai1649/DUANYAN/issues)
