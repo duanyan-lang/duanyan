@@ -1,16 +1,16 @@
 [package]
-name = "hardyscript"
+name = "duanyan"
 version = "1.6.0"
 edition = "2021"
 authors = ["Zhujun"]
 description = "HardyScript: JavaScript/TypeScript → COUNPRE64 / ESP32 / Arduino / STM32 / 树莓派 统一硬件编程编译器"
 
 [[bin]]
-name = "hardy"
+name = "duanyan"
 path = "src/main.rs"
 
 [lib]
-name = "hardyscript"
+name = "duanyan"
 path = "src/lib.rs"
 
 [dependencies]

@@ -48,6 +48,13 @@ pub enum TokenKind {
     Percent,    // %  Phase 4: 取模
     AmpAmp,     // && Phase 4: 逻辑与
     PipePipe,   // || Phase 4: 逻辑或
+    Amp,        // &  位运算债清偿: 按位与
+    Pipe,       // |  位运算债清偿: 按位或
+    Caret,      // ^  位运算债清偿: 按位异或
+    Tilde,      // ~  位运算债清偿: 按位取反（一元）
+    Shl,        // << 位运算债清偿: 左移
+    Shr,        // >> 位运算债清偿: 右移
+    Shrrr,      // >>> 位运算债清偿: 无符号右移
     Arrow,      // => Phase A.1: 箭头函数
     Question,   // ?  Phase A.7: 三元运算符
 

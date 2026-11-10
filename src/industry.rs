@@ -6,7 +6,7 @@ use std::process;
 use crate::{lexer, parser};
 
 // =============================================================================
-// hardy build --target ic|ad|rt|av|md|rw|se|edu|rb — 行业垂直编译 (feature = "domains")
+// duanyan build --target ic|ad|rt|av|md|rw|se|edu|rb — 行业垂直编译 (feature = "domains")
 // =============================================================================
 #[cfg(feature = "domains")]
 pub fn cmd_build_industry(source: &str, input_file: &str, target: &str) {

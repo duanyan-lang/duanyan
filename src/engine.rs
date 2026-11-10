@@ -15,6 +15,12 @@ const UART_TX_ADDR: i64 = 0x100;
 /// 栈初始地址
 const STACK_INIT: i64 = 0x800;
 
+/// async 任务栈池：每任务独立栈区间大小（字节），位于主栈之上互不重叠。
+/// FUNCTION_FRAME_SIZE=144，1024 字节约容 7 层嵌套调用帧。
+const TASK_STACK_SIZE: i64 = 1024;
+/// async 任务栈槽上限（静态池，与并发任务上限一致，零动态分配）
+const TASK_STACK_SLOTS: usize = 16;
+
 /// 最大执行指令数（防止死循环）
 const MAX_CYCLES: u64 = 10_000_000;
 
@@ -32,6 +38,28 @@ pub struct Engine {
     hw_sim: HardwareSimulator,
     /// 硬件模拟模式
     hw_mode: bool,
+    // ===== 债2清偿: await 真悬停 (协作式任务调度器) =====
+    /// 虚拟时钟 (ms)，YIELD_T 推进，确定性可复现
+    vtime_ms: i64,
+    /// SPAWN 派生的 async 任务 (静态上限 16, 零动态分配纲领不变)
+    tasks: Vec<EngineTask>,
+    /// 当前执行中的任务索引 (None = 主程序)
+    current_task: Option<usize>,
+    /// 挂起事件日志 (task_id, 挂起时刻 ms, 时长 ms)，task_id=0 表示主程序
+    suspend_log: Vec<(usize, i64, i64)>,
+    /// 任务栈槽占用位图（静态池，true=已占用），保证并发任务栈帧互不重叠
+    stack_slots: [bool; TASK_STACK_SLOTS],
+}
+
+/// 引擎内 async 任务（SPAWN 派生，YIELD_T 挂起，TRET 结束）
+struct EngineTask {
+    pc: usize,
+    regs: [i64; 16],
+    /// None = 可运行；Some(t) = 睡眠至虚拟时刻 t (ms)
+    wake_at: Option<i64>,
+    done: bool,
+    /// 栈池槽号（任务结束时归还，供后续 SPAWN 复用）
+    slot: usize,
 }
 
 /// 运行时错误类型
@@ -71,6 +99,11 @@ impl Engine {
             pending_num: false,
             hw_sim: HardwareSimulator::new(),
             hw_mode: false,
+            vtime_ms: 0,
+            tasks: Vec::new(),
+            current_task: None,
+            suspend_log: Vec::new(),
+            stack_slots: [false; TASK_STACK_SLOTS],
         }
     }
 
@@ -85,6 +118,9 @@ impl Engine {
     }
 
     /// 执行到 HALT，返回输出字符串和执行统计
+    ///
+    /// 债2清偿: 主程序 HALT 后，若存在 SPAWN 派生的 async 任务，
+    /// 进入协作式调度器直到全部任务结束（确定性轮转 + 虚拟时钟）。
     pub fn run(&mut self) -> Result<(String, u64), String> {
         // 初始化 SP
         self.regs[2] = STACK_INIT;
@@ -99,6 +135,10 @@ impl Engine {
             self.step();
             self.cycles += 1;
         }
+        self.current_task = None;
+
+        // 主程序结束 → 驱动 async 任务至全部完成
+        self.run_task_scheduler()?;
 
         Ok((self.output.clone(), self.cycles))
     }
@@ -130,6 +170,61 @@ impl Engine {
             return;
         }
 
+        // ===== 债2清偿: await 真悬停指令族 (opcode=0xF) =====
+        if opcode == 0xF && func == 0x2 {
+            // YIELD_T: 挂起当前任务至虚拟时钟 +a ms（a<=0 视为让出一次）
+            let ms = if a > 0 { a } else { 0 };
+            let tid = self.current_task.map(|i| i + 1).unwrap_or(0);
+            self.suspend_log.push((tid, self.vtime_ms, ms));
+            let wake_at = self.vtime_ms + ms;
+            match self.current_task {
+                Some(i) => {
+                    // 保存现场后交出控制权：run_task 检测 current_task=None 返回，
+                    // 调度器随后据 wake_at 到期时重新唤醒本任务。
+                    self.tasks[i].pc = self.pc + 1;
+                    self.tasks[i].regs = self.regs;
+                    self.tasks[i].wake_at = Some(wake_at);
+                    self.current_task = None;
+                }
+                None => {
+                    // 主程序悬停：推进虚拟时钟后继续（主程序不与任务并发）
+                    self.vtime_ms = wake_at;
+                    self.pc += 1;
+                }
+            }
+            return;
+        }
+        if opcode == 0xF && func == 0x3 {
+            // TRET: async 任务正常结束
+            self.halted = true;
+            return;
+        }
+        if opcode == 0xF && func == 0x4 {
+            // SPAWN: 派生 async 任务，入口地址 = regs[rs1]（字节地址）
+            // 从静态栈池分配一个空闲槽：槽号在任务生命周期内唯一，
+            // 保证挂起任务的栈帧不会被后启动任务覆盖（也不受 retain 索引漂移影响）。
+            match (0..TASK_STACK_SLOTS).find(|&s| !self.stack_slots[s]) {
+                Some(slot) => {
+                    self.stack_slots[slot] = true;
+                    let entry = self.regs[rs1] as usize / 4;
+                    let mut regs = [0i64; 16];
+                    regs[3] = self.regs[3]; // a0
+                    regs[4] = self.regs[4]; // a1
+                    regs[5] = self.regs[5]; // a2
+                    regs[6] = self.regs[6]; // a3
+                    regs[7] = self.regs[7]; // a4
+                    // 任务栈基址 = 主栈之上第 slot 个区间，向下生长且互不重叠
+                    regs[2] = STACK_INIT + (slot as i64 + 1) * TASK_STACK_SIZE;
+                    self.tasks.push(EngineTask { pc: entry, regs, wake_at: None, done: false, slot });
+                }
+                None => {
+                    eprintln!("SPAWN 失败: async 任务栈槽已耗尽（上限 {}）", TASK_STACK_SLOTS);
+                }
+            }
+            self.pc += 1;
+            return;
+        }
+
         let result = match opcode {
             0x0 => match func {
                 0x0 => a.wrapping_add(b),       // ADD
@@ -147,7 +242,13 @@ impl Engine {
             0x3 => a | b,                           // OR
             0x4 => a ^ b,                           // XOR
             0x5 => a.wrapping_shl((b & 63) as u32),// SHL
-            0x6 => (a as u64).wrapping_shr((b & 63) as u32) as i64, // SHR
+            0x6 => match func {
+                // 位运算债清偿: SHR 家族按 func 分派
+                // 0x0=逻辑右移(比较指令既有占用,语义不动)
+                0x1 => a.wrapping_shr((b & 63) as u32),                     // SRA  算术右移 (>>)
+                0x2 => (a as u64).wrapping_shr((b & 63) as u32) as i64,      // SRLU 无符号右移 (>>>)
+                _ => (a as u64).wrapping_shr((b & 63) as u32) as i64,        // SHR  逻辑右移 (既有)
+            },
             0x7 => match func {
                 0x8  => a.wrapping_mul(b),          // MUL
                 0x9  => {
@@ -269,6 +370,93 @@ impl Engine {
             self.regs[rd] = val;
         }
     }
+
+    // =========================================================================
+    // 债2清偿: 协作式 async 任务调度器
+    //
+    // 语义约定 (v1):
+    //   - 主程序顺序执行至 HALT，期间 SPAWN 只登记不并发（确定性优先）
+    //   - 主程序结束后轮转驱动任务：就绪即跑，YIELD_T 挂起，TRET 结束
+    //   - 全部任务睡眠时，虚拟时钟直接推进到最早唤醒点（零空转）
+    //   - 任务切换点只在 YIELD_T/TRET，切换时保存/恢复 pc+全部寄存器
+    // =========================================================================
+
+    /// 运行单个任务时间片：直到 TRET 完成 / YIELD_T 挂起 / 跑飞
+    fn run_task(&mut self, idx: usize) {
+        self.current_task = Some(idx);
+        self.pc = self.tasks[idx].pc;
+        self.regs = self.tasks[idx].regs;
+        self.halted = false;
+        let mut slice_cycles = 0u64;
+        while !self.halted && slice_cycles < MAX_CYCLES {
+            if self.pc >= self.instructions.len() {
+                break; // 跑飞视同结束
+            }
+            self.step();
+            slice_cycles += 1;
+            self.cycles += 1;
+            // YIELD_T 已把现场写回 tasks[idx] 并置 current_task=None → 交还调度器
+            if self.current_task.is_none() {
+                return;
+            }
+        }
+        // 走到这里 = TRET(halted) 或跑飞 → 任务完成，归还栈池槽
+        self.tasks[idx].done = true;
+        let slot = self.tasks[idx].slot;
+        self.stack_slots[slot] = false;
+        self.current_task = None;
+    }
+
+    /// 主程序 HALT 后的任务调度循环
+    fn run_task_scheduler(&mut self) -> Result<(), String> {
+        let mut guard = 0u64;
+        loop {
+            guard += 1;
+            if guard > 10_000 {
+                return Err("async 调度超限：任务始终未结束（疑似死循环）".to_string());
+            }
+            self.tasks.retain(|t| !t.done);
+            if self.tasks.is_empty() {
+                return Ok(());
+            }
+            // 唤醒到期任务
+            for t in self.tasks.iter_mut() {
+                if let Some(w) = t.wake_at {
+                    if w <= self.vtime_ms {
+                        t.wake_at = None;
+                    }
+                }
+            }
+            // 轮转执行所有就绪任务（每轮每任务至多一个时间片）
+            let mut ran = false;
+            for i in 0..self.tasks.len() {
+                if self.tasks[i].wake_at.is_none() {
+                    self.run_task(i);
+                    ran = true;
+                    if self.cycles >= MAX_CYCLES {
+                        return Err(format!("执行超限: {} 条指令（async 任务疑似死循环）", MAX_CYCLES));
+                    }
+                }
+            }
+            if ran {
+                continue;
+            }
+            // 全员睡眠 → 虚拟时钟推进到最早唤醒点
+            let next_wake = self.tasks.iter().filter_map(|t| t.wake_at).min();
+            match next_wake {
+                Some(w) => self.vtime_ms = w,
+                None => return Ok(()), // 防御：无可运行且无唤醒点
+            }
+        }
+    }
+
+    // ===== 债2清偿: 公开访问器 =====
+    /// 虚拟时钟 (ms)
+    pub fn vtime(&self) -> i64 { self.vtime_ms }
+    /// 挂起事件日志 (task_id, 挂起时刻 ms, 时长 ms)，task_id=0 为主程序
+    pub fn suspend_log(&self) -> &[(usize, i64, i64)] { &self.suspend_log }
+    /// 尚未结束的 async 任务数
+    pub fn active_task_count(&self) -> usize { self.tasks.iter().filter(|t| !t.done).count() }
 
     // ===== 调试接口 =====
     pub fn pc(&self) -> usize { self.pc }

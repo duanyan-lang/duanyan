@@ -355,8 +355,12 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                     chars.next();
                     tokens.push(Token { kind: TokenKind::AmpAmp, line, col });
                     col += 2;
+                } else if chars.peek() == Some(&'=') {
+                    return Err(format!("行{} 列{}: 复合赋值 '&=' 尚未实现（请写 x = x & 值）", line, col));
                 } else {
-                    return Err(format!("行{} 列{}: 未识别字符 '&'（是否需要 '&&'？）", line, col));
+                    // 位运算债清偿: 单 & = 按位与
+                    tokens.push(Token { kind: TokenKind::Amp, line, col });
+                    col += 1;
                 }
             }
             '|' => {
@@ -365,13 +369,35 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                     chars.next();
                     tokens.push(Token { kind: TokenKind::PipePipe, line, col });
                     col += 2;
+                } else if chars.peek() == Some(&'=') {
+                    return Err(format!("行{} 列{}: 复合赋值 '|=' 尚未实现（请写 x = x | 值）", line, col));
                 } else {
-                    return Err(format!("行{} 列{}: 未识别字符 '|'（是否需要 '||'？）", line, col));
+                    // 位运算债清偿: 单 | = 按位或
+                    tokens.push(Token { kind: TokenKind::Pipe, line, col });
+                    col += 1;
                 }
+            }
+            '^' => {
+                // 位运算债清偿: 按位异或
+                tokens.push(Token { kind: TokenKind::Caret, line, col });
+                chars.next(); col += 1;
+            }
+            '~' => {
+                // 位运算债清偿: 按位取反（一元）
+                tokens.push(Token { kind: TokenKind::Tilde, line, col });
+                chars.next(); col += 1;
             }
             '<' => {
                 chars.next();
-                if chars.peek() == Some(&'=') {
+                if chars.peek() == Some(&'<') {
+                    chars.next();
+                    if chars.peek() == Some(&'=') {
+                        return Err(format!("行{} 列{}: 复合赋值 '<<=' 尚未实现（请写 x = x << 值）", line, col));
+                    }
+                    // 位运算债清偿: 左移
+                    tokens.push(Token { kind: TokenKind::Shl, line, col });
+                    col += 2;
+                } else if chars.peek() == Some(&'=') {
                     chars.next();
                     tokens.push(Token { kind: TokenKind::Le, line, col });
                     col += 2;
@@ -382,7 +408,24 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
             }
             '>' => {
                 chars.next();
-                if chars.peek() == Some(&'=') {
+                if chars.peek() == Some(&'>') {
+                    chars.next();
+                    if chars.peek() == Some(&'>') {
+                        chars.next();
+                        if chars.peek() == Some(&'=') {
+                            return Err(format!("行{} 列{}: 复合赋值 '>>>=' 尚未实现（请写 x = x >>> 值）", line, col));
+                        }
+                        // 位运算债清偿: 无符号右移
+                        tokens.push(Token { kind: TokenKind::Shrrr, line, col });
+                        col += 3;
+                    } else if chars.peek() == Some(&'=') {
+                        return Err(format!("行{} 列{}: 复合赋值 '>>=' 尚未实现（请写 x = x >> 值）", line, col));
+                    } else {
+                        // 位运算债清偿: 右移
+                        tokens.push(Token { kind: TokenKind::Shr, line, col });
+                        col += 2;
+                    }
+                } else if chars.peek() == Some(&'=') {
                     chars.next();
                     tokens.push(Token { kind: TokenKind::Ge, line, col });
                     col += 2;

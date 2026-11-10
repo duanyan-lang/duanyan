@@ -262,6 +262,13 @@ impl Optimizer {
             // Phase A: === 和 !== 对整数与 == / != 等价
             BinOp::StrictEq => Some(if lv == rv { 1 } else { 0 }),
             BinOp::StrictNotEq => Some(if lv != rv { 1 } else { 0 }),
+            // 位运算债清偿: 常量折叠（移位量按 & 63 掩码，与 VM 一致）
+            BinOp::BitAnd => Some(lv & rv),
+            BinOp::BitOr => Some(lv | rv),
+            BinOp::BitXor => Some(lv ^ rv),
+            BinOp::Shl => Some(lv.wrapping_shl((rv & 63) as u32)),
+            BinOp::Shr => Some(lv.wrapping_shr((rv & 63) as u32)),
+            BinOp::UShr => Some((lv as u64).wrapping_shr((rv & 63) as u32) as i64),
         }
     }
 

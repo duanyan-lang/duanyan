@@ -1,6 +1,6 @@
 //! ESP-IDF 项目结构生成模块
 //!
-//! Phase C: `hardy build hello.js --target esp32` 自动生成 ESP-IDF 项目
+//! Phase C: `duanyan build hello.js --target esp32` 自动生成 ESP-IDF 项目
 //! 生成标准 ESP-IDF CMake 项目结构
 
 use std::fs;

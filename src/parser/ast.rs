@@ -159,6 +159,8 @@ pub enum BinOp {
     Eq, NotEq, StrictEq, StrictNotEq,  // Phase A: ===, !==
     Lt, Gt, Le, Ge,
     And, Or,
+    // 位运算债清偿: & | ^ << >> >>>
+    BitAnd, BitOr, BitXor, Shl, Shr, UShr,
 }
 
 /// Math 内建运算 → COUNPRE64 创新指令 (单周期)

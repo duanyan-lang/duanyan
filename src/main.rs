@@ -68,6 +68,8 @@ mod semiconductor;      // Phase SE
 #[cfg(feature = "domains")]
 mod education;          // Phase EDU
 #[cfg(feature = "domains")]
+mod robot_motion;       // v1.6 P2: robotics 复用的纯运动学/轨迹数学 (bin 侧需在 domains 下声明, 镜像 lib.rs)
+#[cfg(feature = "domains")]
 mod robotics;           // Phase RB
 
 const BANNER: &str = r#"
@@ -135,12 +137,12 @@ fn main() {
 }
 
 // =============================================================================
-// hardy build - 编译（打造武器）
+// duanyan build - 编译（打造武器）
 // =============================================================================
 fn cmd_build(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy build: 请指定源码文件");
-        eprintln!("用法: hardy build <input.js|.ts> [-o output.hex] [--asm] [-O] [--compat] [--async] [--target esp32|arduino-avr|arduino-arm|stm32|rpi|counpre64] [--board arduino-uno]");
+        eprintln!("duanyan build: 请指定源码文件");
+        eprintln!("用法: duanyan build <input.js|.ts> [-o output.hex] [--asm] [-O] [--compat] [--async] [--target esp32|arduino-avr|arduino-arm|stm32|rpi|counpre64] [--board arduino-uno]");
         process::exit(1);
     }
 
@@ -225,7 +227,7 @@ fn cmd_build(args: &[String]) {
             { return crate::industry::cmd_build_industry(&source, input_file, &t_lower); }
             #[cfg(not(feature = "domains"))]
             {
-                eprintln!("hardy build --target {}: 行业垂直编译需以 --features domains 构建", t_lower);
+                eprintln!("duanyan build --target {}: 行业垂直编译需以 --features domains 构建", t_lower);
                 process::exit(1);
             }
         }
@@ -424,12 +426,12 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
 mod industry;
 
 // =============================================================================
-// hardy hunt - 编译+部署: build + flash
+// duanyan hunt - 编译+部署: build + flash
 // =============================================================================
 fn cmd_hunt(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy hunt: 请指定源码文件");
-        eprintln!("用法: hardy hunt <input.js|.ts> [--port COM3]");
+        eprintln!("duanyan hunt: 请指定源码文件");
+        eprintln!("用法: duanyan hunt <input.js|.ts> [--port COM3]");
         process::exit(1);
     }
 
@@ -445,17 +447,17 @@ fn cmd_hunt(args: &[String]) {
     // 提示烧录
     let hex_file = args[0].replace(".ts", ".hex").replace(".js", ".hex");
     println!("\n固件已就绪: {}", hex_file);
-    println!("   → 使用 'hardy lock' 锁定硬件目标");
+    println!("   → 使用 'duanyan lock' 锁定硬件目标");
     println!("   → 或手动: Gowin Programmer → Load '{}'", hex_file);
 }
 
 // =============================================================================
-// hardy track - 追踪（调试输出汇编）
+// duanyan track - 追踪（调试输出汇编）
 // =============================================================================
 fn cmd_track(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy track: 请指定追踪目标");
-        eprintln!("用法: hardy track <input.js|.ts>");
+        eprintln!("duanyan track: 请指定追踪目标");
+        eprintln!("用法: duanyan track <input.js|.ts>");
         process::exit(1);
     }
 
@@ -491,12 +493,12 @@ fn cmd_track(args: &[String]) {
 }
 
 // =============================================================================
-// hardy scan - 侦查（扫描代码，报告统计）
+// duanyan scan - 侦查（扫描代码，报告统计）
 // =============================================================================
 fn cmd_scan(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy scan: 请指定源码文件");
-        eprintln!("用法: hardy scan <input.js|.ts>");
+        eprintln!("duanyan scan: 请指定源码文件");
+        eprintln!("用法: duanyan scan <input.js|.ts>");
         process::exit(1);
     }
 
@@ -624,14 +626,14 @@ fn cmd_scan(args: &[String]) {
 }
 
 // =============================================================================
-// hardy lock - 锁定硬件（烧录提示）
+// duanyan lock - 锁定硬件（烧录提示）
 // =============================================================================
 fn cmd_lock(args: &[String]) {
     let hex_file = if !args.is_empty() {
         args[0].clone()
     } else {
-        eprintln!("hardy lock: 请指定 .hex 文件");
-        eprintln!("用法: hardy lock <file.hex> [--port COM3]");
+        eprintln!("duanyan lock: 请指定 .hex 文件");
+        eprintln!("用法: duanyan lock <file.hex> [--port COM3]");
         process::exit(1);
     };
 
@@ -651,12 +653,12 @@ fn cmd_lock(args: &[String]) {
 }
 
 // =============================================================================
-// hardy flash - 烧录到硬件（发射弹药）
+// duanyan flash - 烧录到硬件（发射弹药）
 // =============================================================================
 fn cmd_flash(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy flash: 请指定源码或 .hex 文件");
-        eprintln!("用法: hardy flash <input.js|.ts|.hex> [--target gowin|stm32|esp32|arduino|rpi] [--board arduino-uno] [--port COM3] [--rom]");
+        eprintln!("duanyan flash: 请指定源码或 .hex 文件");
+        eprintln!("用法: duanyan flash <input.js|.ts|.hex> [--target gowin|stm32|esp32|arduino|rpi] [--board arduino-uno] [--port COM3] [--rom]");
         process::exit(1);
     }
 
@@ -762,12 +764,12 @@ fn cmd_flash(args: &[String]) {
 }
 
 // =============================================================================
-// hardy bite - 单步调试（逐条执行）
+// duanyan bite - 单步调试（逐条执行）
 // =============================================================================
 fn cmd_bite(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy bite: 请指定目标");
-        eprintln!("用法: hardy bite <input.js|.ts>");
+        eprintln!("duanyan bite: 请指定目标");
+        eprintln!("用法: duanyan bite <input.js|.ts>");
         process::exit(1);
     }
 
@@ -801,12 +803,12 @@ fn cmd_bite(args: &[String]) {
 
 
 // =============================================================================
-// hardy run - 执行（原生执行引擎）
+// duanyan run - 执行（原生执行引擎）
 // =============================================================================
 fn cmd_run(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy run: 请指定执行目标");
-        eprintln!("用法: hardy run <input.js|.ts> [-O] [--hw]");
+        eprintln!("duanyan run: 请指定执行目标");
+        eprintln!("用法: duanyan run <input.js|.ts> [-O] [--hw]");
         eprintln!("  --hw  启用硬件模拟模式 (GPIO/UART/PWM/Timer)");
         process::exit(1);
     }
@@ -861,7 +863,7 @@ fn cmd_run(args: &[String]) {
 }
 
 // =============================================================================
-// hardy prey - 源码文件列表
+// duanyan prey - 源码文件列表
 // =============================================================================
 fn cmd_prey(args: &[String]) {
     let dir = if !args.is_empty() { &args[0] } else { "." };
@@ -896,12 +898,12 @@ fn cmd_prey(args: &[String]) {
 
 
 // =============================================================================
-// hardy debug - 调试（交互式调试器）
+// duanyan debug - 调试（交互式调试器）
 // =============================================================================
 fn cmd_debug(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy debug: 请指定调试目标");
-        eprintln!("用法: hardy debug <input.js|.ts> [-O]");
+        eprintln!("duanyan debug: 请指定调试目标");
+        eprintln!("用法: duanyan debug <input.js|.ts> [-O]");
         process::exit(1);
     }
 
@@ -959,7 +961,7 @@ fn cmd_debug(args: &[String]) {
 }
 
 // =============================================================================
-// hardy board - 开发板管理
+// duanyan board - 开发板管理
 // =============================================================================
 fn cmd_board(args: &[String]) {
     let subcmd = if args.is_empty() { "list" } else { args[0].as_str() };
@@ -967,23 +969,23 @@ fn cmd_board(args: &[String]) {
         "list" => board::cmd_board_list(),
         "info" => {
             if args.len() < 2 {
-                eprintln!("hardy board info: 请指定开发板名称");
-                eprintln!("用法: hardy board info <name>");
+                eprintln!("duanyan board info: 请指定开发板名称");
+                eprintln!("用法: duanyan board info <name>");
                 process::exit(1);
             }
             board::cmd_board_info(&args[1]);
         }
         "set" => {
             if args.len() < 2 {
-                eprintln!("hardy board set: 请指定默认开发板");
-                eprintln!("用法: hardy board set <name>");
-                eprintln!("示例: hardy board set arduino-mega");
+                eprintln!("duanyan board set: 请指定默认开发板");
+                eprintln!("用法: duanyan board set <name>");
+                eprintln!("示例: duanyan board set arduino-mega");
                 process::exit(1);
             }
             board::cmd_board_set(&args[1]);
         }
         _ => {
-            eprintln!("hardy board: 未知子命令 '{}'", subcmd);
+            eprintln!("duanyan board: 未知子命令 '{}'", subcmd);
             eprintln!("可用子命令: list, info, set");
             process::exit(1);
         }
@@ -991,11 +993,11 @@ fn cmd_board(args: &[String]) {
 }
 
 // =============================================================================
-// hardy new - 创建新项目模板生成 =============================================================================
+// duanyan new - 创建新项目模板生成 =============================================================================
 fn cmd_new(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy new: 请指定项目名称");
-        eprintln!("用法: hardy new <name> [--template blank|blinky|uart|button] [--board esp32|arduino-uno|counpre64]");
+        eprintln!("duanyan new: 请指定项目名称");
+        eprintln!("用法: duanyan new <name> [--template blank|blinky|uart|button] [--board esp32|arduino-uno|counpre64]");
         eprintln!();
         project::list_templates();
         process::exit(1);
@@ -1039,7 +1041,7 @@ fn cmd_new(args: &[String]) {
         Ok(()) => {
             println!("项目创建创建: {}", name);
             println!("   {}/", name);
-            println!("   ├── hardy.json");
+            println!("   ├── duanyan.json");
             println!("   ├── .gitignore");
             println!("   └── src/");
             println!("       └── main.js");
@@ -1047,7 +1049,7 @@ fn cmd_new(args: &[String]) {
                 println!("   目标板子: {}", b);
             }
             println!();
-            println!(" cd {} && hardy build src/main.js", name);
+            println!(" cd {} && duanyan build src/main.js", name);
         }
         Err(e) => {
             eprintln!("{}", e);
@@ -1057,7 +1059,7 @@ fn cmd_new(args: &[String]) {
 }
 
 // =============================================================================
-// hardy monitor - 串口监视器
+// duanyan monitor - 串口监视器
 // =============================================================================
 fn cmd_monitor(args: &[String]) {
     let mut config = monitor::MonitorConfig::default();
@@ -1091,13 +1093,13 @@ fn cmd_monitor(args: &[String]) {
 }
 
 // =============================================================================
-// hardy init - 在当前目录初始化 hardy 项目
+// duanyan init - 在当前目录初始化 duanyan 项目
 // =============================================================================
 fn cmd_init(_args: &[String]) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::Path::new(".").to_path_buf());
 
-    if cwd.join("hardy.json").exists() {
-        eprintln!("hardy.json 已存在，跳过初始化");
+    if cwd.join("duanyan.json").exists() {
+        eprintln!("duanyan.json 已存在，跳过初始化");
         return;
     }
 
@@ -1126,8 +1128,8 @@ fn cmd_init(_args: &[String]) {
         process::exit(1);
     }
 
-    if let Err(e) = std::fs::write(cwd.join("hardy.json"), &config) {
-        eprintln!("写入 hardy.json 失败: {}", e);
+    if let Err(e) = std::fs::write(cwd.join("duanyan.json"), &config) {
+        eprintln!("写入 duanyan.json 失败: {}", e);
         process::exit(1);
     }
 
@@ -1158,20 +1160,20 @@ while (true) {
     }
 
     println!("已初始化 HardyScript 项目: {}", project_name);
-    println!("   hardy.json");
+    println!("   duanyan.json");
     println!("   src/main.js");
     println!("   .gitignore");
     println!();
-    println!(" hardy build src/main.js");
+    println!(" duanyan build src/main.js");
 }
 
 // =============================================================================
-// hardy compat - Espruino/Moddable 兼容分析
+// duanyan compat - Espruino/Moddable 兼容分析
 // =============================================================================
 fn cmd_compat(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy compat: 请指定分析目标");
-        eprintln!("用法: hardy compat <input.js> [--convert]");
+        eprintln!("duanyan compat: 请指定分析目标");
+        eprintln!("用法: duanyan compat <input.js> [--convert]");
         eprintln!();
         println!("  分析源码中的 Espruino/Moddable 旧式 API");
         println!("  --convert  输出转换后的 Hardy 标准代码");
@@ -1222,7 +1224,7 @@ fn cmd_compat(args: &[String]) {
         println!("{}", converted);
     } else if total > 0 {
         println!("  使用 --convert 查看转换后代码");
-        println!("  或: hardy build {} --compat", input_file);
+        println!("  或: duanyan build {} --compat", input_file);
     }
 }
 
@@ -1346,19 +1348,19 @@ fn board_to_target_kind(board: &str) -> Option<flasher::TargetKind> {
 }
 
 // =============================================================================
-// hardy model - 锻言Mini AI 模型管理 (Phase F)
+// duanyan model - 锻言Mini AI 模型管理 (Phase F)
 // =============================================================================
 fn cmd_model(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy model: 请指定子命令");
-        eprintln!("用法: hardy model <convert|verify|info|deploy|list>");
+        eprintln!("duanyan model: 请指定子命令");
+        eprintln!("用法: duanyan model <convert|verify|info|deploy|list>");
         process::exit(1);
     }
 
     match args[0].as_str() {
         "verify" => {
             if args.len() < 2 {
-                eprintln!("用法: hardy model verify <model.duanyan>");
+                eprintln!("用法: duanyan model verify <model.duanyan>");
                 process::exit(1);
             }
             let path = Path::new(&args[1]);
@@ -1369,7 +1371,7 @@ fn cmd_model(args: &[String]) {
         }
         "info" => {
             if args.len() < 2 {
-                eprintln!("用法: hardy model info <model.duanyan>");
+                eprintln!("用法: duanyan model info <model.duanyan>");
                 process::exit(1);
             }
             let path = Path::new(&args[1]);
@@ -1379,7 +1381,7 @@ fn cmd_model(args: &[String]) {
             }
         }
         "convert" => {
-            // hardy model convert --input <f> --output <f> [--quant int4|fp32] [--official]
+            // duanyan model convert --input <f> --output <f> [--quant int4|fp32] [--official]
             let mut input = String::new();
             let mut output = String::new();
             let mut quant_str = "int4".to_string();
@@ -1396,7 +1398,7 @@ fn cmd_model(args: &[String]) {
                 i += 1;
             }
             if input.is_empty() || output.is_empty() {
-                eprintln!("用法: hardy model convert --input <f.gguf|f.bin> --output <f.duanyan> [--quant int4|int8|fp16|fp32] [--official]");
+                eprintln!("用法: duanyan model convert --input <f.gguf|f.bin> --output <f.duanyan> [--quant int4|int8|fp16|fp32] [--official]");
                 eprintln!("  --official  用千灌Mini官方规格 (6层/384维/6头/5000词表) 创建模型模板");
                 process::exit(1);
             }
@@ -1487,7 +1489,7 @@ fn cmd_model(args: &[String]) {
             }
         }
         "generate" => {
-            // hardy model generate --output <f.duanyan> [--benchmark <f.c>]
+            // duanyan model generate --output <f.duanyan> [--benchmark <f.c>]
             let mut output = String::new();
             let mut bench_out = String::new();
             let mut i = 1;
@@ -1500,7 +1502,7 @@ fn cmd_model(args: &[String]) {
                 i += 1;
             }
             if output.is_empty() {
-                eprintln!("用法: hardy model generate --output <gesture-10m-int4.duanyan> [--benchmark <benchmark.c>]");
+                eprintln!("用法: duanyan model generate --output <gesture-10m-int4.duanyan> [--benchmark <benchmark.c>]");
                 eprintln!("  生成真实架构的锻言Mini手势识别模型 (Xavier初始化 + INT4量化)");
                 eprintln!("  --benchmark  同时生成 ESP32-S3 benchmark C 代码");
                 process::exit(1);
@@ -1546,7 +1548,7 @@ fn cmd_model(args: &[String]) {
             }
         }
         "benchmark" => {
-            // hardy model benchmark --model <f.duanyan> --output <benchmark.c>
+            // duanyan model benchmark --model <f.duanyan> --output <benchmark.c>
             let mut model_path = String::new();
             let mut output = String::new();
             let mut i = 1;
@@ -1559,7 +1561,7 @@ fn cmd_model(args: &[String]) {
                 i += 1;
             }
             if model_path.is_empty() || output.is_empty() {
-                eprintln!("用法: hardy model benchmark --model <f.duanyan> --output <benchmark.c>");
+                eprintln!("用法: duanyan model benchmark --model <f.duanyan> --output <benchmark.c>");
                 eprintln!("  从 .duanyan 模型文件生成 ESP32-S3 benchmark C 代码");
                 process::exit(1);
             }
@@ -1584,9 +1586,9 @@ fn cmd_model(args: &[String]) {
             }
         }
         "deploy" => {
-            // hardy model deploy <file> --sd <path>
+            // duanyan model deploy <file> --sd <path>
             if args.len() < 2 {
-                eprintln!("用法: hardy model deploy <model.duanyan> --sd <path>");
+                eprintln!("用法: duanyan model deploy <model.duanyan> --sd <path>");
                 process::exit(1);
             }
             let model_path = Path::new(&args[1]);
@@ -1597,7 +1599,7 @@ fn cmd_model(args: &[String]) {
                 i += 1;
             }
             if sd_path.is_empty() {
-                eprintln!("用法: hardy model deploy <model.duanyan> --sd <path>");
+                eprintln!("用法: duanyan model deploy <model.duanyan> --sd <path>");
                 process::exit(1);
             }
             let sd_dir = Path::new(&sd_path);
@@ -1615,10 +1617,10 @@ fn cmd_model(args: &[String]) {
             }
         }
         "list" => {
-            // hardy model list --prebuilt
+            // duanyan model list --prebuilt
             let show_prebuilt = args.iter().any(|a| a == "--prebuilt");
             if !show_prebuilt {
-                println!("用法: hardy model list --prebuilt");
+                println!("用法: duanyan model list --prebuilt");
                 println!();
             }
             println!("=== 官方预训练锻言Mini模型 ===");
@@ -1629,7 +1631,7 @@ fn cmd_model(args: &[String]) {
                 println!("{:<28} {:<10} {:<16} {}", m.name, m.desc, m.params, m.use_case);
             }
             println!();
-            println!("下载: hardy pack install <model-name>");
+            println!("下载: duanyan pack install <model-name>");
         }
         _ => {
             eprintln!("未知子命令 '{}'", args[0]);
@@ -1643,59 +1645,59 @@ fn print_usage() {
     println!("命令手册:");
     println!();
     println!("  编译与运行:");
-    println!("  hardy build <file>                          编译为 .hex");
-    println!("  hardy build <file> --target esp32            C 代码生成 (ESP-IDF 项目)");
-    println!("  hardy build <file> --target arduino-avr      Arduino sketch 生成");
-    println!("  hardy build <file> --target stm32            STM32 HAL 项目生成");
-    println!("  hardy build <file> --target rpi              树莓派项目生成");
-    println!("  hardy build <file> --target ic               工业控制 (PLC/EtherCAT/SIL-3/运动控制)");
-    println!("  hardy build <file> --target ad               自动驾驶 (CAN FD/AUTOSAR/Fail-Op)");
-    println!("  hardy build <file> --target rt               嵌入式 RTOS (微内核/BSP/TLA+)");
-    println!("  hardy build <file> --target av               航空电子 (DO-178C/ARINC653/TMR)");
-    println!("  hardy build <file> --target md               医疗器械 (IEC 62304/ISO 14971)");
-    println!("  hardy build <file> --target rw               轨道交通 (EN 50128 SIL-4/联锁)");
-    println!("  hardy build <file> --target se               半导体设备 (纳米定位/振动抑制)");
-    println!("  hardy build <file> --target edu              教育平台 (课程/编译可视化)");
-    println!("  hardy build <file> --target rb               具身机器人 (运动学/力控/ISO 15066)");
-    println!("  hardy run   <file>                          编译并运行 (直接输出)");
-    println!("  hardy run   <file> --hw                     硬件模拟模式 (GPIO/UART/PWM)");
-    println!("  hardy debug <file>                          调试模式 (单步/断点/寄存器)");
-    println!("  hardy hunt  <file>                          编译+部署");
-    println!("  hardy track <file>                          查看汇编");
-    println!("  hardy scan  <file>                          代码分析+资源估算");
+    println!("  duanyan build <file>                          编译为 .hex");
+    println!("  duanyan build <file> --target esp32            C 代码生成 (ESP-IDF 项目)");
+    println!("  duanyan build <file> --target arduino-avr      Arduino sketch 生成");
+    println!("  duanyan build <file> --target stm32            STM32 HAL 项目生成");
+    println!("  duanyan build <file> --target rpi              树莓派项目生成");
+    println!("  duanyan build <file> --target ic               工业控制 (PLC/EtherCAT/SIL-3/运动控制)");
+    println!("  duanyan build <file> --target ad               自动驾驶 (CAN FD/AUTOSAR/Fail-Op)");
+    println!("  duanyan build <file> --target rt               嵌入式 RTOS (微内核/BSP/TLA+)");
+    println!("  duanyan build <file> --target av               航空电子 (DO-178C/ARINC653/TMR)");
+    println!("  duanyan build <file> --target md               医疗器械 (IEC 62304/ISO 14971)");
+    println!("  duanyan build <file> --target rw               轨道交通 (EN 50128 SIL-4/联锁)");
+    println!("  duanyan build <file> --target se               半导体设备 (纳米定位/振动抑制)");
+    println!("  duanyan build <file> --target edu              教育平台 (课程/编译可视化)");
+    println!("  duanyan build <file> --target rb               具身机器人 (运动学/力控/ISO 15066)");
+    println!("  duanyan run   <file>                          编译并运行 (直接输出)");
+    println!("  duanyan run   <file> --hw                     硬件模拟模式 (GPIO/UART/PWM)");
+    println!("  duanyan debug <file>                          调试模式 (单步/断点/寄存器)");
+    println!("  duanyan hunt  <file>                          编译+部署");
+    println!("  duanyan track <file>                          查看汇编");
+    println!("  duanyan scan  <file>                          代码分析+资源估算");
     println!();
     println!("  烧录:");
-    println!("  hardy flash <file> --port COM3              烧录到指定串口");
-    println!("  hardy flash <file> --board esp32             按板子类型自动选工具");
-    println!("  hardy flash <file> --board arduino-nano      avrdude 上传");
-    println!("  hardy flash <file> --board stm32f103         st-flash");
-    println!("  hardy flash <file> --board counpre64         Gowin 烧录");
+    println!("  duanyan flash <file> --port COM3              烧录到指定串口");
+    println!("  duanyan flash <file> --board esp32             按板子类型自动选工具");
+    println!("  duanyan flash <file> --board arduino-nano      avrdude 上传");
+    println!("  duanyan flash <file> --board stm32f103         st-flash");
+    println!("  duanyan flash <file> --board counpre64         Gowin 烧录");
     println!();
     println!("  板子管理:");
-    println!("  hardy board list                            列出已知开发板");
-    println!("  hardy board info <name>                     开发板详情");
-    println!("  hardy board set <name>                      设置默认目标板");
-    println!("  hardy monitor --port COM3                   串口监视器");
-    println!("  hardy monitor --port COM3 --baud 115200     指定波特率");
+    println!("  duanyan board list                            列出已知开发板");
+    println!("  duanyan board info <name>                     开发板详情");
+    println!("  duanyan board set <name>                      设置默认目标板");
+    println!("  duanyan monitor --port COM3                   串口监视器");
+    println!("  duanyan monitor --port COM3 --baud 115200     指定波特率");
     println!();
     println!("  项目管理:");
-    println!("  hardy new <name> --board esp32              新建项目 (指定板子)");
-    println!("  hardy init                                  当前目录初始化 hardy 项目");
-    println!("  hardy compat <file>                         Espruino/Moddable 兼容分析");
+    println!("  duanyan new <name> --board esp32              新建项目 (指定板子)");
+    println!("  duanyan init                                  当前目录初始化 duanyan 项目");
+    println!("  duanyan compat <file>                         Espruino/Moddable 兼容分析");
     println!();
     println!("  锻言Mini AI:");
-    println!("  hardy model convert --input <f> --output <f>  模型转换 (GGUF/NPY → .duanyan)");
-    println!("  hardy model verify <model.duanyan>             验证模型文件");
-    println!("  hardy model info <model.duanyan>               模型详情");
-    println!("  hardy model deploy <f> --sd <path>            部署到SD卡");
-    println!("  hardy model list --prebuilt                   官方预训练模型");
+    println!("  duanyan model convert --input <f> --output <f>  模型转换 (GGUF/NPY → .duanyan)");
+    println!("  duanyan model verify <model.duanyan>             验证模型文件");
+    println!("  duanyan model info <model.duanyan>               模型详情");
+    println!("  duanyan model deploy <f> --sd <path>            部署到SD卡");
+    println!("  duanyan model list --prebuilt                   官方预训练模型");
     println!();
     println!("  其他:");
-    println!("  hardy lock  <hex>                           锁定硬件 (烧录指引)");
-    println!("  hardy bite  <file>                          逐条解析执行");
-    println!("  hardy prey  [dir]                           列出源码文件");
-    println!("  hardy help                                  显示本手册");
-    println!("  hardy --version                             显示版本信息");
+    println!("  duanyan lock  <hex>                           锁定硬件 (烧录指引)");
+    println!("  duanyan bite  <file>                          逐条解析执行");
+    println!("  duanyan prey  [dir]                           列出源码文件");
+    println!("  duanyan help                                  显示本手册");
+    println!("  duanyan --version                             显示版本信息");
     println!();
     println!("选项:");
     println!("  -o <file>     输出文件");
@@ -1709,24 +1711,24 @@ fn print_usage() {
     println!("支持: .js (JavaScript) | .ts (TypeScript, 自动剥离类型)");
     println!();
     println!("示例:");
-    println!("  hardy build hello.js --target esp32");
-    println!("  hardy build blink.js --target arduino-avr --board arduino-uno");
-    println!("  hardy build app.js --target stm32 -O");
-    println!("  hardy build app.js --target rpi");
-    println!("  hardy build ctrl.js --target ic              工业控制 PLC 代码生成");
-    println!("  hardy build steer.js --target ad             自动驾驶 AUTOSAR SWC");
-    println!("  hardy build sys.js --target rt               RTOS 微内核+BSP");
-    println!("  hardy build fcc.js --target av               飞控 DO-178C 证据包");
-    println!("  hardy run   helloworld.js");
-    println!("  hardy flash hello.hex --board arduino-nano --port COM3");
-    println!("  hardy new my-app --board esp32 -t blinky");
-    println!("  hardy init");
-    println!("  hardy board list");
-    println!("  hardy model info gesture-10m-int4.duanyan");
-    println!("  hardy model list --prebuilt");
-    println!("  hardy monitor --port COM3 --baud 115200");
+    println!("  duanyan build hello.js --target esp32");
+    println!("  duanyan build blink.js --target arduino-avr --board arduino-uno");
+    println!("  duanyan build app.js --target stm32 -O");
+    println!("  duanyan build app.js --target rpi");
+    println!("  duanyan build ctrl.js --target ic              工业控制 PLC 代码生成");
+    println!("  duanyan build steer.js --target ad             自动驾驶 AUTOSAR SWC");
+    println!("  duanyan build sys.js --target rt               RTOS 微内核+BSP");
+    println!("  duanyan build fcc.js --target av               飞控 DO-178C 证据包");
+    println!("  duanyan run   helloworld.js");
+    println!("  duanyan flash hello.hex --board arduino-nano --port COM3");
+    println!("  duanyan new my-app --board esp32 -t blinky");
+    println!("  duanyan init");
+    println!("  duanyan board list");
+    println!("  duanyan model info gesture-10m-int4.duanyan");
+    println!("  duanyan model list --prebuilt");
+    println!("  duanyan monitor --port COM3 --baud 115200");
     println!();
-    println!("包管理子命令: hardy pack help");
+    println!("包管理子命令: duanyan pack help");
 }
 
 // =============================================================================
@@ -1750,8 +1752,8 @@ fn cmd_workspace(args: &[String]) {
             match workspace::workspace_init(&cwd, &name, monorepo) {
                 Ok(ws) => {
                     println!("Workspace '{}' 初始化完成", ws.name);
-                    println!("  配置文件: hardy.workspace.json");
-                    println!("  .hardy/ 目录已创建");
+                    println!("  配置文件: duanyan.workspace.json");
+                    println!("  .duanyan/ 目录已创建");
                     if monorepo {
                         println!("  packages/shared/ 共享库已创建");
                     }
@@ -1765,7 +1767,7 @@ fn cmd_workspace(args: &[String]) {
         Some("build") => {
             let build_all = args.iter().any(|a| a == "--all");
             if !build_all {
-                eprintln!("用法: hardy workspace build --all");
+                eprintln!("用法: duanyan workspace build --all");
                 process::exit(1);
             }
             let mut ws = workspace::WorkspaceConfig::load(&cwd).unwrap_or_else(|e| {
@@ -1827,7 +1829,7 @@ fn cmd_workspace(args: &[String]) {
         }
         Some("add") => {
             if args.len() < 2 {
-                eprintln!("用法: hardy workspace add <name> [--path <dir>] [--board <board>]");
+                eprintln!("用法: duanyan workspace add <name> [--path <dir>] [--board <board>]");
                 process::exit(1);
             }
             let name = &args[1];
@@ -1893,7 +1895,7 @@ fn cmd_workspace(args: &[String]) {
         _ => {
             println!("Hardy Workspace - 多项目管理");
             println!();
-            println!("用法: hardy workspace <subcommand>");
+            println!("用法: duanyan workspace <subcommand>");
             println!();
             println!("子命令:");
             println!("  init [--monorepo]          初始化 workspace");
@@ -2002,7 +2004,7 @@ fn cmd_git_cli(args: &[String]) {
                 i += 1;
             }
             if msg.is_empty() {
-                eprintln!("用法: hardy git commit -m \"message\"");
+                eprintln!("用法: duanyan git commit -m \"message\"");
                 process::exit(1);
             }
             match git_ops::git_commit(&cwd, &msg) {
@@ -2046,7 +2048,7 @@ fn cmd_git_cli(args: &[String]) {
         }
         Some("checkout") => {
             if args.len() < 2 {
-                eprintln!("用法: hardy git checkout <branch>");
+                eprintln!("用法: duanyan git checkout <branch>");
                 process::exit(1);
             }
             match git_ops::git_checkout(&cwd, &args[1]) {
@@ -2067,13 +2069,13 @@ fn cmd_git_cli(args: &[String]) {
                     Err(e) => eprintln!("{}", e),
                 }
             } else {
-                eprintln!("用法: hardy git hooks install");
+                eprintln!("用法: duanyan git hooks install");
             }
         }
         _ => {
             println!("Hardy Git - 版本控制集成");
             println!();
-            println!("用法: hardy git <subcommand>");
+            println!("用法: duanyan git <subcommand>");
             println!();
             println!("子命令:");
             println!("  status             仓库状态");
@@ -2317,7 +2319,7 @@ fn cmd_ci(args: &[String]) {
                 });
             }
             if !github && !gitlab {
-                println!("用法: hardy ci template --github | --gitlab");
+                println!("用法: duanyan ci template --github | --gitlab");
             }
         }
         Some("archive") => {
@@ -2335,7 +2337,7 @@ fn cmd_ci(args: &[String]) {
         _ => {
             println!("Hardy CI/CD - 持续集成管线");
             println!();
-            println!("用法: hardy ci <subcommand>");
+            println!("用法: duanyan ci <subcommand>");
             println!();
             println!("子命令:");
             println!("  build --all                   CI模式编译");

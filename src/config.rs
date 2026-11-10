@@ -1,6 +1,6 @@
 //! HardyScript Project Configuration
 //!
-//! `hardy.config.json` sits at the project root and tells HardyScript how to
+//! `duanyan.config.json` sits at the project root and tells HardyScript how to
 //! compile, package, and flash the firmware.
 
 use std::collections::HashMap;
@@ -75,9 +75,9 @@ impl Default for ProjectConfig {
 }
 
 impl ProjectConfig {
-    /// Load `hardy.config.json` from the given directory, returning defaults if missing.
+    /// Load `duanyan.config.json` from the given directory, returning defaults if missing.
     pub fn load(project_dir: &Path) -> Result<Self, String> {
-        let path = project_dir.join("hardy.config.json");
+        let path = project_dir.join("duanyan.config.json");
         if !path.exists() {
             return Ok(Self::default());
         }

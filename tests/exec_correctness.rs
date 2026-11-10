@@ -4,7 +4,7 @@
 //! 每一个曾经静默生成错误产物或报出寄存器耗尽，
 //! 修复后必须保持通过，不允许再退化。
 
-use hardyscript::{compile_source, compile_source_optimized, engine::Engine};
+use duanyan::{compile_source, compile_source_optimized, engine::Engine};
 
 fn run_source(source: &str) -> Result<String, String> {
     let code = compile_source(source)?;
@@ -384,4 +384,163 @@ fn math_sqrt_rejected_on_native_engine() {
     // COUNPRE64 本机引擎不提供 sqrt/pow（需要循环），应明确报错而非静默错算
     assert!(run_source("let r = Math.sqrt(16);").is_err());
     assert!(run_source("let p = Math.pow(2, 3);").is_err());
+}
+
+// ---------------------------------------------------------------------------
+// 用例 11：位运算族 & | ^ ~ << >> >>>（债1清偿回归锁）
+//
+// 语义基准：64 位 i64。移位量按 & 63 掩码；>> 为算术右移（保号）；
+// >>> 为 i64 无符号右移（与 JS 的 32 位 ToUint32 口径不同，已文档化）。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bitwise_operators_basic_values() {
+    let source = r#"
+console.log(12 & 10);
+console.log(12 | 10);
+console.log(12 ^ 10);
+console.log(~5);
+console.log(~0);
+console.log(3 << 4);
+console.log(256 >> 3);
+console.log(-8 >> 1);
+console.log(-8 >>> 60);
+"#;
+    // -8 >> 1 = -4（算术保号）；-8 >>> 60 = 0xF（i64 无符号）
+    assert_both_modes(source, "8\n14\n6\n-6\n-1\n48\n32\n-4\n15\n");
+}
+
+#[test]
+fn bitwise_precedence_matches_js() {
+    let source = r#"
+console.log(1 | 2 & 3);
+console.log(1 ^ 3 & 1);
+console.log(1 + 2 << 3);
+console.log(1 << 2 < 8);
+console.log(~2 + 1);
+"#;
+    // & > ^ > |；移位低于关系比较但高于加减；一元 ~ 低于算术
+    assert_both_modes(source, "3\n0\n24\n1\n-2\n");
+}
+
+#[test]
+fn bitwise_in_conditions_and_variables() {
+    let source = r#"
+let flags = 12;
+let mask = 10;
+let masked = flags & mask;
+if (masked == 8) {
+    console.log(1);
+} else {
+    console.log(0);
+}
+if (flags & 1) {
+    console.log(99);
+} else {
+    console.log(100);
+}
+let n = 5;
+console.log(~n);
+"#;
+    // 位运算结果非 0 即真（规范化 0/1）；变量路径与常量路径同口径
+    assert_both_modes(source, "1\n100\n-6\n");
+}
+
+#[test]
+fn bitwise_compound_assign_gives_friendly_error() {
+    // &= |= <<= >>= 尚未实现，必须友好报错而非词法崩溃
+    let e = run_source("let x = 1; x &= 3;").unwrap_err();
+    assert!(e.contains("&="), "应提示 '&=' 尚未实现，实际: {}", e);
+}
+
+// ---------------------------------------------------------------------------
+// 用例 12：async/await 字节码真悬停（债2清偿回归锁）
+//
+// 语义：async 函数调用 = SPAWN 派生任务；await Timer.delay(ms) = YIELD_T
+// 挂起到虚拟时钟；主程序 HALT 后由协作式调度器驱动至全部任务 TRET。
+// ---------------------------------------------------------------------------
+
+fn run_engine(source: &str) -> Result<(String, Engine), String> {
+    let code = compile_source(source)?;
+    let mut eng = Engine::new(code);
+    let (out, _) = eng.run()?;
+    Ok((out, eng))
+}
+
+#[test]
+fn async_tasks_interleave_by_virtual_time() {
+    let source = r#"
+async function taskA() {
+    console.log("A1");
+    await Timer.delay(10);
+    console.log("A2");
+}
+async function taskB() {
+    await Timer.delay(5);
+    console.log("B");
+}
+console.log("M");
+taskA();
+taskB();
+console.log("E");
+"#;
+    // 主程序先跑完（M/E），再轮转任务：A1(t=0) → B 在 t=5 先醒 → A2 在 t=10
+    let (out, eng) = run_engine(source).unwrap();
+    assert_eq!(out, "M\nE\nA1\nB\nA2\n");
+    assert_eq!(eng.vtime(), 10, "虚拟时钟应停在最后唤醒点");
+    assert_eq!(eng.active_task_count(), 0, "全部任务应已 TRET 结束");
+}
+
+#[test]
+fn await_delay_records_real_suspension() {
+    let source = r#"
+async function worker() {
+    let v = await Timer.delay(7);
+    console.log(v);
+}
+worker();
+"#;
+    let (out, eng) = run_engine(source).unwrap();
+    assert_eq!(out, "0\n", "await Timer.delay 求值为 0");
+    // suspend_log: (task_id, 挂起时刻, 时长)；taskA=1 在 t=0 挂起 7ms
+    assert_eq!(eng.suspend_log(), &[(1, 0, 7)], "await 必须留下真悬停记录");
+    assert_eq!(eng.vtime(), 7);
+}
+
+#[test]
+fn async_main_order_stays_deterministic() {
+    // 主程序不与任务并发：SPAWN 只登记，HALT 后任务才开始跑（确定性口径）
+    let source = r#"
+async function bg() {
+    console.log("BG");
+}
+bg();
+console.log("MAIN");
+"#;
+    let (out, _eng) = run_engine(source).unwrap();
+    assert_eq!(out, "MAIN\nBG\n");
+}
+
+#[test]
+fn async_tasks_stack_isolated_across_await() {
+    // 回归锁：两个 async 任务各持跨 await 的活跃局部变量，
+    // 验证静态栈池按槽隔离——挂起任务的栈帧不得被后启动任务覆盖。
+    // （曾因所有任务共享 STACK_INIT 导致 a=111 被覆写成 222）
+    let source = r#"
+async function p() {
+    let a = 111;
+    await Timer.delay(10);
+    console.log(a);
+}
+async function q() {
+    let a = 222;
+    await Timer.delay(5);
+    console.log(a);
+}
+p();
+q();
+"#;
+    // 正确语义：q 在 t=5 先醒打印 222，p 在 t=10 打印 111
+    let (out, _eng) = run_engine(source).unwrap();
+    assert_eq!(out, "222\n111\n", "跨 await 局部变量应保持任务隔离");
 }

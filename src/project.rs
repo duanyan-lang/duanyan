@@ -1,6 +1,6 @@
 //! 项目模板生成模块
 //!
-//! Phase B: `hardy new` 命令
+//! Phase B: `duanyan new` 命令
 //! 快速创建 HardyScript 项目模板
 
 use std::fs;
@@ -77,7 +77,7 @@ pub fn create_project(name: &str, template: &ProjectTemplate, target_dir: &Path,
         "counpre64"
     };
 
-    // 创建 hardy.json 配置
+    // 创建 duanyan.json 配置
     let config = format!(
         r#"{{
     "name": "{}",
@@ -95,7 +95,7 @@ pub fn create_project(name: &str, template: &ProjectTemplate, target_dir: &Path,
         board.unwrap_or("counpre64-fpga"),
         name
     );
-    write_file(&project_dir.join("hardy.json"), &config)?;
+    write_file(&project_dir.join("duanyan.json"), &config)?;
 
     // 创建 .gitignore
     write_file(

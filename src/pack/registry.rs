@@ -135,6 +135,6 @@ impl RegistryClient {
 
 /// 从环境变量或配置文件获取 Registry URL
 pub fn get_registry_url() -> String {
-    std::env::var("HARDY_REGISTRY")
+    std::env::var("DUANYAN_REGISTRY")
         .unwrap_or_else(|_| RegistryClient::default_url())
 }

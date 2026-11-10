@@ -2453,6 +2453,22 @@ impl CCodeGenerator {
                     BinOp::Ge => ">=",
                     BinOp::And => "&&",
                     BinOp::Or => "||",
+                    // 位运算债清偿: & | ^ << >> >>>
+                    BinOp::BitAnd => "&",
+                    BinOp::BitOr => "|",
+                    BinOp::BitXor => "^",
+                    // 移位量按 JS 32 位语义掩码 & 31：既避免 C 语言移位 >= 位宽的未定义行为，
+                    // 又与字节码引擎的掩码口径保持语义一致（引擎为 i64 域 & 63）。
+                    BinOp::Shl => {
+                        return Ok(format!("({} << (({}) & 31))", l, r));
+                    }
+                    BinOp::Shr => {
+                        return Ok(format!("({} >> (({}) & 31))", l, r));
+                    }
+                    // >>> 按 JS 32 位无符号语义（C 路径整数为 int32_t）
+                    BinOp::UShr => {
+                        return Ok(format!("((int32_t)((uint32_t)({}) >> (({}) & 31)))", l, r));
+                    }
                 };
                 Ok(format!("({} {} {})", l, op_str, r))
             }

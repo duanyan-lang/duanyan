@@ -1,4 +1,4 @@
-//! hardy debug - 交互式调试器
+//! duanyan debug - 交互式调试器
 //!
 //! 单步执行、断点、寄存器/内存查看、源码定位
 
@@ -45,7 +45,7 @@ impl Debugger {
 
         let stdin = io::stdin();
         loop {
-            print!("hardy> ");
+            print!("duanyan> ");
             io::stdout().flush().unwrap();
 
             let mut input = String::new();

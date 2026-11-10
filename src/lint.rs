@@ -1,6 +1,6 @@
 //! HardyScript Lint - 代码规范检查器
 //!
-//! Phase H: `hardy lint` 命令
+//! Phase H: `duanyan lint` 命令
 //! 可扩展规则系统 + 自动修复 + 资源约束检查
 
 use std::collections::HashMap;
@@ -93,9 +93,9 @@ impl LintConfig {
         }
     }
 
-    /// 从 .hardy/lint.json 加载
+    /// 从 .duanyan/lint.json 加载
     pub fn load(dir: &Path) -> Self {
-        let path = dir.join(".hardy").join("lint.json");
+        let path = dir.join(".duanyan").join("lint.json");
         if !path.exists() {
             return Self::default_config();
         }
@@ -207,7 +207,8 @@ pub fn builtin_rules() -> Vec<LintRule> {
         LintRule { id: "web-no-try-catch".into(), description: "try/catch/throw 不支持".into(), severity: Severity::Error, fixable: false },
         LintRule { id: "web-no-class".into(), description: "class/extends/super/this 不支持".into(), severity: Severity::Error, fixable: false },
         LintRule { id: "web-no-reflection".into(), description: "typeof/instanceof/delete 不支持".into(), severity: Severity::Error, fixable: false },
-        LintRule { id: "web-no-bitwise".into(), description: "位运算符 & | ^ ~ << >> 不支持".into(), severity: Severity::Error, fixable: false },
+        // 2026-10-27 位运算债清偿：lexer Amp/Pipe/Caret/Tilde/Shl/Shr + parser 优先级链 + codegen 全线支持，
+        // 原 web-no-bitwise 护栏拆除。
         LintRule { id: "web-no-numeric-syntax".into(), description: "1e3 指数/0b 0o 进制/** 幂运算不支持".into(), severity: Severity::Error, fixable: false },
         LintRule { id: "web-no-modern-operators".into(), description: "... / ?. / ?? 不支持".into(), severity: Severity::Error, fixable: false },
         LintRule { id: "web-no-dynamic-methods".into(), description: "push/map/split/trim 等数组字符串动态方法不支持".into(), severity: Severity::Error, fixable: false },
@@ -723,12 +724,7 @@ pub fn lint_file(file_path: &Path, source: &str, config: &LintConfig) -> LintRes
                     "typeof / instanceof / delete 不支持（类型在写代码时已确定）",
                     "变量类型编译期固定，无需运行时类型判断；清空属性直接赋值 0 或 null");
             }
-            // 6. 位运算
-            if has_bitwise(code) {
-                push_web("web-no-bitwise",
-                    "位运算符 & | ^ ~ << >> 不支持",
-                    "2 的幂场景: x<<n 写 x * Math.pow(2, n)，x>>n 写 x / Math.pow(2, n)；x&1 判奇偶写 x % 2 == 0");
-            }
+            // 6. 位运算护栏已拆除（债清偿，编译器原生支持 & | ^ ~ << >>）
             // 7. 数值语法
             if has_exponent(code) || has_prefixed_radix(code) || code.contains("**") {
                 push_web("web-no-numeric-syntax",
@@ -946,25 +942,7 @@ fn contains_word(code: &str, word: &str) -> bool {
     false
 }
 
-/// 单个 & | ^ ~ << >> 检测（排除 && / || 逻辑运算）
-fn has_bitwise(code: &str) -> bool {
-    let c: Vec<char> = code.chars().collect();
-    for i in 0..c.len() {
-        match c[i] {
-            '~' | '^' => return true,
-            '&' | '|' => {
-                let same = c[i];
-                let prev_same = i > 0 && c[i - 1] == same;
-                let next_same = i + 1 < c.len() && c[i + 1] == same;
-                if !prev_same && !next_same { return true; }
-            }
-            '<' => { if i + 1 < c.len() && c[i + 1] == '<' { return true; } }
-            '>' => { if i + 1 < c.len() && c[i + 1] == '>' { return true; } }
-            _ => {}
-        }
-    }
-    false
-}
+/// 位运算检测函数已随 web-no-bitwise 护栏拆除（债清偿，编译器原生支持）
 
 /// 指数字面量 1e3 / 2.5e-4（前一位是数字、e 后可带符号再接数字）
 fn has_exponent(code: &str) -> bool {
@@ -1176,8 +1154,8 @@ mod tests {
     #[test]
     fn test_builtin_rules_count() {
         let rules = builtin_rules();
-        // 原始15条 + v5.1 4条 + async 5条 + Phase 2.5 3条 + Phase 4.5 4条 + 批 2d Web 护栏 12条 = 43条
-        assert_eq!(rules.len(), 43);
+        // 原始15条 + v5.1 4条 + async 5条 + Phase 2.5 3条 + Phase 4.5 4条 + 批 2d Web 护栏 11条（位运算护栏拆除）= 42条
+        assert_eq!(rules.len(), 42);
     }
 
     // Phase 2.5: 零 malloc lint 测试
@@ -1234,10 +1212,11 @@ mod tests {
         let result = lint_file(Path::new("test.js"), clean, &config);
         assert!(!result.diagnostics.iter().any(|d| d.rule_id == "web-no-bitwise"),
             "&&/||/>= 不应触发位运算护栏");
-        // 真实位运算必须报错
-        let bad = "let m = flags & 0xff;\nlet s = x << 3;";
-        let result2 = lint_file(Path::new("test.js"), bad, &config);
-        assert!(result2.diagnostics.iter().any(|d| d.rule_id == "web-no-bitwise"));
+        // 2026-10-27 债清偿：位运算护栏拆除，& | ^ ~ << >> 编译器原生支持，lint 不再拦
+        let ok = "let m = flags & 0xff;\nlet s = x << 3;";
+        let result2 = lint_file(Path::new("test.js"), ok, &config);
+        assert!(!result2.diagnostics.iter().any(|d| d.rule_id == "web-no-bitwise"),
+            "位运算已清偿，不应再被拦截");
     }
 
     #[test]

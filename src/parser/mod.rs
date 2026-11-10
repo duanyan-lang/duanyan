@@ -783,27 +783,89 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_logical_and(&mut self) -> Result<Expr, String> {
-        let mut left = self.parse_comparison()?;
+        let mut left = self.parse_bitwise_or()?;
         while *self.peek() == TokenKind::AmpAmp {
             self.advance();
-            let right = self.parse_comparison()?;
+            let right = self.parse_bitwise_or()?;
             left = Expr::BinOp { op: BinOp::And, left: Box::new(left), right: Box::new(right) };
         }
         Ok(left)
     }
 
-    fn parse_comparison(&mut self) -> Result<Expr, String> {
-        let mut left = self.parse_additive()?;
+    // 位运算债清偿: | ^ & 三层优先级（JS 语义: & > ^ > | > 逻辑运算）
+    fn parse_bitwise_or(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_bitwise_xor()?;
+        while *self.peek() == TokenKind::Pipe {
+            self.advance();
+            let right = self.parse_bitwise_xor()?;
+            left = Expr::BinOp { op: BinOp::BitOr, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    fn parse_bitwise_xor(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_bitwise_and()?;
+        while *self.peek() == TokenKind::Caret {
+            self.advance();
+            let right = self.parse_bitwise_and()?;
+            left = Expr::BinOp { op: BinOp::BitXor, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    fn parse_bitwise_and(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_equality()?;
+        while *self.peek() == TokenKind::Amp {
+            self.advance();
+            let right = self.parse_equality()?;
+            left = Expr::BinOp { op: BinOp::BitAnd, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    /// 相等性比较（== != === !==），介于按位与和关系比较之间
+    fn parse_equality(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_comparison()?;
         loop {
             let op = match self.peek() {
                 TokenKind::EqEq => BinOp::Eq,
                 TokenKind::EqEqEq => BinOp::StrictEq,
                 TokenKind::NotEq => BinOp::NotEq,
                 TokenKind::NotEqEq => BinOp::StrictNotEq,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_comparison()?;
+            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    fn parse_comparison(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_shift()?;
+        loop {
+            let op = match self.peek() {
                 TokenKind::Lt => BinOp::Lt,
                 TokenKind::Le => BinOp::Le,
                 TokenKind::Ge => BinOp::Ge,
                 TokenKind::Gt => BinOp::Gt,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_shift()?;
+            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    /// 位运算债清偿: 移位层 << >> >>>（介于关系比较和加减之间）
+    fn parse_shift(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_additive()?;
+        loop {
+            let op = match self.peek() {
+                TokenKind::Shl => BinOp::Shl,
+                TokenKind::Shr => BinOp::Shr,
+                TokenKind::Shrrr => BinOp::UShr,
                 _ => break,
             };
             self.advance();
@@ -861,6 +923,12 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let operand = self.parse_unary()?;
                 Ok(Expr::BinOp { op: BinOp::Eq, left: Box::new(operand), right: Box::new(Expr::Number(0)) })
+            }
+            TokenKind::Tilde => {
+                // 位运算债清偿: ~x 脱糖为 (-1 - x)，i64 下与按位取反等价，零后端改动
+                self.advance();
+                let operand = self.parse_unary()?;
+                Ok(Expr::BinOp { op: BinOp::Sub, left: Box::new(Expr::Number(-1)), right: Box::new(operand) })
             }
             _ => {
                 let primary = self.parse_primary()?;

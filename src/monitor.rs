@@ -1,6 +1,6 @@
 //! 串口监视器模块
 //!
-//! Phase B: `hardy monitor` 命令
+//! Phase B: `duanyan monitor` 命令
 //! 串口监视器，显示 UART 输出
 
 use std::io::{self, Read, Write};

@@ -51,10 +51,10 @@ pub fn dispatch(args: &[String]) {
 pub fn print_pack_usage() {
     println!("Hardy PACK - 包管理器");
     println!();
-    println!("用法: hardy pack <指令>");
+    println!("用法: duanyan pack <指令>");
     println!();
     println!("pack 指令:");
-    println!("  init            初始化项目 (创建 hardy.json)");
+    println!("  init            初始化项目 (创建 duanyan.json)");
     println!("  install [name]  安装包 (下载依赖), 简写: i");
     println!("  publish         发布包");
     println!("  update [name]   更新包");
@@ -62,26 +62,26 @@ pub fn print_pack_usage() {
     println!("  list            查看已安装的包, 简写: ls");
     println!("  search <query>  搜索包 (Registry)");
     println!("  hunt [file]     安装依赖并运行 (install + run)");
-    println!("  lock            生成依赖锁定文件 (hardy.lock)");
+    println!("  lock            生成依赖锁定文件 (duanyan.lock)");
     println!("  verify          验证依赖完整性");
     println!();
     println!("示例:");
-    println!("  hardy pack init");
-    println!("  hardy pack i math-utils");
-    println!("  hardy pack install");
-    println!("  hardy pack publish");
-    println!("  hardy pack hunt index.js");
+    println!("  duanyan pack init");
+    println!("  duanyan pack i math-utils");
+    println!("  duanyan pack install");
+    println!("  duanyan pack publish");
+    println!("  duanyan pack hunt index.js");
 }
 
 // =============================================================================
-// hardy pack init - 初始化项目
+// duanyan pack init - 初始化项目
 // =============================================================================
 fn cmd_init() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
 
-    // 检查是否已有 hardy.json
-    if cwd.join("hardy.json").exists() {
-        eprintln!("hardy.json 已存在，跳过初始化");
+    // 检查是否已有 duanyan.json
+    if cwd.join("duanyan.json").exists() {
+        eprintln!("duanyan.json 已存在，跳过初始化");
         return;
     }
 
@@ -105,25 +105,25 @@ fn cmd_init() {
     m.main = main;
     m.author = author;
 
-    // 创建 hardy.json
+    // 创建 duanyan.json
     m.save(&cwd).unwrap_or_else(|e| {
-        eprintln!("写入 hardy.json 失败: {}", e);
+        eprintln!("写入 duanyan.json 失败: {}", e);
         std::process::exit(1);
     });
 
-    // 创建 .hardy 目录
-    let hardy_dir = cwd.join(".hardy").join("packages");
+    // 创建 .duanyan 目录
+    let hardy_dir = cwd.join(".duanyan").join("packages");
     fs::create_dir_all(&hardy_dir).ok();
 
     // 创建 .gitignore (如果不存在)
     let gitignore = cwd.join(".gitignore");
     if !gitignore.exists() {
-        fs::write(&gitignore, ".hardy/\nhardy.lock\n").ok();
+        fs::write(&gitignore, ".duanyan/\nduanyan.lock\n").ok();
     }
 
     println!();
-    println!("hardy.json 已创建");
-    println!(".hardy/ 目录已创建");
+    println!("duanyan.json 已创建");
+    println!(".duanyan/ 目录已创建");
     println!();
     println!("开始锻造吧!");
 }
@@ -142,13 +142,13 @@ fn prompt_input(prompt: &str, default: &str) -> String {
 }
 
 // =============================================================================
-// hardy pack install - 安装包
+// duanyan pack install - 安装包
 // =============================================================================
 fn cmd_install(args: &[String]) {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
 
     if args.is_empty() {
-        // 安装所有依赖 (从 hardy.json)
+        // 安装所有依赖 (从 duanyan.json)
         install_all(&cwd);
     } else {
         // 安装指定包
@@ -182,7 +182,7 @@ fn install_all(dir: &Path) {
     }
 
     lockfile.save(dir).unwrap_or_else(|e| {
-        eprintln!("写入 hardy.lock 失败: {}", e);
+        eprintln!("写入 duanyan.lock 失败: {}", e);
     });
 
     println!();
@@ -235,8 +235,8 @@ fn install_package(
     // 4. 校验和
     let checksum = archive::data_checksum(&data);
 
-    // 5. 解压到 .hardy/packages/{name}/
-    let target = dir.join(".hardy").join("packages").join(name);
+    // 5. 解压到 .duanyan/packages/{name}/
+    let target = dir.join(".duanyan").join("packages").join(name);
     fs::create_dir_all(&target)
         .map_err(|e| format!("创建目录失败: {}", e))?;
     archive::unpack(&data, &target)?;
@@ -252,7 +252,7 @@ fn install_package(
 }
 
 // =============================================================================
-// hardy pack publish - 发布包
+// duanyan pack publish - 发布包
 // =============================================================================
 fn cmd_publish() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -289,7 +289,7 @@ fn cmd_publish() {
 }
 
 // =============================================================================
-// hardy pack update - 更新包
+// duanyan pack update - 更新包
 // =============================================================================
 fn cmd_update(args: &[String]) {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -370,12 +370,12 @@ fn update_one(
 }
 
 // =============================================================================
-// hardy pack remove - 移除包
+// duanyan pack remove - 移除包
 // =============================================================================
 fn cmd_remove(args: &[String]) {
     if args.is_empty() {
         eprintln!("请指定要移除的包名称");
-        eprintln!("用法: hardy pack remove <name>");
+        eprintln!("用法: duanyan pack remove <name>");
         std::process::exit(1);
     }
 
@@ -398,7 +398,7 @@ fn cmd_remove(args: &[String]) {
     lockfile.save(&cwd).ok();
 
     // 删除文件
-    let pkg_dir = cwd.join(".hardy").join("packages").join(name);
+    let pkg_dir = cwd.join(".duanyan").join("packages").join(name);
     if pkg_dir.exists() {
         fs::remove_dir_all(&pkg_dir).ok();
     }
@@ -407,7 +407,7 @@ fn cmd_remove(args: &[String]) {
 }
 
 // =============================================================================
-// hardy pack list - 已安装包列表
+// duanyan pack list - 已安装包列表
 // =============================================================================
 fn cmd_list() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -415,7 +415,7 @@ fn cmd_list() {
 
     if lockfile.packages.is_empty() {
         println!("已安装包列表为空");
-        println!("运行 'hardy pack install' 安装包");
+        println!("运行 'duanyan pack install' 安装包");
         return;
     }
 
@@ -436,13 +436,13 @@ fn cmd_list() {
 }
 
 // =============================================================================
-// hardy pack search - 搜索包
+// duanyan pack search - 搜索包
 // =============================================================================
 fn cmd_search(args: &[String]) {
     if args.is_empty() {
-        eprintln!("hardy pack search: 请指定搜索关键词");
-        eprintln!("用法: hardy pack search <query>");
-        eprintln!("示例: hardy pack search motor");
+        eprintln!("duanyan pack search: 请指定搜索关键词");
+        eprintln!("用法: duanyan pack search <query>");
+        eprintln!("示例: duanyan pack search motor");
         std::process::exit(1);
     }
 
@@ -480,7 +480,7 @@ fn cmd_search(args: &[String]) {
 }
 
 // =============================================================================
-// hardy pack hunt - 安装依赖并运行 (install + run)
+// duanyan pack hunt - 安装依赖并运行 (install + run)
 // =============================================================================
 fn cmd_hunt(args: &[String]) {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -539,7 +539,7 @@ fn cmd_hunt(args: &[String]) {
 }
 
 // =============================================================================
-// hardy pack lock - 生成锁定文件
+// duanyan pack lock - 生成锁定文件
 // =============================================================================
 fn cmd_lock() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -573,15 +573,15 @@ fn cmd_lock() {
     }
 
     lockfile.save(&cwd).unwrap_or_else(|e| {
-        eprintln!("写入 hardy.lock 失败: {}", e);
+        eprintln!("写入 duanyan.lock 失败: {}", e);
         std::process::exit(1);
     });
 
-    println!("hardy.lock 已生成 ({} 个依赖)", lockfile.packages.len());
+    println!("duanyan.lock 已生成 ({} 个依赖)", lockfile.packages.len());
 }
 
 // =============================================================================
-// hardy pack verify - 验证依赖完整性
+// duanyan pack verify - 验证依赖完整性
 // =============================================================================
 fn cmd_verify() {
     let cwd = std::env::current_dir().expect("无法获取当前目录");
@@ -596,7 +596,7 @@ fn cmd_verify() {
 
     for (name, _constraint) in &manifest.dependencies {
         if let Some(locked) = lockfile.find(name) {
-            let pkg_dir = cwd.join(".hardy").join("packages").join(name);
+            let pkg_dir = cwd.join(".duanyan").join("packages").join(name);
             if pkg_dir.exists() {
                 println!("  {} {} ... OK", name, locked.version);
             } else {
@@ -612,6 +612,6 @@ fn cmd_verify() {
     if ok {
         println!("\n所有依赖验证通过");
     } else {
-        println!("\n部分依赖缺失，运行 'hardy pack install' 修复");
+        println!("\n部分依赖缺失，运行 'duanyan pack install' 修复");
     }
 }

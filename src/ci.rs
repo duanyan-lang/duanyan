@@ -168,7 +168,7 @@ pub fn ci_build_all(dir: &Path, config: &CiConfig) -> CiBuildResult {
             fs::create_dir_all(&build_dir).ok();
 
             // 调用 HardyScript 编译 (跨平台，不依赖 sh)
-            let output = Command::new("hardy")
+            let output = Command::new("duanyan")
                 .args([
                     "build",
                     &entry_path.to_string_lossy(),

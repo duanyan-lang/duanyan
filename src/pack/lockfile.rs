@@ -1,4 +1,4 @@
-//! hardy.lock 版本锁定
+//! duanyan.lock 版本锁定
 //!
 //! 记录已安装包的精确版本和校验和，确保可重现安装
 
@@ -14,21 +14,21 @@ pub struct LockedPackage {
     pub checksum: String,
 }
 
-/// 锁文件 (hardy.lock)
+/// 锁文件 (duanyan.lock)
 #[derive(Debug, Clone)]
 pub struct Lockfile {
     pub packages: Vec<LockedPackage>,
 }
 
 impl Lockfile {
-    /// 从目录加载 hardy.lock
+    /// 从目录加载 duanyan.lock
     pub fn load(dir: &Path) -> Result<Lockfile, String> {
-        let path = dir.join("hardy.lock");
+        let path = dir.join("duanyan.lock");
         if !path.exists() {
             return Ok(Lockfile { packages: Vec::new() });
         }
         let content = fs::read_to_string(&path)
-            .map_err(|e| format!("读取 hardy.lock 失败: {}", e))?;
+            .map_err(|e| format!("读取 duanyan.lock 失败: {}", e))?;
         Self::from_str(&content)
     }
 
@@ -60,12 +60,12 @@ impl Lockfile {
         Ok(Lockfile { packages })
     }
 
-    /// 保存到 hardy.lock
+    /// 保存到 duanyan.lock
     pub fn save(&self, dir: &Path) -> Result<(), String> {
         let json = self.to_json();
-        let path = dir.join("hardy.lock");
+        let path = dir.join("duanyan.lock");
         fs::write(&path, json)
-            .map_err(|e| format!("写入 hardy.lock 失败: {}", e))
+            .map_err(|e| format!("写入 duanyan.lock 失败: {}", e))
     }
 
     /// 序列化为 JSON

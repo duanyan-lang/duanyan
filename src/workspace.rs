@@ -1,6 +1,6 @@
 //! HardyScript Workspace - 多项目管理
 //!
-//! Phase H: `hardy workspace` 命令
+//! Phase H: `duanyan workspace` 命令
 //! 支持 monorepo 多子项目统一管理、拓扑排序编译
 
 use std::collections::HashMap;
@@ -53,9 +53,9 @@ impl WorkspaceConfig {
 
     /// 从 JSON 文件加载
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let path = dir.join("hardy.workspace.json");
+        let path = dir.join("duanyan.workspace.json");
         if !path.exists() {
-            return Err("未找到 hardy.workspace.json，请先运行 'hardy workspace init'".to_string());
+            return Err("未找到 duanyan.workspace.json，请先运行 'duanyan workspace init'".to_string());
         }
         let raw = fs::read_to_string(&path)
             .map_err(|e| format!("读取配置失败: {}", e))?;
@@ -134,7 +134,7 @@ impl WorkspaceConfig {
 
     /// 保存到文件
     pub fn save(&self, dir: &Path) -> Result<(), String> {
-        let path = dir.join("hardy.workspace.json");
+        let path = dir.join("duanyan.workspace.json");
         fs::write(&path, self.to_json())
             .map_err(|e| format!("写入配置失败: {}", e))
     }
@@ -200,8 +200,8 @@ impl WorkspaceConfig {
     pub fn status(&self, root: &Path) -> Vec<PackageStatus> {
         self.packages.iter().map(|pkg| {
             let pkg_dir = root.join(&pkg.path);
-            let has_config = pkg_dir.join("hardy.json").exists()
-                || pkg_dir.join("hardy.config.json").exists();
+            let has_config = pkg_dir.join("duanyan.json").exists()
+                || pkg_dir.join("duanyan.config.json").exists();
             let has_entry = pkg_dir.join("main.js").exists()
                 || pkg_dir.join("index.js").exists()
                 || pkg_dir.join("src/main.js").exists();
@@ -230,9 +230,9 @@ impl WorkspaceConfig {
 
 /// 初始化 workspace
 pub fn workspace_init(dir: &Path, name: &str, monorepo: bool) -> Result<WorkspaceConfig, String> {
-    let ws_file = dir.join("hardy.workspace.json");
+    let ws_file = dir.join("duanyan.workspace.json");
     if ws_file.exists() {
-        return Err("hardy.workspace.json 已存在".to_string());
+        return Err("duanyan.workspace.json 已存在".to_string());
     }
 
     let mut ws = WorkspaceConfig::default_with_name(name);
@@ -252,8 +252,8 @@ pub fn workspace_init(dir: &Path, name: &str, monorepo: bool) -> Result<Workspac
         ws.shared_libs.push("packages/shared".to_string());
     }
 
-    // 创建 .hardy/ 目录
-    let hardy_dir = dir.join(".hardy");
+    // 创建 .duanyan/ 目录
+    let hardy_dir = dir.join(".duanyan");
     fs::create_dir_all(&hardy_dir).map_err(|e| format!("创建目录失败: {}", e))?;
 
     // 创建 boards.json
@@ -269,7 +269,7 @@ pub fn workspace_init(dir: &Path, name: &str, monorepo: bool) -> Result<Workspac
     // 创建 .gitignore
     let gitignore = dir.join(".gitignore");
     if !gitignore.exists() {
-        fs::write(&gitignore, ".hardy/\nhardy.lock\nbuild/\ntarget/\n")
+        fs::write(&gitignore, ".duanyan/\nduanyan.lock\nbuild/\ntarget/\n")
             .map_err(|e| format!("写入 .gitignore 失败: {}", e))?;
     }
 

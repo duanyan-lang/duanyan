@@ -328,13 +328,13 @@ pub fn git_init(dir: &Path) -> Result<String, String> {
 pub fn git_generate_gitignore(board: &str) -> String {
     let mut content = String::new();
     content.push_str("# HardyScript 项目 .gitignore\n");
-    content.push_str("# 自动生成 by hardy git hooks install\n\n");
+    content.push_str("# 自动生成 by duanyan git hooks install\n\n");
 
     content.push_str("# 构建产物\n");
     content.push_str("build/\n*.hex\n*.bin\n*.rom\n*.asm\n*.map\n\n");
 
     content.push_str("# Hardy 工具链\n");
-    content.push_str(".hardy/\nhardy.lock\n\n");
+    content.push_str(".duanyan/\nduanyan.lock\n\n");
 
     content.push_str("# IDE\n");
     content.push_str(".vscode/\n.idea/\n*.swp\n*.swo\n\n");
@@ -364,7 +364,7 @@ pub fn git_generate_gitignore(board: &str) -> String {
     content
 }
 
-/// 安装 Git Hooks (pre-commit 自动跑 hardy lint)
+/// 安装 Git Hooks (pre-commit 自动跑 duanyan lint)
 pub fn git_install_hooks(dir: &Path) -> Result<(), String> {
     let hooks_dir = dir.join(".git").join("hooks");
     std::fs::create_dir_all(&hooks_dir)
@@ -372,11 +372,11 @@ pub fn git_install_hooks(dir: &Path) -> Result<(), String> {
 
     let hook_content = r#"#!/bin/sh
 # HardyScript pre-commit hook
-# 自动运行 hardy lint 检查
+# 自动运行 duanyan lint 检查
 
-echo "Running hardy lint..."
-if command -v hardy &> /dev/null; then
-    hardy lint
+echo "Running duanyan lint..."
+if command -v duanyan &> /dev/null; then
+    duanyan lint
     if [ $? -ne 0 ]; then
         echo "Lint 检查失败! 请修复错误后再提交。"
         echo "使用 'git commit --no-verify' 跳过检查。"
@@ -384,7 +384,7 @@ if command -v hardy &> /dev/null; then
     fi
     echo "Lint 检查通过"
 else
-    echo "Warning: hardy 命令未找到，跳过 lint 检查"
+    echo "Warning: duanyan 命令未找到，跳过 lint 检查"
 fi
 "#;
 
@@ -554,7 +554,7 @@ mod tests {
     fn test_generate_gitignore() {
         let gi = git_generate_gitignore("esp32");
         assert!(gi.contains("build/"));
-        assert!(gi.contains(".hardy/"));
+        assert!(gi.contains(".duanyan/"));
         assert!(gi.contains("ESP32"));
     }
 }

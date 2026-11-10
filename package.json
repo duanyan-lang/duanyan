@@ -29,7 +29,7 @@
   },
   "license": "MIT",
   "bin": {
-    "hardy": "./bin/hardy.js"
+    "duanyan": "./bin/duanyan.js"
   },
   "scripts": {
     "postinstall": "node scripts/install.js",

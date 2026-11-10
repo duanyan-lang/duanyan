@@ -1,6 +1,6 @@
 //! 开发板检测与管理模块
 //!
-//! Phase B: `hardy board list/info` 命令
+//! Phase B: `duanyan board list/info` 命令
 //! USB串口自动检测板子类型
 
 use std::fmt;
@@ -330,10 +330,10 @@ pub fn cmd_board_set(board_name: &str) {
             println!("✅ 默认开发板已设置: {}", board.name);
             println!("   {}", board.description);
             println!();
-            println!("   💡 下次 'hardy build' 将自动使用此板子作为目标");
-            println!("   💡 配置文件: .hardy/board (当前目录)");
-            // 写入 .hardy/board 文件
-            let hardy_dir = std::path::Path::new(".hardy");
+            println!("   💡 下次 'duanyan build' 将自动使用此板子作为目标");
+            println!("   💡 配置文件: .duanyan/board (当前目录)");
+            // 写入 .duanyan/board 文件
+            let hardy_dir = std::path::Path::new(".duanyan");
             if !hardy_dir.exists() {
                 let _ = std::fs::create_dir_all(hardy_dir);
             }

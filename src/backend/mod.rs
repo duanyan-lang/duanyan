@@ -68,6 +68,10 @@ impl Instruction {
                     (0x3, _)   => "OR",
                     (0x4, _)   => "XOR",
                     (0x5, _)   => "SHL",
+                    // 位运算债清偿: SHR 家族按 func 区分
+                    // 0x0=逻辑右移(既有)  0x1=算术右移(>>)  0x2=无符号右移(>>>)
+                    (0x6, 0x1) => "SRA",
+                    (0x6, 0x2) => "SRLU",
                     (0x6, _)   => "SHR",
                     (0x7, 0x8) => "MUL",
                     (0x7, 0x9) => "MULH",
@@ -76,6 +80,10 @@ impl Instruction {
                     (0x7, 0xE) => "REM",
                     (0x7, 0xF) => "REMU",
                     (0xF, 0x1) => "RET",  // RET: opcode=0xF, func=0x1
+                    // 债2清偿: await 真悬停指令族 (opcode=0xF)
+                    (0xF, 0x2) => "YIELD", // YIELD_T rs1: 挂起至虚拟时钟 +rs1 ms
+                    (0xF, 0x3) => "TRET",  // 任务结束 (async 函数 epilogue)
+                    (0xF, 0x4) => "SPAWN", // SPAWN rs1: 派生 async 任务, 入口=regs[rs1]
                     _ => "???",
                 };
                 if *opcode == 0xF && *func == 0x1 {

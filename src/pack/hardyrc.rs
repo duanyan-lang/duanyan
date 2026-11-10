@@ -120,7 +120,7 @@ impl HardyRc {
 /// 获取有效的 registry URL (合并 .hardyrc 和环境变量)
 pub fn get_effective_registry_url(dir: &Path) -> String {
     // 优先级: 环境变量 > .hardyrc > 默认值
-    if let Ok(url) = std::env::var("HARDY_REGISTRY") {
+    if let Ok(url) = std::env::var("DUANYAN_REGISTRY") {
         return url;
     }
     let rc = HardyRc::load(dir);

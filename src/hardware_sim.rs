@@ -1,7 +1,7 @@
-//! 硬件API PC模拟器 (hardy run 时使用)
+//! 硬件API PC模拟器 (duanyan run 时使用)
 //!
 //! Phase B: 硬件API的PC模拟器
-//! 在 `hardy run` 模式下虚拟GPIO/UART/PWM/Timer行为
+//! 在 `duanyan run` 模式下虚拟GPIO/UART/PWM/Timer行为
 
 use std::collections::HashMap;
 use std::time::{Instant, Duration};

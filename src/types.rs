@@ -121,7 +121,7 @@ pub fn generate_dts() -> String {
     dts
 }
 
-/// 生成 hardy.json 项目配置模板
+/// 生成 duanyan.json 项目配置模板
 pub fn generate_project_config(project_name: &str) -> String {
     format!(
         r#"{{

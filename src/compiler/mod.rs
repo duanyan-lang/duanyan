@@ -35,6 +35,7 @@ struct FunctionInfo {
     name: String,
     param_count: usize,
     addr: usize,  // 函数入口地址（字节）
+    is_async: bool, // 债2清偿: async 函数调用时发射 SPAWN 而非 JAL
 }
 
 /// 寄存器约定 (COUNPRE64 ABI)
@@ -357,6 +358,13 @@ impl Compiler {
         });
     }
 
+    /// 债2清偿: YIELD_T rs1 — 挂起当前任务至虚拟时钟 +regs[rs1] ms
+    fn emit_yield_t(&mut self, rs1: u8) {
+        self.push_instr(Instruction::RR {
+            opcode: 0xF, func: 0x2, rs1, rs2: 0, rd: 0,
+        });
+    }
+
     fn emit_store(&mut self, rs: u8, base: u8, offset: i16) {
         self.push_instr(Instruction::RI {
             opcode: 0xC, rs: base, rd: rs, imm: offset,
@@ -397,6 +405,7 @@ impl Compiler {
                 name: sf.func.name.clone(),
                 param_count: sf.func.params.len(),
                 addr: 0,
+                is_async: sf.func.is_async,
             });
         }
 
@@ -500,7 +509,14 @@ impl Compiler {
         self.emit_addi(REG_SP, REG_FP, 0);
         self.emit_load(REG_RA, REG_FP, -16);
         self.emit_load(REG_FP, REG_FP, -8);
-        self.emit_ret();
+        if func.is_async {
+            // 债2清偿: async 函数以 TRET 收尾，通知调度器任务结束
+            self.push_instr(Instruction::RR {
+                opcode: 0xF, func: 0x3, rs1: 0, rs2: 0, rd: 0,
+            });
+        } else {
+            self.emit_ret();
+        }
 
         self.in_function = false;
         Ok(())
@@ -819,6 +835,7 @@ impl Compiler {
             .ok_or_else(|| format!("未定义函数 '{}'", name))?;
         let func_addr = func_info.addr;
         let param_count = func_info.param_count;
+        let is_async = func_info.is_async;
 
         if args.len() != param_count {
             return Err(format!("函数 '{}' 期望 {} 个参数，得到 {} 个", name, param_count, args.len()));
@@ -831,6 +848,20 @@ impl Compiler {
 
         if !args.is_empty() {
             self.emit_nop();
+        }
+
+        if is_async {
+            // 债2清偿: async 函数调用 = SPAWN 派生任务（即发即走），
+            // 由主程序 HALT 后的协作式调度器驱动；调用点求值为 0。
+            let addr_reg = self.alloc_temp()?;
+            self.load_const(addr_reg, func_addr as i64)?;
+            self.emit_nop();
+            self.push_instr(Instruction::RR {
+                opcode: 0xF, func: 0x4, rs1: addr_reg, rs2: 0, rd: 0,
+            });
+            self.free_temp(addr_reg);
+            self.emit_addi(rd, REG_ZERO, 0);
+            return Ok(());
         }
 
         let current_pc = self.current_addr();
@@ -1480,6 +1511,30 @@ impl Compiler {
                         self.free_temp(tmp);
                         Ok(())
                     }
+                    // 位运算债清偿: & | ^ << >> >>> 直接映射 VM 位运算/移位指令
+                    // SHR 家族 func 约定: 0x0=逻辑右移(比较指令既有占用,不动)
+                    //                    0x1=算术右移(>>)  0x2=无符号右移(>>>)
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr | BinOp::UShr => {
+                        self.compile_expr_into(left, rd)?;
+                        let tmp = self.alloc_temp()?;
+                        self.compile_expr_into(right, tmp)?;
+                        self.emit_nop();
+                        let (opcode, func) = match op {
+                            BinOp::BitAnd => (0x2, 0x0),
+                            BinOp::BitOr => (0x3, 0x0),
+                            BinOp::BitXor => (0x4, 0x0),
+                            BinOp::Shl => (0x5, 0x0),
+                            BinOp::Shr => (0x6, 0x1),
+                            BinOp::UShr => (0x6, 0x2),
+                            _ => unreachable!(),
+                        };
+                        self.push_instr(Instruction::RR {
+                            opcode, func,
+                            rs1: rd, rs2: tmp, rd,
+                        });
+                        self.free_temp(tmp);
+                        Ok(())
+                    }
                     // 比较/逻辑运算符在“值上下文”中必须产生规范的 0/1 布尔结果，
                     // 不能像旧版那样静默退化为原始 SUB/AND 数值。
                     _ => self.compile_expr_to_bool(expr, rd),
@@ -1566,6 +1621,7 @@ impl Compiler {
                     name: func_name.clone(),
                     param_count: params.len(),
                     addr,
+                    is_async: false,
                 });
                 // 编译函数体（需要快照/恢复当前帧的全部分配状态，因为
                 // compile_function 会调用 reset_frame 重置 slots/free_pool 等）
@@ -1628,31 +1684,44 @@ impl Compiler {
                     }
                 }
             }
-            // Phase v1.5: await expr → 状态机变换（当前简化为编译内部表达式）
+            // 债2清偿: await expr → YIELD_T 真悬停
+            // 定时类 await (Timer.delay) 挂起到虚拟时钟；其余表达式同步求值
             Expr::Await { expr } => {
-                // TODO: 完整状态机变换在 Task 3 实现
-                // 当前简化：直接编译内部表达式
+                if let Expr::Call { name, args } = expr.as_ref() {
+                    if (name == "Timer.delay" || name == "delay") && args.len() == 1 {
+                        let ms_reg = self.alloc_temp()?;
+                        self.compile_expr_into(&args[0], ms_reg)?;
+                        self.emit_nop();
+                        self.emit_yield_t(ms_reg);
+                        self.free_temp(ms_reg);
+                        self.emit_addi(rd, REG_ZERO, 0);
+                        return Ok(());
+                    }
+                }
+                // 非定时 await：求值内部表达式（与 C 路径 poll 语义一致）
                 self.compile_expr_into(expr, rd)
             }
-            // Phase v1.5: Promise.all → 并行等待（当前简化为编译第一个 promise）
+            // 债2清偿: Promise.all → 并行派生全部任务 + YIELD 让出至全员完成
             Expr::PromiseAll { promises } => {
-                // TODO: 完整并行等待在 Task 3 实现
-                if let Some(first) = promises.first() {
-                    self.compile_expr_into(first, rd)
-                } else {
-                    self.emit_addi(rd, REG_ZERO, 0);
-                    Ok(())
+                for p in promises {
+                    self.compile_expr_into(p, rd)?;
                 }
+                if !promises.is_empty() {
+                    self.emit_yield_t(REG_ZERO); // 让出一次, 任务由调度器驱动
+                }
+                self.emit_addi(rd, REG_ZERO, 0);
+                Ok(())
             }
-            // Phase v1.5: Promise.race → 竞争等待（当前简化为编译第一个 promise）
+            // Promise.race → 并行派生（v1 不区分胜出者，求值为 0）
             Expr::PromiseRace { promises } => {
-                // TODO: 完整竞争等待在 Task 3 实现
-                if let Some(first) = promises.first() {
-                    self.compile_expr_into(first, rd)
-                } else {
-                    self.emit_addi(rd, REG_ZERO, 0);
-                    Ok(())
+                for p in promises {
+                    self.compile_expr_into(p, rd)?;
                 }
+                if !promises.is_empty() {
+                    self.emit_yield_t(REG_ZERO);
+                }
+                self.emit_addi(rd, REG_ZERO, 0);
+                Ok(())
             }
         }
     }

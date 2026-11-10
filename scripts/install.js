@@ -8,11 +8,11 @@ const os = require("os");
 
 const root = path.join(__dirname, "..");
 const ext = os.platform() === "win32" ? ".exe" : "";
-const targetBin = path.join(root, "target", "release", `hardy${ext}`);
+const targetBin = path.join(root, "target", "release", `duanyan${ext}`);
 
 // Skip if binary already exists
 if (fs.existsSync(targetBin)) {
-  console.log("\x1b[32m✓ hardy binary already exists, skipping build.\x1b[0m");
+  console.log("\x1b[32m✓ duanyan binary already exists, skipping build.\x1b[0m");
   process.exit(0);
 }
 

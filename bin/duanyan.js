@@ -6,10 +6,10 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-// Locate the hardy binary
+// Locate the duanyan binary
 function findBinary() {
   const ext = os.platform() === "win32" ? ".exe" : "";
-  const binName = `hardy${ext}`;
+  const binName = `duanyan${ext}`;
 
   // 1. Check package-local binary (installed by postinstall)
   const localBin = path.join(__dirname, "..", "target", "release", binName);
@@ -36,7 +36,7 @@ try {
   if (err.status !== null) {
     process.exit(err.status);
   }
-  console.error(`\x1b[31mError: Cannot find 'hardy' binary.\x1b[0m`);
+  console.error(`\x1b[31mError: Cannot find 'duanyan' binary.\x1b[0m`);
   console.error(`Please install Rust (https://rustup.rs) and run:`);
   console.error(`  cd ${path.join(__dirname, "..")} && cargo install --path . --force`);
   process.exit(1);

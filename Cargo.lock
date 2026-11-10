@@ -842,6 +842,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "duanyan"
+version = "1.6.0"
+dependencies = [
+ "espflash",
+ "serialport",
+]
+
+[[package]]
 name = "encode_unicode"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1119,14 +1127,6 @@ dependencies = [
  "fallible-iterator",
  "indexmap",
  "stable_deref_trait",
-]
-
-[[package]]
-name = "hardyscript"
-version = "1.6.0"
-dependencies = [
- "espflash",
- "serialport",
 ]
 
 [[package]]
