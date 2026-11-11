@@ -1,5 +1,5 @@
 {
-  "name": "duanyan",
+  "name": "@duanyan-lang/duanyan",
   "version": "1.6.0",
   "description": "DUANYAN: JavaScript/TypeScript → Native Code → ESP32 / Arduino / STM32 / Raspberry Pi unified hardware programming compiler",
   "keywords": [
@@ -24,10 +24,13 @@
     "url": "https://github.com/duanyan-lang/duanyan/issues"
   },
   "author": {
-    "name": "DUANYAN Team",
+    "name": "duanyan-lang",
     "email": "duanyan1649@outlook.com"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "duanyan": "./bin/duanyan.js"
   },

@@ -3,7 +3,7 @@
 > A JavaScript compiler for hardware and edge decision engine.
 > 锻言：面向硬件与端侧决策引擎的 JavaScript 编译器
 
-[![npm](https://img.shields.io/npm/v/duanyan)](https://www.npmjs.com/package/duanyan)
+[![npm](https://img.shields.io/npm/v/@duanyan-lang/duanyan)](https://www.npmjs.com/package/@duanyan-lang/duanyan)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ## 🔗 Links
@@ -41,7 +41,7 @@ Write standard JavaScript/TypeScript. Compile to bare-metal firmware. Flash to r
 ### Install
 
 ```bash
-npm install -g duanyan
+npm install -g @duanyan-lang/duanyan
 ```
 
 Or build from source (requires [Rust](https://rustup.rs)):
@@ -209,6 +209,6 @@ MIT © duanyan-lang
 
 ## Links
 
-- [npm](https://www.npmjs.com/package/duanyan)
+- [npm](https://www.npmjs.com/package/@duanyan-lang/duanyan)
 - [Issues](https://github.com/duanyan-lang/duanyan/issues)
 - [Homepage](https://duanyan.tech) · [Documentation](https://duanyan.dev) · [Community](https://duanyan.org)
