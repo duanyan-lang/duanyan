@@ -1,7 +1,7 @@
 {
-  "name": "hardyscript",
+  "name": "duanyan",
   "version": "1.6.0",
-  "description": "HardyScript: JavaScript/TypeScript → COUNPRE64 / ESP32 / Arduino / STM32 / Raspberry Pi unified hardware programming compiler",
+  "description": "DUANYAN: JavaScript/TypeScript → Native Code → ESP32 / Arduino / STM32 / Raspberry Pi unified hardware programming compiler",
   "keywords": [
     "compiler",
     "embedded",
@@ -15,17 +15,17 @@
     "typescript",
     "firmware"
   ],
-  "homepage": "https://github.com/hardyscript-cpu/HardyScript",
+  "homepage": "https://github.com/duanyan-lang/duanyan",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hardyscript-cpu/HardyScript.git"
+    "url": "https://github.com/duanyan-lang/duanyan.git"
   },
   "bugs": {
-    "url": "https://github.com/hardyscript-cpu/HardyScript/issues"
+    "url": "https://github.com/duanyan-lang/duanyan/issues"
   },
   "author": {
-    "name": "HardyScript Team",
-    "email": "hardyscript@outlook.com"
+    "name": "DUANYAN Team",
+    "email": "duanyan1649@outlook.com"
   },
   "license": "MIT",
   "bin": {

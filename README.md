@@ -4,7 +4,7 @@
 
 **把 JavaScript 锻造成机器码的 AOT 编译器。**
 
-[![npm](https://img.shields.io/npm/v/hardyscript)](https://www.npmjs.com/package/hardyscript)
+[![npm](https://img.shields.io/npm/v/duanyan)](https://www.npmjs.com/package/duanyan)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
@@ -29,13 +29,13 @@ Write standard JavaScript/TypeScript. Compile to bare-metal firmware. Flash to r
 ### Install
 
 ```bash
-npm install -g hardyscript
+npm install -g duanyan
 ```
 
 Or build from source (requires [Rust](https://rustup.rs)):
 
 ```bash
-git clone https://github.com/askai1649/DUANYAN.git
+git clone https://github.com/duanyan-lang/duanyan.git
 cd DUANYAN
 cargo install --path .
 ```
@@ -197,5 +197,5 @@ MIT © DUANYAN Team
 
 ## Links
 
-- [npm](https://www.npmjs.com/package/hardyscript)
-- [Issues](https://github.com/askai1649/DUANYAN/issues)
+- [npm](https://www.npmjs.com/package/duanyan)
+- [Issues](https://github.com/duanyan-lang/duanyan/issues)
