@@ -118,6 +118,45 @@ use super::*;
         assert!(c.contains("float x = (float)(1);"), "got: {}", c);
     }
 
+    // 扩展 4: 数组高阶方法降级为确定性 for 循环
+    #[test]
+    fn test_array_map_loop() {
+        let c = compile_to_c("let arr = [1, 2, 3]; let doubled = arr.map(x => x * 2);", CTarget::Esp32);
+        assert!(c.contains("static int32_t doubled[3];"), "got: {}", c);
+        assert!(c.contains("int32_t x = arr["), "got: {}", c);
+        assert!(c.contains("] = (x * 2);"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_array_filter_loop() {
+        let c = compile_to_c("let arr = [1, 2, 3, 4]; let evens = arr.filter(x => x % 2 == 0);", CTarget::Esp32);
+        assert!(c.contains("static int32_t evens[4];"), "got: {}", c);
+        assert!(c.contains("evens_len = 0;"), "got: {}", c);
+        assert!(c.contains("if ("), "got: {}", c);
+    }
+
+    #[test]
+    fn test_array_foreach_loop() {
+        let c = compile_to_c("let arr = [1, 2, 3]; arr.forEach(x => x + 1);", CTarget::Esp32);
+        assert!(c.contains("int32_t x = arr["), "got: {}", c);
+        assert!(!c.contains("static int32_t _h"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_array_reduce_loop() {
+        let c = compile_to_c("let arr = [1, 2, 3]; let total = arr.reduce((a, x) => a + x, 0);", CTarget::Esp32);
+        assert!(c.contains("int32_t a = 0;"), "got: {}", c);
+        assert!(c.contains("int32_t x = arr["), "got: {}", c);
+        assert!(c.contains("int32_t total = a;"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_array_slice_loop() {
+        let c = compile_to_c("let arr = [1, 2, 3, 4]; let sub = arr.slice(1, 3);", CTarget::Esp32);
+        assert!(c.contains("static int32_t sub[4];"), "got: {}", c);
+        assert!(c.contains("sub_len = 0;"), "got: {}", c);
+    }
+
     #[test]
     fn test_simple_variable() {
         let c = compile_to_c("let x = 42;", CTarget::Esp32);

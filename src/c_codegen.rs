@@ -465,6 +465,140 @@ impl CCodeGenerator {
         None
     }
 
+    /// 扩展 4: 数组长度静态查询（仅静态已知长度可降级为确定性循环）
+    fn array_len(&self, name: &str) -> Option<usize> {
+        self.array_vars.iter().find(|(n, _)| n == name).map(|(_, l)| *l)
+    }
+
+    /// 扩展 4: 匹配数组高阶方法调用 → (数组名, 方法, 参数)
+    fn match_array_hof(value: &Expr) -> Option<(String, String, &[Expr])> {
+        match value {
+            Expr::Call { name, args } => {
+                let (a, m) = name.split_once('.')?;
+                if matches!(m, "map" | "filter" | "forEach" | "reduce") {
+                    Some((a.to_string(), m.to_string(), args))
+                } else {
+                    None
+                }
+            }
+            Expr::StringMethod { object, method, args } if method == "slice" => {
+                if let Expr::Ident(a) = object.as_ref() {
+                    Some((a.clone(), "slice".to_string(), args))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// 扩展 4: 数组高阶方法降级为确定性 C for 循环（静态缓冲，回调内联，回调次数=数组长度）
+    fn emit_array_hof(&mut self, name: Option<String>, arr: &str, len: usize, method: &str, args: &[Expr]) -> Result<String, String> {
+        let pad = self.indent_str();
+        self.arrow_counter += 1;
+        let idx = format!("_hi{}", self.arrow_counter);
+        self.needs_stdint = true;
+
+        // slice 无回调：拷贝子区间
+        if method == "slice" {
+            let name = name.unwrap_or_else(|| format!("_hs{}", self.arrow_counter));
+            let a = if !args.is_empty() { self.generate_expr(&args[0])? } else { "0".to_string() };
+            let b = if args.len() > 1 { self.generate_expr(&args[1])? } else { len.to_string() };
+            self.array_vars.push((name.clone(), len));
+            let mut code = String::new();
+            code.push_str(&format!("{}static int32_t {}[{}];\n", pad, name, len));
+            code.push_str(&format!("{}int32_t {}_len = 0;\n", pad, name));
+            code.push_str(&format!("{}for (int32_t {i} = {a}; {i} < {b} && {i} < {len}; {i}++) {{\n", pad, i = idx, a = a, b = b, len = len));
+            code.push_str(&format!("{}    {}[{}_len++] = {}[{}];\n", pad, name, name, arr, idx));
+            code.push_str(&format!("{}}}\n", pad));
+            return Ok(code);
+        }
+
+        // 其余需回调箭头函数
+        let (params, body) = match args.first() {
+            Some(Expr::ArrowFunc { params, body, .. }) => (params.clone(), body),
+            _ => return Err(format!("扩展 4: {}() 回调必须是箭头函数", method)),
+        };
+
+        match method {
+            "forEach" => {
+                let p = params.first().cloned().unwrap_or_else(|| "_x".to_string());
+                let mut code = String::new();
+                code.push_str(&format!("{}for (int32_t {i} = 0; {i} < {len}; {i}++) {{\n", pad, i = idx, len = len));
+                code.push_str(&format!("{}    int32_t {} = {}[{}];\n", pad, p, arr, idx));
+                match body {
+                    ArrowBody::Expr(e) => {
+                        let be = self.generate_expr(e)?;
+                        code.push_str(&format!("{}    {};\n", pad, be));
+                    }
+                    ArrowBody::Block(stmts) => {
+                        let saved = self.indent;
+                        self.indent = saved + 1;
+                        for s in stmts {
+                            let line = self.generate_statement(&s.stmt)?;
+                            code.push_str(&line);
+                        }
+                        self.indent = saved;
+                    }
+                }
+                code.push_str(&format!("{}}}\n", pad));
+                Ok(code)
+            }
+            "map" => {
+                let name = name.unwrap_or_else(|| format!("_hm{}", self.arrow_counter));
+                let p = params.first().cloned().unwrap_or_else(|| "_x".to_string());
+                let be = match body {
+                    ArrowBody::Expr(e) => self.generate_expr(e)?,
+                    ArrowBody::Block(_) => return Err("扩展 4: map 回调需表达式体 (x => expr)".to_string()),
+                };
+                self.array_vars.push((name.clone(), len));
+                let mut code = String::new();
+                code.push_str(&format!("{}static int32_t {}[{}];\n", pad, name, len));
+                code.push_str(&format!("{}for (int32_t {i} = 0; {i} < {len}; {i}++) {{\n", pad, i = idx, len = len));
+                code.push_str(&format!("{}    int32_t {} = {}[{}];\n", pad, p, arr, idx));
+                code.push_str(&format!("{}    {}[{}] = {};\n", pad, name, idx, be));
+                code.push_str(&format!("{}}}\n", pad));
+                Ok(code)
+            }
+            "filter" => {
+                let name = name.unwrap_or_else(|| format!("_hf{}", self.arrow_counter));
+                let p = params.first().cloned().unwrap_or_else(|| "_x".to_string());
+                let pred = match body {
+                    ArrowBody::Expr(e) => self.generate_expr(e)?,
+                    ArrowBody::Block(_) => return Err("扩展 4: filter 回调需表达式体".to_string()),
+                };
+                self.array_vars.push((name.clone(), len));
+                let mut code = String::new();
+                code.push_str(&format!("{}static int32_t {}[{}];\n", pad, name, len));
+                code.push_str(&format!("{}int32_t {}_len = 0;\n", pad, name));
+                code.push_str(&format!("{}for (int32_t {i} = 0; {i} < {len}; {i}++) {{\n", pad, i = idx, len = len));
+                code.push_str(&format!("{}    int32_t {} = {}[{}];\n", pad, p, arr, idx));
+                code.push_str(&format!("{}    if ({}) {{ {}[{}_len++] = {}[{}]; }}\n", pad, pred, name, name, arr, idx));
+                code.push_str(&format!("{}}}\n", pad));
+                Ok(code)
+            }
+            "reduce" => {
+                let name = name.unwrap_or_else(|| format!("_hr{}", self.arrow_counter));
+                let acc = params.first().cloned().unwrap_or_else(|| "_acc".to_string());
+                let elem = params.get(1).cloned().unwrap_or_else(|| "_x".to_string());
+                let init = if args.len() > 1 { self.generate_expr(&args[1])? } else { "0".to_string() };
+                let be = match body {
+                    ArrowBody::Expr(e) => self.generate_expr(e)?,
+                    ArrowBody::Block(_) => return Err("扩展 4: reduce 回调需表达式体".to_string()),
+                };
+                let mut code = String::new();
+                code.push_str(&format!("{}int32_t {} = {};\n", pad, acc, init));
+                code.push_str(&format!("{}for (int32_t {i} = 0; {i} < {len}; {i}++) {{\n", pad, i = idx, len = len));
+                code.push_str(&format!("{}    int32_t {} = {}[{}];\n", pad, elem, arr, idx));
+                code.push_str(&format!("{}    {} = {};\n", pad, acc, be));
+                code.push_str(&format!("{}}}\n", pad));
+                code.push_str(&format!("{}int32_t {} = {};\n", pad, name, acc));
+                Ok(code)
+            }
+            _ => Err(format!("扩展 4: 不支持的数组方法 {}", method)),
+        }
+    }
+
     /// 扩展 1: 字面量越界编译期 lint（超宽度范围 → 编译错误）
     fn lint_width_literal(&self, name: &str, n: i64) -> Result<(), String> {
         let (lo, hi, tn) = match self.width_types.get(name).map(|s| s.as_str()) {
@@ -1978,6 +2112,12 @@ impl CCodeGenerator {
                     return Ok(format!("{}/* @register {} @ 0x{:08X}: {} */\n",
                         pad, name, def.base, fields.join(" ")));
                 }
+                // 扩展 4: 数组高阶方法 let 绑定 → 确定性 for 循环
+                if let Some((arr, method, args)) = Self::match_array_hof(value) {
+                    if let Some(len) = self.array_len(&arr) {
+                        return self.emit_array_hof(Some(name.clone()), &arr, len, &method, args);
+                    }
+                }
                 // 检查是否是箭头函数赋值
                 if let Expr::ArrowFunc { params, body, .. } = value {
                     return self.generate_arrow_assignment(name, params, body);
@@ -2038,6 +2178,12 @@ impl CCodeGenerator {
                         .map(|(n, hi, lo)| format!("{}[{}:{}]", n, hi, lo)).collect();
                     return Ok(format!("{}/* @register {} @ 0x{:08X}: {} */\n",
                         pad, name, def.base, fields.join(" ")));
+                }
+                // 扩展 4: 数组高阶方法 const 绑定 → 确定性 for 循环
+                if let Some((arr, method, args)) = Self::match_array_hof(value) {
+                    if let Some(len) = self.array_len(&arr) {
+                        return self.emit_array_hof(Some(name.clone()), &arr, len, &method, args);
+                    }
                 }
                 let c_expr = self.generate_expr(value)?;
                 if let Expr::Number(n) = value {
@@ -2163,6 +2309,13 @@ impl CCodeGenerator {
                 // 处理硬件 API 方法调用
                 if let Some(hw_line) = self.try_generate_hw_method(expr)? {
                     return Ok(format!("{}{}\n", pad, hw_line));
+                }
+                // 扩展 4: 数组高阶方法作为表达式语句（forEach 等）
+                if let Some((arr, method, args)) = Self::match_array_hof(expr) {
+                    if let Some(len) = self.array_len(&arr) {
+                        let nm = if method == "forEach" { None } else { Some(format!("_he{}", self.arrow_counter)) };
+                        return self.emit_array_hof(nm, &arr, len, &method, args);
+                    }
                 }
                 let c_expr = self.generate_expr(expr)?;
                 Ok(format!("{}{};\n", pad, c_expr))

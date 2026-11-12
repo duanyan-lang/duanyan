@@ -1217,6 +1217,18 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Ident(name) => {
                 self.advance();
+                // 扩展 4: 裸参数单参数箭头 x => body / x => { body }（标准 JS 单参数无括号形式）
+                if *self.peek() == TokenKind::Arrow {
+                    self.advance(); // consume '=>'
+                    let body = if *self.peek() == TokenKind::LBrace {
+                        let stmts = self.parse_block()?;
+                        ArrowBody::Block(stmts)
+                    } else {
+                        let expr = self.parse_expr()?;
+                        ArrowBody::Expr(Box::new(expr))
+                    };
+                    return Ok(Expr::ArrowFunc { params: vec![name], body, is_async: false });
+                }
                 // 函数调用
                 if *self.peek() == TokenKind::LParen {
                     self.advance(); // consume '('
