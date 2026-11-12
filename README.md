@@ -207,6 +207,8 @@ cargo install --path .
 
 MIT © duanyan-lang
 
+**商标声明 / Trademark Notice**：「Duanyan / 锻言」为青岛岩画智能科技有限公司注册商标。MIT 许可仅授予代码版权，不授予任何商标权。
+
 ## Links
 
 - [npm](https://www.npmjs.com/package/@duanyan-lang/duanyan)
