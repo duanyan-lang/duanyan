@@ -160,6 +160,145 @@ pub fn extract_width_types(source: &str) -> std::collections::HashMap<String, St
     map
 }
 
+/// 扩展 2: 寄存器位域定义（旁路，不进 AST）
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegisterDef {
+    /// 寄存器基地址
+    pub base: u32,
+    /// 位域列表 (name, hi, lo)，hi >= lo
+    pub fields: Vec<(String, u8, u8)>,
+}
+
+impl RegisterDef {
+    /// 查位域 (hi, lo)
+    pub fn field(&self, name: &str) -> Option<(u8, u8)> {
+        self.fields.iter().find(|(n, _, _)| n == name).map(|(_, hi, lo)| (*hi, *lo))
+    }
+    /// 位域掩码 ((1<<width)-1)
+    pub fn mask(&self, name: &str) -> Option<u32> {
+        self.field(name).map(|(hi, lo)| {
+            let width = (hi - lo) as u32 + 1;
+            if width >= 32 { 0xFFFF_FFFF } else { (1u32 << width) - 1 }
+        })
+    }
+}
+
+/// 解析无符号整数字面量（支持 0x/0X 十六进制与下划线分隔）
+fn parse_uint_literal(s: &str) -> Option<u32> {
+    let s: String = s.chars().filter(|c| *c != '_').collect();
+    if let Some(h) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u32::from_str_radix(h, 16).ok()
+    } else {
+        s.parse::<u32>().ok()
+    }
+}
+
+/// 解析位域范围 `[hi, lo]` → (hi, lo, 新位置)
+fn parse_bit_range(chars: &[char], mut j: usize) -> Option<(u8, u8, usize)> {
+    let n = chars.len();
+    while j < n && chars[j].is_whitespace() { j += 1; }
+    if j >= n || chars[j] != '[' { return None; }
+    j += 1;
+    while j < n && chars[j].is_whitespace() { j += 1; }
+    let s = j;
+    while j < n && chars[j].is_ascii_digit() { j += 1; }
+    let hi: u8 = chars[s..j].iter().collect::<String>().parse().ok()?;
+    while j < n && (chars[j].is_whitespace() || chars[j] == ',') { j += 1; }
+    let s = j;
+    while j < n && chars[j].is_ascii_digit() { j += 1; }
+    let lo: u8 = chars[s..j].iter().collect::<String>().parse().ok()?;
+    while j < n && chars[j] != ']' { j += 1; }
+    if j < n { j += 1; }
+    if hi < lo { return None; }
+    Some((hi, lo, j))
+}
+
+/// 旁路提取寄存器声明（扩展 2）。
+/// 扫描 `@register(BASE) const|let NAME = { field: [hi, lo], ... }`，返回 NAME→RegisterDef。
+/// 不修改源码、不进 AST：寄存器信息经此表旁路送入 codegen，源码零指针。
+pub fn extract_registers(source: &str) -> std::collections::HashMap<String, RegisterDef> {
+    let mut map = std::collections::HashMap::new();
+    let chars: Vec<char> = source.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        // 跳过字符串
+        if chars[i] == '"' || chars[i] == '\'' || chars[i] == '`' {
+            let q = chars[i];
+            i += 1;
+            while i < n && chars[i] != q {
+                if chars[i] == '\\' { i += 1; }
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        // 匹配 @register
+        if chars[i] == '@' && starts_with_word(&chars, i + 1, "register") {
+            let mut j = i + 1 + 8; // "register".len()
+            while j < n && chars[j].is_whitespace() { j += 1; }
+            let mut base: u32 = 0;
+            if j < n && chars[j] == '(' {
+                j += 1;
+                while j < n && chars[j].is_whitespace() { j += 1; }
+                let s = j;
+                while j < n && (chars[j].is_alphanumeric() || chars[j] == '_') { j += 1; }
+                base = parse_uint_literal(&chars[s..j].iter().collect::<String>()).unwrap_or(0);
+                while j < n && chars[j] != ')' { j += 1; }
+                if j < n { j += 1; }
+            }
+            while j < n && chars[j].is_whitespace() { j += 1; }
+            let ks = j;
+            while j < n && chars[j].is_alphabetic() { j += 1; }
+            let kw: String = chars[ks..j].iter().collect();
+            if kw != "const" && kw != "let" { i = j.max(i + 1); continue; }
+            while j < n && chars[j].is_whitespace() { j += 1; }
+            let ns = j;
+            while j < n && (chars[j].is_alphanumeric() || chars[j] == '_') { j += 1; }
+            let name: String = chars[ns..j].iter().collect();
+            while j < n && chars[j].is_whitespace() { j += 1; }
+            if j < n && chars[j] == '=' { j += 1; }
+            while j < n && chars[j].is_whitespace() { j += 1; }
+            let mut fields: Vec<(String, u8, u8)> = Vec::new();
+            if j < n && chars[j] == '{' {
+                j += 1;
+                loop {
+                    while j < n && (chars[j].is_whitespace() || chars[j] == ',') { j += 1; }
+                    if j >= n { break; }
+                    if chars[j] == '}' { j += 1; break; }
+                    // 字段名：标识符或字符串
+                    let fname: String;
+                    if chars[j] == '"' || chars[j] == '\'' {
+                        let q = chars[j];
+                        let fs = j + 1;
+                        j += 1;
+                        while j < n && chars[j] != q { j += 1; }
+                        fname = chars[fs..j].iter().collect();
+                        if j < n { j += 1; }
+                    } else {
+                        let fs = j;
+                        while j < n && (chars[j].is_alphanumeric() || chars[j] == '_') { j += 1; }
+                        fname = chars[fs..j].iter().collect();
+                    }
+                    while j < n && chars[j].is_whitespace() { j += 1; }
+                    if j < n && chars[j] == ':' { j += 1; }
+                    match parse_bit_range(&chars, j) {
+                        Some((hi, lo, nj)) => { fields.push((fname, hi, lo)); j = nj; }
+                        None => break,
+                    }
+                }
+            }
+            if !name.is_empty() {
+                map.insert(name, RegisterDef { base, fields });
+            }
+            i = j.max(i + 1);
+            continue;
+        }
+        i += 1;
+    }
+    map
+}
+
 fn starts_with_word(chars: &[char], pos: usize, word: &str) -> bool {
     let wchars: Vec<char> = word.chars().collect();
     if pos + wchars.len() > chars.len() { return false; }
@@ -329,5 +468,24 @@ mod tests {
     fn test_extract_ignores_plain_types() {
         let w = extract_width_types("let x: number = 1; let s: string = \"u8: hi\";");
         assert!(w.is_empty(), "got: {:?}", w);
+    }
+
+    // 扩展 2: 寄存器位域旁路提取
+    #[test]
+    fn test_extract_register_basic() {
+        let src = "@register(0x40004000) const GPIO_OUT = { en: [1, 1], val: [7, 2] };";
+        let regs = extract_registers(src);
+        let def = regs.get("GPIO_OUT").expect("GPIO_OUT registered");
+        assert_eq!(def.base, 0x40004000);
+        assert_eq!(def.field("en"), Some((1, 1)));
+        assert_eq!(def.field("val"), Some((7, 2)));
+        assert_eq!(def.mask("val"), Some(0x3F));
+        assert_eq!(def.mask("en"), Some(0x1));
+    }
+
+    #[test]
+    fn test_extract_register_ignores_plain_const() {
+        let regs = extract_registers("const X = { a: 1 }; let y = 2;");
+        assert!(regs.is_empty(), "got: {:?}", regs);
     }
 }

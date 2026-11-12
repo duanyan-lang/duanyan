@@ -9,6 +9,7 @@ use crate::parser::{
 };
 use crate::hardware_api::HardwareModule;
 use crate::scheduler::Scheduler;
+use crate::strip::RegisterDef;
 use std::collections::{HashSet, HashMap};
 
 /// C 编译目标平台
@@ -84,6 +85,10 @@ struct CCodeGenerator {
     needs_chip_info: bool,
     /// 扩展 1/3: 旁路宽度/定点类型表 (变量名 → u8/u16/u32/i8/i16/i32/q15/q16/f32)
     width_types: HashMap<String, String>,
+    /// 扩展 2: 旁路寄存器位域表 (变量名 → RegisterDef)
+    registers: HashMap<String, RegisterDef>,
+    /// 扩展 2: 是否需要寄存器访问宏
+    needs_register: bool,
 }
 
 /// ESP32-S3 裸机 HAL (源自 DUANYAN 实测跑通的 led_on.c / gradient.c)
@@ -363,8 +368,19 @@ pub fn generate_c_source_with_widths(
     target: &CTarget,
     width_types: &HashMap<String, String>,
 ) -> Result<CGenerateResult, String> {
+    generate_c_source_with_ext(program, target, width_types, &HashMap::new())
+}
+
+/// 将 AST 生成 C 源码（带旁路宽度表 + 寄存器位域表，扩展 1/2/3）
+pub fn generate_c_source_with_ext(
+    program: &Program,
+    target: &CTarget,
+    width_types: &HashMap<String, String>,
+    registers: &HashMap<String, RegisterDef>,
+) -> Result<CGenerateResult, String> {
     let mut gen = CCodeGenerator::new(target.clone());
     gen.width_types = width_types.clone();
+    gen.registers = registers.clone();
     gen.generate_program(program)?;
     let uses_wifi = gen.uses_wifi;
     let uses_ai = gen.uses_ai;
@@ -404,6 +420,8 @@ impl CCodeGenerator {
             interrupt_fns: Vec::new(),
             needs_chip_info: false,
             width_types: HashMap::new(),
+            registers: HashMap::new(),
+            needs_register: false,
         }
     }
 
@@ -450,6 +468,34 @@ impl CCodeGenerator {
             ));
         }
         Ok(())
+    }
+
+    /// 扩展 2: 寄存器位域读表达式 → ((DUANYAN_REG32(base) >> lo) & mask)
+    fn register_read_expr(&mut self, reg: &str, field: &str) -> Option<String> {
+        let (base, lo, mask) = {
+            let def = self.registers.get(reg)?;
+            let (_, lo) = def.field(field)?;
+            let mask = def.mask(field)?;
+            (def.base, lo, mask)
+        };
+        self.needs_register = true;
+        Some(format!("((DUANYAN_REG32(0x{:08X}) >> {}) & 0x{:X})", base, lo, mask))
+    }
+
+    /// 扩展 2: 寄存器位域写语句 → masked RMW（读-改-写，不影响其他位）
+    fn register_write_stmt(&mut self, pad: &str, reg: &str, field: &str, val: &str) -> Option<String> {
+        let (base, lo, mask) = {
+            let def = self.registers.get(reg)?;
+            let (_, lo) = def.field(field)?;
+            let mask = def.mask(field)?;
+            (def.base, lo, mask)
+        };
+        self.needs_register = true;
+        let addr = format!("0x{:08X}", base);
+        Some(format!(
+            "{pad}DUANYAN_REG32({a}) = (DUANYAN_REG32({a}) & ~(0x{m:X} << {lo})) | (((uint32_t)({v}) & 0x{m:X}) << {lo});\n",
+            a = addr, m = mask, lo = lo, v = val, pad = pad
+        ))
     }
 
     fn generate_program(&mut self, program: &Program) -> Result<(), String> {
@@ -559,6 +605,14 @@ impl CCodeGenerator {
                 self.output.push_str(def);
             }
             self.output.push('\n');
+        }
+
+        // 扩展 2: 寄存器位域访问宏 (masked RMW, 源码零指针)
+        if self.needs_register {
+            self.output.push_str("/* DUANYAN register bit-field access (扩展 2) */\n");
+            self.output.push_str("#ifndef DUANYAN_REG32\n");
+            self.output.push_str("#define DUANYAN_REG32(addr) (*(volatile uint32_t *)(addr))\n");
+            self.output.push_str("#endif\n\n");
         }
 
         // Phase 2.4: 输出数组边界检查 helper
@@ -1900,6 +1954,14 @@ impl CCodeGenerator {
         let pad = self.indent_str();
         match stmt {
             Statement::Let { name, value } => {
+                // 扩展 2: 寄存器声明（let 形式）— 无存储，发射注释占位
+                if let Some(def) = self.registers.get(name).cloned() {
+                    self.needs_register = true;
+                    let fields: Vec<String> = def.fields.iter()
+                        .map(|(n, hi, lo)| format!("{}[{}:{}]", n, hi, lo)).collect();
+                    return Ok(format!("{}/* @register {} @ 0x{:08X}: {} */\n",
+                        pad, name, def.base, fields.join(" ")));
+                }
                 // 检查是否是箭头函数赋值
                 if let Expr::ArrowFunc { params, body, .. } = value {
                     return self.generate_arrow_assignment(name, params, body);
@@ -1953,6 +2015,14 @@ impl CCodeGenerator {
                 Ok(format!("{}{} {} = {};\n", pad, cty, name, expr_out))
             }
             Statement::Const { name, value } => {
+                // 扩展 2: 寄存器声明 — 无存储，发射注释占位（位域经旁路表在访问点展开）
+                if let Some(def) = self.registers.get(name).cloned() {
+                    self.needs_register = true;
+                    let fields: Vec<String> = def.fields.iter()
+                        .map(|(n, hi, lo)| format!("{}[{}:{}]", n, hi, lo)).collect();
+                    return Ok(format!("{}/* @register {} @ 0x{:08X}: {} */\n",
+                        pad, name, def.base, fields.join(" ")));
+                }
                 let c_expr = self.generate_expr(value)?;
                 if let Expr::Number(n) = value {
                     self.lint_width_literal(name, *n)?;
@@ -2052,6 +2122,10 @@ impl CCodeGenerator {
             Statement::PostDec(name) => Ok(format!("{}{}--;\n", pad, name)),
             Statement::PropAssign { object, property, value } => {
                 let val = self.generate_expr(value)?;
+                // 扩展 2: 寄存器位域写 → masked RMW
+                if let Some(stmt) = self.register_write_stmt(&pad, object, property, &val) {
+                    return Ok(stmt);
+                }
                 // 检查是否是 PWM duty 调用: motor.duty(val) 已被解析为 PropAssign
                 Ok(format!("{}{}.{} = {};\n", pad, object, property, val))
             }
@@ -2639,6 +2713,12 @@ impl CCodeGenerator {
                 Ok(format!("{{ {} }}", parts.join(", ")))
             }
             Expr::PropAccess { object, property } => {
+                // 扩展 2: 寄存器位域读 → masked read
+                if let Expr::Ident(reg) = object.as_ref() {
+                    if let Some(expr) = self.register_read_expr(reg, property) {
+                        return Ok(expr);
+                    }
+                }
                 let obj = self.generate_expr(object)?;
                 Ok(format!("{}.{}", obj, property))
             }

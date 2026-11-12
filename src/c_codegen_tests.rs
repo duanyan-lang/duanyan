@@ -62,6 +62,37 @@ use super::*;
         assert!(c.contains("int32_t x = 42;"), "got: {}", c);
     }
 
+    // 扩展 2: 寄存器位域 helper（.js 路径，不 strip）
+    fn compile_to_c_reg(source: &str, target: CTarget) -> String {
+        let regs = crate::strip::extract_registers(source);
+        let widths = crate::strip::extract_width_types(source);
+        let tokens = tokenize(source).unwrap();
+        let ast = parse(&tokens).unwrap();
+        generate_c_source_with_ext(&ast, &target, &widths, &regs).unwrap().source
+    }
+
+    #[test]
+    fn test_register_decl_no_storage() {
+        let c = compile_to_c_reg("@register(0x40004000) const GPIO_OUT = { en: [1, 1] };", CTarget::Esp32);
+        assert!(c.contains("/* @register GPIO_OUT @ 0x40004000: en[1:1] */"), "got: {}", c);
+        assert!(!c.contains("const int32_t GPIO_OUT"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_register_write_rmw() {
+        let src = "@register(0x40004000) const GPIO_OUT = { en: [1, 1], val: [7, 2] };\nGPIO_OUT.en = 1;";
+        let c = compile_to_c_reg(src, CTarget::Esp32);
+        assert!(c.contains("#define DUANYAN_REG32(addr) (*(volatile uint32_t *)(addr))"), "got: {}", c);
+        assert!(c.contains("DUANYAN_REG32(0x40004000) = (DUANYAN_REG32(0x40004000) & ~(0x1 << 1)) | (((uint32_t)(1) & 0x1) << 1);"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_register_read_masked() {
+        let src = "@register(0x40004000) const GPIO_OUT = { val: [7, 2] };\nlet x = GPIO_OUT.val;";
+        let c = compile_to_c_reg(src, CTarget::Esp32);
+        assert!(c.contains("((DUANYAN_REG32(0x40004000) >> 2) & 0x3F)"), "got: {}", c);
+    }
+
     #[test]
     fn test_simple_variable() {
         let c = compile_to_c("let x = 42;", CTarget::Esp32);

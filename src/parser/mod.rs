@@ -87,6 +87,14 @@ impl<'a> Parser<'a> {
                 // Phase 3.1: @realtime / @interrupt / @priority 注解
                 TokenKind::At => {
                     let annotations = self.parse_annotations()?;
+                    // 扩展 2: @register 作用于 const/let — 位域信息走旁路表，AST 按普通声明解析
+                    if annotations.iter().any(|a| a.name == "register")
+                        && (*self.peek() == TokenKind::Const || *self.peek() == TokenKind::Let)
+                    {
+                        let stmt = self.parse_statement()?;
+                        statements.push(SourceStatement { stmt, line });
+                        continue;
+                    }
                     // 注解后必须是 function 或 async function
                     let mut func = if *self.peek() == TokenKind::Async {
                         self.advance(); // consume 'async'
