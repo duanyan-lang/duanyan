@@ -433,6 +433,8 @@ impl CCodeGenerator {
             Some("u32") => "uint32_t",
             Some("i8") => "int8_t",
             Some("i16") => "int16_t",
+            Some("q15") | Some("q16") => "int32_t", // 扩展 3: 定点以 int32_t 原始存储
+            Some("f32") => "float",                  // 扩展 3: 受控浮点逃生舱（有 FPU 目标）
             _ => "int32_t",
         }
     }
@@ -445,8 +447,22 @@ impl CCodeGenerator {
             Some("u32") => Some("(uint32_t)"),
             Some("i8") => Some("(int8_t)"),
             Some("i16") => Some("(int16_t)"),
+            Some("q15") | Some("q16") => Some("(int32_t)"), // 扩展 3: 定点截断
+            Some("f32") => Some("(float)"),                  // 扩展 3: 浮点转换
             _ => None,
         }
+    }
+
+    /// 扩展 3: 若表达式为 q15/q16 定点标识符，返回其移位量 (15/16)
+    fn fixed_shift_of(&self, e: &Expr) -> Option<u32> {
+        if let Expr::Ident(name) = e {
+            match self.width_types.get(name).map(|s| s.as_str()) {
+                Some("q15") => return Some(15),
+                Some("q16") => return Some(16),
+                _ => {}
+            }
+        }
+        None
     }
 
     /// 扩展 1: 字面量越界编译期 lint（超宽度范围 → 编译错误）
@@ -2595,6 +2611,18 @@ impl CCodeGenerator {
             Expr::BinOp { op, left, right } => {
                 let l = self.generate_expr(left)?;
                 let r = self.generate_expr(right)?;
+                // 扩展 3: q15/q16 定点乘除重写（确定性、无 FPU、64 位中间量防溢出）
+                if let Some(sh) = self.fixed_shift_of(left).or_else(|| self.fixed_shift_of(right)) {
+                    match op {
+                        BinOp::Mul => {
+                            return Ok(format!("((int32_t)(((int64_t)({}) * (int64_t)({})) >> {}))", l, r, sh));
+                        }
+                        BinOp::Div => {
+                            return Ok(format!("((int32_t)((((int64_t)({}) << {}) / (int64_t)({}))))", l, sh, r));
+                        }
+                        _ => {}
+                    }
+                }
                 let op_str = match op {
                     BinOp::Add => "+",
                     BinOp::Sub => "-",

@@ -93,6 +93,31 @@ use super::*;
         assert!(c.contains("((DUANYAN_REG32(0x40004000) >> 2) & 0x3F)"), "got: {}", c);
     }
 
+    // 扩展 3: 定点 q15/q16 + 浮点 f32
+    #[test]
+    fn test_fixed_q15_storage() {
+        let c = compile_to_c_widths("let q: q15 = 100;", CTarget::Esp32);
+        assert!(c.contains("int32_t q = (int32_t)(100);"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_fixed_q15_mul_shift() {
+        let c = compile_to_c_widths("let a: q15 = 2; let b: q15 = 3; let p: q15 = a * b;", CTarget::Esp32);
+        assert!(c.contains("((int32_t)(((int64_t)(a) * (int64_t)(b)) >> 15))"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_fixed_q15_div_shift() {
+        let c = compile_to_c_widths("let a: q15 = 2; let b: q15 = 3; let d: q15 = a / b;", CTarget::Esp32);
+        assert!(c.contains("((int32_t)((((int64_t)(a) << 15) / (int64_t)(b))))"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_f32_emits_float() {
+        let c = compile_to_c_widths("let x: f32 = 1;", CTarget::Esp32);
+        assert!(c.contains("float x = (float)(1);"), "got: {}", c);
+    }
+
     #[test]
     fn test_simple_variable() {
         let c = compile_to_c("let x = 42;", CTarget::Esp32);
