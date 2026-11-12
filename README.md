@@ -3,7 +3,7 @@
 > 锻言：面向硬件与端侧决策引擎的 JavaScript 编译器
 
 ## 🔗 Links
-- Homepage: https://duanyan.tech
+- Homepage: https://duanyan-lang.com
 - Documentation: https://duanyan.dev
 - Community: https://duanyan.org
 
