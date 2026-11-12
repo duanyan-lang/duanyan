@@ -104,6 +104,62 @@ pub fn strip_types(source: &str) -> String {
     result
 }
 
+/// 宽度安全整数类型（扩展 1）
+pub const WIDTH_TYPES: &[&str] = &["u8", "u16", "u32", "i8", "i16", "i32"];
+/// 定点/浮点类型（扩展 3）
+pub const FIXED_TYPES: &[&str] = &["q15", "q16", "f32"];
+
+/// 是否为 DUANYAN 扩展数值类型（宽度/定点/浮点）
+pub fn is_ext_numeric_type(t: &str) -> bool {
+    WIDTH_TYPES.contains(&t) || FIXED_TYPES.contains(&t)
+}
+
+/// 旁路提取宽度/定点注解（扩展 1/3）。
+/// 扫描 `ident : T`（T ∈ WIDTH_TYPES ∪ FIXED_TYPES），返回 变量名→类型 表。
+/// 不修改源码、不进 AST：类型信息经此表旁路送入 codegen，保持宿主语法冻结。
+pub fn extract_width_types(source: &str) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let chars: Vec<char> = source.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+    while i < len {
+        // 跳过字符串，避免误捕
+        if chars[i] == '"' || chars[i] == '\'' || chars[i] == '`' {
+            let q = chars[i];
+            i += 1;
+            while i < len && chars[i] != q {
+                if chars[i] == '\\' { i += 1; }
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        // 跳过单行注释
+        if i + 1 < len && chars[i] == '/' && chars[i + 1] == '/' {
+            while i < len && chars[i] != '\n' { i += 1; }
+            continue;
+        }
+        // 识别 `ident : ExtType`
+        if chars[i] == ':' && i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+            let mut s = i;
+            while s > 0 && (chars[s - 1].is_alphanumeric() || chars[s - 1] == '_') { s -= 1; }
+            let name: String = chars[s..i].iter().collect();
+            let mut j = i + 1;
+            while j < len && (chars[j] == ' ' || chars[j] == '\t') { j += 1; }
+            let mut t = j;
+            while t < len && (chars[t].is_alphanumeric() || chars[t] == '_') { t += 1; }
+            let ty: String = chars[j..t].iter().collect();
+            if !name.is_empty() && is_ext_numeric_type(&ty) {
+                map.insert(name, ty);
+            }
+            i = t;
+            continue;
+        }
+        i += 1;
+    }
+    map
+}
+
 fn starts_with_word(chars: &[char], pos: usize, word: &str) -> bool {
     let wchars: Vec<char> = word.chars().collect();
     if pos + wchars.len() > chars.len() { return false; }
@@ -252,5 +308,26 @@ mod tests {
         let input = r#"let s: string = "hello: world";"#;
         let output = strip_types(input);
         assert!(output.contains(r#""hello: world""#), "got: {}", output);
+    }
+
+    // 扩展 1: 宽度注解旁路提取
+    #[test]
+    fn test_extract_width_let() {
+        let w = extract_width_types("let r: u8 = 255; let c: u16 = 300;");
+        assert_eq!(w.get("r").map(|s| s.as_str()), Some("u8"));
+        assert_eq!(w.get("c").map(|s| s.as_str()), Some("u16"));
+    }
+
+    #[test]
+    fn test_extract_width_params() {
+        let w = extract_width_types("function f(a: u8, b: u32) { return a; }");
+        assert_eq!(w.get("a").map(|s| s.as_str()), Some("u8"));
+        assert_eq!(w.get("b").map(|s| s.as_str()), Some("u32"));
+    }
+
+    #[test]
+    fn test_extract_ignores_plain_types() {
+        let w = extract_width_types("let x: number = 1; let s: string = \"u8: hi\";");
+        assert!(w.is_empty(), "got: {:?}", w);
     }
 }

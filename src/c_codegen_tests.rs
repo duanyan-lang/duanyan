@@ -12,6 +12,56 @@ use super::*;
         result.source
     }
 
+    // 扩展 1: 全管线宽度测试 helper（strip 前提取注解 → 剥离 → 解析 → 带宽度表生成）
+    fn compile_to_c_widths(source: &str, target: CTarget) -> String {
+        let widths = crate::strip::extract_width_types(source);
+        let stripped = crate::strip::strip_types(source);
+        let tokens = tokenize(&stripped).unwrap();
+        let ast = parse(&tokens).unwrap();
+        generate_c_source_with_widths(&ast, &target, &widths).unwrap().source
+    }
+
+    #[test]
+    fn test_width_u8_let() {
+        let c = compile_to_c_widths("let r: u8 = 200;", CTarget::Esp32);
+        assert!(c.contains("uint8_t r = (uint8_t)(200);"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_width_u16_param() {
+        let c = compile_to_c_widths("function f(a: u16) { return a; }", CTarget::Esp32);
+        assert!(c.contains("int32_t f(uint16_t a)"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_width_const_u32() {
+        let c = compile_to_c_widths("const BASE: u32 = 100000;", CTarget::Esp32);
+        assert!(c.contains("const uint32_t BASE = (uint32_t)(100000);"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_width_assign_truncates() {
+        let c = compile_to_c_widths("let r: u8 = 0; r = 12;", CTarget::Esp32);
+        assert!(c.contains("r = (uint8_t)(12);"), "got: {}", c);
+    }
+
+    #[test]
+    fn test_width_overflow_is_error() {
+        let src = "let r: u8 = 300;";
+        let widths = crate::strip::extract_width_types(src);
+        let stripped = crate::strip::strip_types(src);
+        let tokens = tokenize(&stripped).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let res = generate_c_source_with_widths(&ast, &CTarget::Esp32, &widths);
+        assert!(res.is_err(), "expected width overflow error");
+    }
+
+    #[test]
+    fn test_plain_let_still_int32() {
+        let c = compile_to_c_widths("let x = 42;", CTarget::Esp32);
+        assert!(c.contains("int32_t x = 42;"), "got: {}", c);
+    }
+
     #[test]
     fn test_simple_variable() {
         let c = compile_to_c("let x = 42;", CTarget::Esp32);

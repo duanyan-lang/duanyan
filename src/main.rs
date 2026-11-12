@@ -183,6 +183,9 @@ fn cmd_build(args: &[String]) {
         }
     };
 
+    // 扩展 1/3: strip 前从原始源码旁路提取宽度/定点注解 (变量名 → u8/u16/.../q15/f32)
+    let width_types = strip::extract_width_types(&raw_source);
+
     // TypeScript 剥离
     let source = if input_file.ends_with(".ts") {
         println!("剥离类型外壳 (.ts → .js)...");
@@ -233,7 +236,7 @@ fn cmd_build(args: &[String]) {
         }
         if t_lower != "counpre64" && t_lower != "fpga" && t_lower != "gowin" {
             // C 代码生成路径 (ESP32 / STM32 / Arduino ...)
-            return cmd_build_c_target(&source, input_file, &t_lower, &output_file, board_str.as_deref());
+            return cmd_build_c_target(&source, input_file, &t_lower, &output_file, board_str.as_deref(), &width_types);
         }
     }
 
@@ -282,7 +285,7 @@ fn cmd_build(args: &[String]) {
 }
 
 /// C 目标编译路径: JS → C → ESP-IDF / Arduino / STM32 HAL 项目
-fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file: &str, board: Option<&str>) {
+fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file: &str, board: Option<&str>, width_types: &std::collections::HashMap<String, String>) {
     let c_target = match c_codegen::CTarget::from_str(target) {
         Some(t) => t,
         None => {
@@ -305,7 +308,7 @@ fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file
     };
 
     // AST → C 代码
-    let c_result = match c_codegen::generate_c_source(&ast, &c_target) {
+    let c_result = match c_codegen::generate_c_source_with_widths(&ast, &c_target, width_types) {
         Ok(r) => r,
         Err(e) => { eprintln!("C 代码生成失败: {}", e); process::exit(1); }
     };

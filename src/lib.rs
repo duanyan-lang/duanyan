@@ -21,6 +21,7 @@ pub mod robot_motion;     // v1.6 P2: 机器人纯运动学/轨迹数学 (无门
 pub mod modeb_proto;      // v1.6 P3: Mode-B 线协议编解码 (镜像 DuanYanX mode_b_proto, 黄金帧字节一致)
 pub mod board;
 pub mod compat;
+pub mod strip;            // TypeScript 类型剥离器 + 宽度/定点注解旁路提取 (扩展 1/3)
 pub mod stdlib;
 pub mod c_codegen;
 pub mod esp32_project;

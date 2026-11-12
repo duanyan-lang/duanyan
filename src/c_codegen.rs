@@ -9,7 +9,7 @@ use crate::parser::{
 };
 use crate::hardware_api::HardwareModule;
 use crate::scheduler::Scheduler;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 
 /// C 编译目标平台
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +82,8 @@ struct CCodeGenerator {
     interrupt_fns: Vec<(String, String, u32)>,
     /// Phase 4: 芯片信息 API (duanyan:esp32 Chip)
     needs_chip_info: bool,
+    /// 扩展 1/3: 旁路宽度/定点类型表 (变量名 → u8/u16/u32/i8/i16/i32/q15/q16/f32)
+    width_types: HashMap<String, String>,
 }
 
 /// ESP32-S3 裸机 HAL (源自 DUANYAN 实测跑通的 led_on.c / gradient.c)
@@ -352,7 +354,17 @@ pub struct CGenerateResult {
 
 /// 将 AST 生成 C 源码
 pub fn generate_c_source(program: &Program, target: &CTarget) -> Result<CGenerateResult, String> {
+    generate_c_source_with_widths(program, target, &HashMap::new())
+}
+
+/// 将 AST 生成 C 源码（带旁路宽度/定点类型表，扩展 1/3）
+pub fn generate_c_source_with_widths(
+    program: &Program,
+    target: &CTarget,
+    width_types: &HashMap<String, String>,
+) -> Result<CGenerateResult, String> {
     let mut gen = CCodeGenerator::new(target.clone());
+    gen.width_types = width_types.clone();
     gen.generate_program(program)?;
     let uses_wifi = gen.uses_wifi;
     let uses_ai = gen.uses_ai;
@@ -391,7 +403,53 @@ impl CCodeGenerator {
             needs_math_helper: false,
             interrupt_fns: Vec::new(),
             needs_chip_info: false,
+            width_types: HashMap::new(),
         }
+    }
+
+    /// 扩展 1: 变量/参数的 C 类型（按旁路宽度表；缺省 int32_t）
+    fn c_width_type(&self, name: &str) -> &'static str {
+        match self.width_types.get(name).map(|s| s.as_str()) {
+            Some("u8") => "uint8_t",
+            Some("u16") => "uint16_t",
+            Some("u32") => "uint32_t",
+            Some("i8") => "int8_t",
+            Some("i16") => "int16_t",
+            _ => "int32_t",
+        }
+    }
+
+    /// 扩展 1: 宽度变量的截断转换前缀（缺省 int32_t 无需截断 → None）
+    fn width_cast(&self, name: &str) -> Option<&'static str> {
+        match self.width_types.get(name).map(|s| s.as_str()) {
+            Some("u8") => Some("(uint8_t)"),
+            Some("u16") => Some("(uint16_t)"),
+            Some("u32") => Some("(uint32_t)"),
+            Some("i8") => Some("(int8_t)"),
+            Some("i16") => Some("(int16_t)"),
+            _ => None,
+        }
+    }
+
+    /// 扩展 1: 字面量越界编译期 lint（超宽度范围 → 编译错误）
+    fn lint_width_literal(&self, name: &str, n: i64) -> Result<(), String> {
+        let (lo, hi, tn) = match self.width_types.get(name).map(|s| s.as_str()) {
+            Some("u8") => (0i128, 255i128, "u8"),
+            Some("u16") => (0, 65535, "u16"),
+            Some("u32") => (0, 4294967295, "u32"),
+            Some("i8") => (-128, 127, "i8"),
+            Some("i16") => (-32768, 32767, "i16"),
+            Some("i32") => (-2147483648, 2147483647, "i32"),
+            _ => return Ok(()),
+        };
+        let v = n as i128;
+        if v < lo || v > hi {
+            return Err(format!(
+                "宽度越界: 变量 '{}' 类型为 {}, 字面量 {} 超出范围 [{}, {}]",
+                name, tn, n, lo, hi
+            ));
+        }
+        Ok(())
     }
 
     fn generate_program(&mut self, program: &Program) -> Result<(), String> {
@@ -1740,7 +1798,7 @@ impl CCodeGenerator {
             code.push_str("void");
         } else {
             let params: Vec<String> = func.params.iter()
-                .map(|p| format!("int32_t {}", p))
+                .map(|p| format!("{} {}", self.c_width_type(p), p))
                 .collect();
             code.push_str(&params.join(", "));
         }
@@ -1883,15 +1941,39 @@ impl CCodeGenerator {
                         return Ok(format!("{}int32_t {} = {}; duanyan_adc_init({});\n", pad, name, ch, ch));
                     }
                 }
-                Ok(format!("{}int32_t {} = {};\n", pad, name, c_expr))
+                // 扩展 1: 宽度安全整数 — 按旁路表发射 uintN_t/intN_t + 截断
+                if let Expr::Number(n) = value {
+                    self.lint_width_literal(name, *n)?;
+                }
+                let cty = self.c_width_type(name);
+                let expr_out = match self.width_cast(name) {
+                    Some(cast) => format!("{}({})", cast, c_expr),
+                    None => c_expr.clone(),
+                };
+                Ok(format!("{}{} {} = {};\n", pad, cty, name, expr_out))
             }
             Statement::Const { name, value } => {
                 let c_expr = self.generate_expr(value)?;
-                Ok(format!("{}const int32_t {} = {};\n", pad, name, c_expr))
+                if let Expr::Number(n) = value {
+                    self.lint_width_literal(name, *n)?;
+                }
+                let cty = self.c_width_type(name);
+                let expr_out = match self.width_cast(name) {
+                    Some(cast) => format!("{}({})", cast, c_expr),
+                    None => c_expr.clone(),
+                };
+                Ok(format!("{}const {} {} = {};\n", pad, cty, name, expr_out))
             }
             Statement::Assign { name, value } => {
                 let c_expr = self.generate_expr(value)?;
-                Ok(format!("{}{} = {};\n", pad, name, c_expr))
+                if let Expr::Number(n) = value {
+                    self.lint_width_literal(name, *n)?;
+                }
+                let expr_out = match self.width_cast(name) {
+                    Some(cast) => format!("{}({})", cast, c_expr),
+                    None => c_expr.clone(),
+                };
+                Ok(format!("{}{} = {};\n", pad, name, expr_out))
             }
             Statement::IndexAssign { name, index, value } => {
                 let idx = self.generate_expr(index)?;
@@ -2840,7 +2922,15 @@ impl CCodeGenerator {
         match stmt {
             Statement::Let { name, value } => {
                 let val = self.generate_expr(value)?;
-                Ok(format!("int32_t {} = {}", name, val))
+                if let Expr::Number(n) = value {
+                    self.lint_width_literal(name, *n)?;
+                }
+                let cty = self.c_width_type(name);
+                let expr_out = match self.width_cast(name) {
+                    Some(cast) => format!("{}({})", cast, val),
+                    None => val.clone(),
+                };
+                Ok(format!("{} {} = {}", cty, name, expr_out))
             }
             Statement::Assign { name, value } => {
                 let val = self.generate_expr(value)?;
