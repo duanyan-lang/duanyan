@@ -8,7 +8,7 @@
 
 ## 🔗 Links
 
-- Homepage: https://duanyan.tech
+- Homepage: https://duanyan-lang.com
 - Documentation: https://duanyan.dev
 - Community: https://duanyan.org
 
@@ -211,4 +211,4 @@ MIT © duanyan-lang
 
 - [npm](https://www.npmjs.com/package/@duanyan-lang/duanyan)
 - [Issues](https://github.com/duanyan-lang/duanyan/issues)
-- [Homepage](https://duanyan.tech) · [Documentation](https://duanyan.dev) · [Community](https://duanyan.org)
+- [Homepage](https://duanyan-lang.com) · [Documentation](https://duanyan.dev) · [Community](https://duanyan.org)
