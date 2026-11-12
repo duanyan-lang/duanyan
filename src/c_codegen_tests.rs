@@ -83,7 +83,7 @@ use super::*;
         let src = "@register(0x40004000) const GPIO_OUT = { en: [1, 1], val: [7, 2] };\nGPIO_OUT.en = 1;";
         let c = compile_to_c_reg(src, CTarget::Esp32);
         assert!(c.contains("#define DUANYAN_REG32(addr) (*(volatile uint32_t *)(addr))"), "got: {}", c);
-        assert!(c.contains("DUANYAN_REG32(0x40004000) = (DUANYAN_REG32(0x40004000) & ~(0x1 << 1)) | (((uint32_t)(1) & 0x1) << 1);"), "got: {}", c);
+        assert!(c.contains("DUANYAN_REG32(0x40004000) = (DUANYAN_REG32(0x40004000) & ~((uint32_t)0x1 << 1)) | (((uint32_t)(1) & (uint32_t)0x1) << 1);"), "got: {}", c);
     }
 
     #[test]
@@ -155,6 +155,195 @@ use super::*;
         let c = compile_to_c("let arr = [1, 2, 3, 4]; let sub = arr.slice(1, 3);", CTarget::Esp32);
         assert!(c.contains("static int32_t sub[4];"), "got: {}", c);
         assert!(c.contains("sub_len = 0;"), "got: {}", c);
+    }
+
+    // ===== 审查修复回归用例（H1-H3 / M1-M3 / L1-L6）=====
+
+    // H1: @register 名被普通声明复用 → 重复声明冲突报错（防误展开为裸寄存器写）
+    #[test]
+    fn test_h1_register_name_collision_is_error() {
+        let src = "@register(0x40004000) const GPIO_OUT = { en: [1, 1] };\nlet GPIO_OUT = { en: 0 };";
+        let regs = crate::strip::extract_registers(src);
+        let widths = crate::strip::extract_width_types(src);
+        let tokens = tokenize(src).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let res = generate_c_source_with_ext(&ast, &CTarget::Esp32, &widths, &regs);
+        assert!(res.is_err(), "expected register name collision error");
+    }
+
+    // H1: 同名变量一处带宽度注解、一处普通声明 → 保守回退 int32_t（不静默截断）
+    #[test]
+    fn test_h1_width_conflict_falls_back_to_int32() {
+        let src = "function a() { let x: u8 = 1; }\nfunction b() { let x = 500; }";
+        let c = compile_to_c_widths(src, CTarget::Esp32);
+        assert!(c.contains("int32_t x = 500;"), "got: {}", c);
+        assert!(!c.contains("uint8_t x"), "x 应回退 int32_t, got: {}", c);
+    }
+
+    // H2: f32 变量被赋小数字面量 → 显式报错（避免静默 ×100 错值）
+    #[test]
+    fn test_h2_f32_decimal_literal_is_error() {
+        let src = "let x: f32 = 1.5;";
+        let widths = crate::strip::extract_width_types(src);
+        let stripped = crate::strip::strip_types(src);
+        let tokens = tokenize(&stripped).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let res = generate_c_source_with_widths(&ast, &CTarget::Esp32, &widths);
+        assert!(res.is_err(), "expected f32 decimal literal error");
+    }
+
+    // H2: f32 整数字面量仍正常发射 float（无歧义，不报错）
+    #[test]
+    fn test_h2_f32_integer_literal_ok() {
+        let c = compile_to_c_widths("let x: f32 = 3;", CTarget::Esp32);
+        assert!(c.contains("float x = (float)(3);"), "got: {}", c);
+    }
+
+    // H3: 对 filter 结果（运行期长度）再做高阶方法 → 报错（不静默读无效元素）
+    #[test]
+    fn test_h3_chain_on_filter_result_is_error() {
+        let src = "let arr = [1,2,3,4]; let evens = arr.filter(x => x % 2 == 0); let bad = evens.map(x => x * 2);";
+        let tokens = tokenize(src).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let res = generate_c_source(&ast, &CTarget::Esp32);
+        assert!(res.is_err(), "expected error chaining HOF on filter result");
+    }
+
+    // H3: 对 slice 结果再做高阶方法 → 报错
+    #[test]
+    fn test_h3_chain_on_slice_result_is_error() {
+        let src = "let arr = [1,2,3,4]; let sub = arr.slice(1, 3); let bad = sub.forEach(x => x);";
+        let tokens = tokenize(src).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let res = generate_c_source(&ast, &CTarget::Esp32);
+        assert!(res.is_err(), "expected error chaining HOF on slice result");
+    }
+
+    // M1: slice 负起始索引 → 生成 clamp 代码（+= len），不越界读
+    #[test]
+    fn test_m1_slice_negative_index_clamped() {
+        let c = compile_to_c("let arr = [1,2,3,4]; let sub = arr.slice(-2);", CTarget::Esp32);
+        assert!(c.contains("static int32_t sub[4];"), "got: {}", c);
+        assert!(c.contains("_hsa"), "应生成起点 clamp 临时变量, got: {}", c);
+        assert!(c.contains("+= 4;"), "负索引应 += len 修正, got: {}", c);
+    }
+
+    // M2: 定点 × 普通整数 → 普通乘法（不移位，标度天然正确）
+    #[test]
+    fn test_m2_fixed_times_plain_int_no_shift() {
+        let c = compile_to_c_widths("let g: q15 = 100; let d: q15 = g * 2;", CTarget::Esp32);
+        assert!(c.contains("(g * 2)"), "应走普通乘法, got: {}", c);
+        assert!(!c.contains(">> 15"), "定点×整数不应移位, got: {}", c);
+    }
+
+    // M2: q15 × q16 混用 → 报错（标度不一致）
+    #[test]
+    fn test_m2_mixed_q15_q16_is_error() {
+        let src = "let a: q15 = 2; let b: q16 = 3; let r: q15 = a * b;";
+        let widths = crate::strip::extract_width_types(src);
+        let stripped = crate::strip::strip_types(src);
+        let tokens = tokenize(&stripped).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let res = generate_c_source_with_widths(&ast, &CTarget::Esp32, &widths);
+        assert!(res.is_err(), "expected mixed q15/q16 error");
+    }
+
+    // M2: q15 × q15 仍正常移位重写（两侧同标度）
+    #[test]
+    fn test_m2_same_scale_still_shifts() {
+        let c = compile_to_c_widths("let a: q15 = 2; let b: q15 = 3; let p: q15 = a * b;", CTarget::Esp32);
+        assert!(c.contains(">> 15"), "同标度定点乘法应移位, got: {}", c);
+    }
+
+    // M3: reduce 累加器与结果同名 → 只声明一次（防 C 重定义）
+    #[test]
+    fn test_m3_reduce_acc_same_as_result_no_redefinition() {
+        let c = compile_to_c("let arr = [1,2,3]; let s = arr.reduce((s, x) => s + x, 0);", CTarget::Esp32);
+        assert_eq!(c.matches("int32_t s").count(), 1, "s 应只声明一次, got: {}", c);
+        assert!(c.contains("s = (s + x);"), "got: {}", c);
+    }
+
+    // M3: reduce 两参数同名 → 报错（防内层遮蔽导致累加器失效）
+    #[test]
+    fn test_m3_reduce_duplicate_params_is_error() {
+        let src = "let arr = [1,2,3]; let s = arr.reduce((x, x) => x + x, 0);";
+        let tokens = tokenize(src).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let res = generate_c_source(&ast, &CTarget::Esp32);
+        assert!(res.is_err(), "expected reduce duplicate-param error");
+    }
+
+    // L1: bit31 位域清位掩码用 uint32_t 移位（无裸 int 溢出）
+    #[test]
+    fn test_l1_register_high_bit_mask_uint32() {
+        let src = "@register(0x1000) const R = { top: [31, 31] };\nR.top = 1;";
+        let c = compile_to_c_reg(src, CTarget::Esp32);
+        assert!(c.contains("~((uint32_t)0x1 << 31)"), "got: {}", c);
+    }
+
+    // L2: 位域 hi>31 非法 → 被拒绝（不登记，防 >> 越位 UB）
+    #[test]
+    fn test_l2_bit_range_hi_over_31_rejected() {
+        let regs = crate::strip::extract_registers("@register(0x1) const R = { bad: [40, 8] };");
+        let def = regs.get("R").expect("R 应被登记");
+        assert!(def.field("bad").is_none(), "hi>31 位域应被拒绝: {:?}", def);
+    }
+
+    // L3: 除数为字面量 0 → 编译期拦截
+    #[test]
+    fn test_l3_div_by_zero_literal_is_error() {
+        let src = "let a = 2; let b = a / 0;";
+        let tokens = tokenize(src).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let res = generate_c_source(&ast, &CTarget::Esp32);
+        assert!(res.is_err(), "expected div-by-zero error");
+    }
+
+    // L4: 块注释内的伪注解不被提取
+    #[test]
+    fn test_l4_block_comment_not_scanned() {
+        let widths = crate::strip::extract_width_types("/* let y: u8 = 1; */ let x = 5;");
+        assert!(!widths.contains_key("y"), "块注释应被跳过: {:?}", widths);
+    }
+
+    // L4: 三元 a?b:u8 中的 b:u8 非声明注解
+    #[test]
+    fn test_l4_ternary_not_type_annotation() {
+        let widths = crate::strip::extract_width_types("let r = a?b:u8;");
+        assert!(!widths.contains_key("b"), "三元分支不应被当作类型注解: {:?}", widths);
+    }
+
+    // L5: 嵌套高阶方法（回调体内）→ 报错（不发射不存在的 C 函数）
+    #[test]
+    fn test_l5_nested_hof_is_error() {
+        let src = "let a = [1,2]; let b = [3,4]; let m = a.map(x => b.map(y => x * y));";
+        let tokens = tokenize(src).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let res = generate_c_source(&ast, &CTarget::Esp32);
+        assert!(res.is_err(), "expected nested HOF error");
+    }
+
+    // L5: 字符串 slice 不被误判为数组 HOF（仍可正常生成）
+    #[test]
+    fn test_l5_string_slice_not_array_hof() {
+        let c = compile_to_c("let s = \"hello\"; let t = s.slice(1, 3);", CTarget::Esp32);
+        assert!(!c.is_empty(), "字符串 slice 应正常生成");
+    }
+
+    // L6: async 裸参数箭头 → 解析报错（引导写 async (x) => ...）
+    #[test]
+    fn test_l6_async_bare_arrow_is_error() {
+        let src = "let f = async x => x;";
+        let res = tokenize(src).and_then(|t| parse(&t).map(|_| ()));
+        assert!(res.is_err(), "expected async bare-param arrow parse error");
+    }
+
+    // 裸参数单参数箭头（扩展 4 基础）仍可解析
+    #[test]
+    fn test_bare_param_arrow_parses() {
+        let src = "let arr = [1,2,3]; let d = arr.map(x => x * 2);";
+        let res = tokenize(src).and_then(|t| parse(&t).map(|_| ()));
+        assert!(res.is_ok(), "bare-param arrow should parse: {:?}", res.err());
     }
 
     #[test]

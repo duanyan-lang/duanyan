@@ -9,7 +9,7 @@ use crate::parser::{
 };
 use crate::hardware_api::HardwareModule;
 use crate::scheduler::Scheduler;
-use crate::strip::RegisterDef;
+use crate::strip::{RegisterDef, F32_DECIMAL_SENTINEL};
 use std::collections::{HashSet, HashMap};
 
 /// C 编译目标平台
@@ -89,6 +89,10 @@ struct CCodeGenerator {
     registers: HashMap<String, RegisterDef>,
     /// 扩展 2: 是否需要寄存器访问宏
     needs_register: bool,
+    /// H1: 已声明的寄存器名（检测同名重复声明 → 与普通对象冲突）
+    register_declared: HashSet<String>,
+    /// H3: 运行期长度数组（filter/slice 结果），禁止再作高阶方法源（长度编译期不确定）
+    dynamic_len_arrays: HashSet<String>,
 }
 
 /// ESP32-S3 裸机 HAL (源自 DUANYAN 实测跑通的 led_on.c / gradient.c)
@@ -422,6 +426,8 @@ impl CCodeGenerator {
             width_types: HashMap::new(),
             registers: HashMap::new(),
             needs_register: false,
+            register_declared: HashSet::new(),
+            dynamic_len_arrays: HashSet::new(),
         }
     }
 
@@ -435,6 +441,7 @@ impl CCodeGenerator {
             Some("i16") => "int16_t",
             Some("q15") | Some("q16") => "int32_t", // 扩展 3: 定点以 int32_t 原始存储
             Some("f32") => "float",                  // 扩展 3: 受控浮点逃生舱（有 FPU 目标）
+            Some(F32_DECIMAL_SENTINEL) => "float",   // H2: f32 但曾赋小数字面量（存储仍 float，字面量处报错）
             _ => "int32_t",
         }
     }
@@ -449,6 +456,7 @@ impl CCodeGenerator {
             Some("i16") => Some("(int16_t)"),
             Some("q15") | Some("q16") => Some("(int32_t)"), // 扩展 3: 定点截断
             Some("f32") => Some("(float)"),                  // 扩展 3: 浮点转换
+            Some(F32_DECIMAL_SENTINEL) => Some("(float)"),   // H2: 同上（非字面量赋值仍转 float）
             _ => None,
         }
     }
@@ -463,6 +471,19 @@ impl CCodeGenerator {
             }
         }
         None
+    }
+
+    /// H2: f32 变量被赋予数字字面量时的编译期校验。
+    /// 词法层将小数 ×100 缩放为整数，Number token 无法区分 1.5 与 150；
+    /// 若该 f32 名在源码中曾被赋小数字面量（标记 F32_DECIMAL_SENTINEL），则显式报错，避免静默 ×100 错值。
+    fn check_f32_decimal(&self, name: &str, value: &Expr) -> Result<(), String> {
+        if matches!(value, Expr::Number(_))
+            && self.width_types.get(name).map(|s| s.as_str()) == Some(F32_DECIMAL_SENTINEL)
+        {
+            return Err(format!(
+                "f32 变量 '{}' 被赋予小数字面量：DUANYAN 词法层将小数统一 ×100 缩放为整数，无法忠实表示真浮点值。请改用 q15/q16 定点类型，或避免对 f32 直接使用小数字面量。", name));
+        }
+        Ok(())
     }
 
     /// 扩展 4: 数组长度静态查询（仅静态已知长度可降级为确定性循环）
@@ -499,16 +520,26 @@ impl CCodeGenerator {
         let idx = format!("_hi{}", self.arrow_counter);
         self.needs_stdint = true;
 
-        // slice 无回调：拷贝子区间
+        // H3: filter/slice 结果为运行期长度，禁止再作高阶方法源（编译期长度不确定，无法静态降级为确定性循环）
+        if self.dynamic_len_arrays.contains(arr) {
+            return Err(format!("扩展 4: 暂不支持对 filter/slice 结果 '{}' 再做数组高阶方法（其长度为运行期值，无法静态降级）", arr));
+        }
+
+        // slice 无回调：拷贝子区间（M1: 起止索引按 JS 语义 clamp，防负索引越界读）
         if method == "slice" {
             let name = name.unwrap_or_else(|| format!("_hs{}", self.arrow_counter));
-            let a = if !args.is_empty() { self.generate_expr(&args[0])? } else { "0".to_string() };
-            let b = if args.len() > 1 { self.generate_expr(&args[1])? } else { len.to_string() };
+            let a_src = if !args.is_empty() { self.generate_expr(&args[0])? } else { "0".to_string() };
+            let b_src = if args.len() > 1 { self.generate_expr(&args[1])? } else { len.to_string() };
+            let sa = format!("_hsa{}", self.arrow_counter);
+            let sb = format!("_hsb{}", self.arrow_counter);
             self.array_vars.push((name.clone(), len));
+            self.dynamic_len_arrays.insert(name.clone()); // H3: slice 结果为运行期长度
             let mut code = String::new();
             code.push_str(&format!("{}static int32_t {}[{}];\n", pad, name, len));
             code.push_str(&format!("{}int32_t {}_len = 0;\n", pad, name));
-            code.push_str(&format!("{}for (int32_t {i} = {a}; {i} < {b} && {i} < {len}; {i}++) {{\n", pad, i = idx, a = a, b = b, len = len));
+            code.push_str(&format!("{}int32_t {sa} = {a}; if ({sa} < 0) {{ {sa} += {len}; }} if ({sa} < 0) {{ {sa} = 0; }} if ({sa} > {len}) {{ {sa} = {len}; }}\n", pad, sa = sa, a = a_src, len = len));
+            code.push_str(&format!("{}int32_t {sb} = {b}; if ({sb} < 0) {{ {sb} += {len}; }} if ({sb} < 0) {{ {sb} = 0; }} if ({sb} > {len}) {{ {sb} = {len}; }}\n", pad, sb = sb, b = b_src, len = len));
+            code.push_str(&format!("{}for (int32_t {i} = {sa}; {i} < {sb}; {i}++) {{\n", pad, i = idx, sa = sa, sb = sb));
             code.push_str(&format!("{}    {}[{}_len++] = {}[{}];\n", pad, name, name, arr, idx));
             code.push_str(&format!("{}}}\n", pad));
             return Ok(code);
@@ -568,6 +599,7 @@ impl CCodeGenerator {
                     ArrowBody::Block(_) => return Err("扩展 4: filter 回调需表达式体".to_string()),
                 };
                 self.array_vars.push((name.clone(), len));
+                self.dynamic_len_arrays.insert(name.clone()); // H3: filter 结果为运行期长度
                 let mut code = String::new();
                 code.push_str(&format!("{}static int32_t {}[{}];\n", pad, name, len));
                 code.push_str(&format!("{}int32_t {}_len = 0;\n", pad, name));
@@ -581,6 +613,9 @@ impl CCodeGenerator {
                 let name = name.unwrap_or_else(|| format!("_hr{}", self.arrow_counter));
                 let acc = params.first().cloned().unwrap_or_else(|| "_acc".to_string());
                 let elem = params.get(1).cloned().unwrap_or_else(|| "_x".to_string());
+                if acc == elem {
+                    return Err("扩展 4: reduce 回调的两个参数（累加器/元素）不能同名".to_string());
+                }
                 let init = if args.len() > 1 { self.generate_expr(&args[1])? } else { "0".to_string() };
                 let be = match body {
                     ArrowBody::Expr(e) => self.generate_expr(e)?,
@@ -592,7 +627,10 @@ impl CCodeGenerator {
                 code.push_str(&format!("{}    int32_t {} = {}[{}];\n", pad, elem, arr, idx));
                 code.push_str(&format!("{}    {} = {};\n", pad, acc, be));
                 code.push_str(&format!("{}}}\n", pad));
-                code.push_str(&format!("{}int32_t {} = {};\n", pad, name, acc));
+                // M3: 累加器名与结果名相同时，累加器即结果，不再重复声明（防 C 变量重定义）
+                if name != acc {
+                    code.push_str(&format!("{}int32_t {} = {};\n", pad, name, acc));
+                }
                 Ok(code)
             }
             _ => Err(format!("扩展 4: 不支持的数组方法 {}", method)),
@@ -642,8 +680,9 @@ impl CCodeGenerator {
         };
         self.needs_register = true;
         let addr = format!("0x{:08X}", base);
+        // L1: 清位掩码也转 uint32_t 再移位，使整个 RMW 全程无符号良定义（避免触及 bit31 时裸 int 左移的实现定义行为）
         Some(format!(
-            "{pad}DUANYAN_REG32({a}) = (DUANYAN_REG32({a}) & ~(0x{m:X} << {lo})) | (((uint32_t)({v}) & 0x{m:X}) << {lo});\n",
+            "{pad}DUANYAN_REG32({a}) = (DUANYAN_REG32({a}) & ~((uint32_t)0x{m:X} << {lo})) | (((uint32_t)({v}) & (uint32_t)0x{m:X}) << {lo});\n",
             a = addr, m = mask, lo = lo, v = val, pad = pad
         ))
     }
@@ -2106,6 +2145,10 @@ impl CCodeGenerator {
             Statement::Let { name, value } => {
                 // 扩展 2: 寄存器声明（let 形式）— 无存储，发射注释占位
                 if let Some(def) = self.registers.get(name).cloned() {
+                    // H1: 同名重复声明（@register 名又被普通 let/const 复用）→ 冲突，防误展开为裸寄存器访问
+                    if !self.register_declared.insert(name.clone()) {
+                        return Err(format!("扩展 2: 名字 '{}' 重复声明——@register 寄存器名不可与普通变量/对象同名（旁路表按名全局生效，会误展开为裸寄存器访问）", name));
+                    }
                     self.needs_register = true;
                     let fields: Vec<String> = def.fields.iter()
                         .map(|(n, hi, lo)| format!("{}[{}:{}]", n, hi, lo)).collect();
@@ -2163,6 +2206,7 @@ impl CCodeGenerator {
                 if let Expr::Number(n) = value {
                     self.lint_width_literal(name, *n)?;
                 }
+                self.check_f32_decimal(name, value)?;
                 let cty = self.c_width_type(name);
                 let expr_out = match self.width_cast(name) {
                     Some(cast) => format!("{}({})", cast, c_expr),
@@ -2173,6 +2217,10 @@ impl CCodeGenerator {
             Statement::Const { name, value } => {
                 // 扩展 2: 寄存器声明 — 无存储，发射注释占位（位域经旁路表在访问点展开）
                 if let Some(def) = self.registers.get(name).cloned() {
+                    // H1: 同名重复声明（@register 名又被普通 let/const 复用）→ 冲突，防误展开为裸寄存器访问
+                    if !self.register_declared.insert(name.clone()) {
+                        return Err(format!("扩展 2: 名字 '{}' 重复声明——@register 寄存器名不可与普通变量/对象同名（旁路表按名全局生效，会误展开为裸寄存器访问）", name));
+                    }
                     self.needs_register = true;
                     let fields: Vec<String> = def.fields.iter()
                         .map(|(n, hi, lo)| format!("{}[{}:{}]", n, hi, lo)).collect();
@@ -2189,6 +2237,7 @@ impl CCodeGenerator {
                 if let Expr::Number(n) = value {
                     self.lint_width_literal(name, *n)?;
                 }
+                self.check_f32_decimal(name, value)?;
                 let cty = self.c_width_type(name);
                 let expr_out = match self.width_cast(name) {
                     Some(cast) => format!("{}({})", cast, c_expr),
@@ -2201,6 +2250,7 @@ impl CCodeGenerator {
                 if let Expr::Number(n) = value {
                     self.lint_width_literal(name, *n)?;
                 }
+                self.check_f32_decimal(name, value)?;
                 let expr_out = match self.width_cast(name) {
                     Some(cast) => format!("{}({})", cast, c_expr),
                     None => c_expr.clone(),
@@ -2752,6 +2802,18 @@ impl CCodeGenerator {
     }
 
     fn generate_expr(&mut self, expr: &Expr) -> Result<String, String> {
+        // L5: 表达式位置/嵌套的数组高阶方法无法静态降级 → 显式报错（避免发射不存在的 C 函数调用）
+        // 注：slice 与字符串方法同名，仅当对象确为已知数组时才判定为数组 HOF，不误伤 str.slice()
+        if let Some((arr, method, _)) = Self::match_array_hof(expr) {
+            let is_array_hof = if method == "slice" {
+                self.array_len(&arr).is_some() || self.dynamic_len_arrays.contains(&arr)
+            } else {
+                true // map/filter/forEach/reduce 非字符串方法
+            };
+            if is_array_hof {
+                return Err(format!("扩展 4: 暂不支持表达式位置或嵌套的数组高阶方法 {}（只能作为语句或 let/const 初始化值）", method));
+            }
+        }
         match expr {
             Expr::Number(n) => Ok(format!("{}", n)),
             Expr::StringLit(s) => {
@@ -2764,8 +2826,19 @@ impl CCodeGenerator {
             Expr::BinOp { op, left, right } => {
                 let l = self.generate_expr(left)?;
                 let r = self.generate_expr(right)?;
+                // L3: 除数为字面量 0 → 编译期拦截（避免 C 运行期除零 UB）
+                if matches!(op, BinOp::Div) && matches!(&**right, Expr::Number(0)) {
+                    return Err("除零：除数为字面量 0（编译期拦截）".to_string());
+                }
                 // 扩展 3: q15/q16 定点乘除重写（确定性、无 FPU、64 位中间量防溢出）
-                if let Some(sh) = self.fixed_shift_of(left).or_else(|| self.fixed_shift_of(right)) {
+                // M2: 仅当两侧均为同一标度定点时才移位重写；定点×普通整数走普通算术（标度天然正确）
+                let lsh = self.fixed_shift_of(left);
+                let rsh = self.fixed_shift_of(right);
+                if let (Some(sa), Some(sb)) = (lsh, rsh) {
+                    if sa != sb {
+                        return Err("扩展 3: 不支持 q15 与 q16 混合定点运算（标度不一致，无法确定移位量）".to_string());
+                    }
+                    let sh = sa;
                     match op {
                         BinOp::Mul => {
                             return Ok(format!("((int32_t)(((int64_t)({}) * (int64_t)({})) >> {}))", l, r, sh));

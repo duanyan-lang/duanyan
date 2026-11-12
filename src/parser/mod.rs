@@ -269,6 +269,12 @@ impl<'a> Parser<'a> {
                     // 语句位置的 async function 当作表达式语句
                     Ok(Statement::Expr(Expr::Ident(format!("__async_fn_{}", func.name))))
                 } else {
+                    // L6: async 裸参数箭头 async x => ... 在语句位置明确报错（引导写成带括号形式）
+                    if let TokenKind::Ident(_) = self.peek() {
+                        if self.tokens.get(self.pos + 1).map(|t| t.kind == TokenKind::Arrow).unwrap_or(false) {
+                            return Err("不支持 async 裸参数箭头函数，请写成 async (x) => ...".to_string());
+                        }
+                    }
                     // async 作为标识符
                     self.parse_statement_after_ident("async".to_string())
                 }
@@ -1092,6 +1098,12 @@ impl<'a> Parser<'a> {
                     };
                     Ok(Expr::ArrowFunc { params, body, is_async: true })
                 } else {
+                    // L6: async 裸参数箭头 async x => ... 明确报错（引导写成 async (x) => ...）
+                    if let TokenKind::Ident(_) = self.peek() {
+                        if self.tokens.get(self.pos + 1).map(|t| t.kind == TokenKind::Arrow).unwrap_or(false) {
+                            return Err("不支持 async 裸参数箭头函数，请写成 async (x) => ...".to_string());
+                        }
+                    }
                     // async 作为标识符
                     let name = "async".to_string();
                     if *self.peek() == TokenKind::LParen {

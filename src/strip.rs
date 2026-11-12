@@ -114,9 +114,18 @@ pub fn is_ext_numeric_type(t: &str) -> bool {
     WIDTH_TYPES.contains(&t) || FIXED_TYPES.contains(&t)
 }
 
+/// f32 被赋予小数字面量的哨兵类型值（H2）：codegen 见此标记 + 数字字面量 → 显式报错。
+pub const F32_DECIMAL_SENTINEL: &str = "f32.decimal";
+
 /// 旁路提取宽度/定点注解（扩展 1/3）。
 /// 扫描 `ident : T`（T ∈ WIDTH_TYPES ∪ FIXED_TYPES），返回 变量名→类型 表。
 /// 不修改源码、不进 AST：类型信息经此表旁路送入 codegen，保持宿主语法冻结。
+///
+/// H1 保守回退：旁路表按变量名全局生效、无作用域信息。为避免“同名变量一处带注解、
+/// 另一处普通声明”导致的静默误截断，若某名字同时存在普通（无扩展注解）声明，则从表中
+/// 剔除（回退 int32_t）——宁可丢失宽度也不误截断。
+/// H2 标记：DUANYAN 词法层把小数统一 ×100 缩放为整数，f32 变量若被赋予小数字面量则无法
+/// 忠实表示真浮点值，此类名字标记为 F32_DECIMAL_SENTINEL，由 codegen 显式报错。
 pub fn extract_width_types(source: &str) -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     let chars: Vec<char> = source.chars().collect();
@@ -139,6 +148,13 @@ pub fn extract_width_types(source: &str) -> std::collections::HashMap<String, St
             while i < len && chars[i] != '\n' { i += 1; }
             continue;
         }
+        // L4: 跳过块注释 /* ... */
+        if i + 1 < len && chars[i] == '/' && chars[i + 1] == '*' {
+            i += 2;
+            while i + 1 < len && !(chars[i] == '*' && chars[i + 1] == '/') { i += 1; }
+            i = (i + 2).min(len);
+            continue;
+        }
         // 识别 `ident : ExtType`
         if chars[i] == ':' && i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
             let mut s = i;
@@ -149,7 +165,9 @@ pub fn extract_width_types(source: &str) -> std::collections::HashMap<String, St
             let mut t = j;
             while t < len && (chars[t].is_alphanumeric() || chars[t] == '_') { t += 1; }
             let ty: String = chars[j..t].iter().collect();
-            if !name.is_empty() && is_ext_numeric_type(&ty) {
+            // L4: 三元 `a?b:u8` 中 b:u8 非声明——名字紧邻前一字符为 '?' 时跳过
+            let prev_is_ternary = s > 0 && chars[s - 1] == '?';
+            if !name.is_empty() && !prev_is_ternary && is_ext_numeric_type(&ty) {
                 map.insert(name, ty);
             }
             i = t;
@@ -157,7 +175,161 @@ pub fn extract_width_types(source: &str) -> std::collections::HashMap<String, St
         }
         i += 1;
     }
+
+    // H2: f32 变量被赋予小数字面量 → 标记哨兵，codegen 显式报错（避免静默 ×100 错值）
+    let f32_names: Vec<String> = map.iter()
+        .filter(|(_, t)| t.as_str() == "f32")
+        .map(|(n, _)| n.clone())
+        .collect();
+    for name in f32_names {
+        if f32_assigned_decimal(&chars, &name) {
+            map.insert(name, F32_DECIMAL_SENTINEL.to_string());
+        }
+    }
+
+    // H1: 保守回退——同名存在普通声明则剔除，消除跨作用域静默误截断
+    let plain = collect_plain_decl_names(&chars);
+    map.retain(|name, _| !plain.contains(name));
+
     map
+}
+
+/// H2: 判断名为 `name` 的变量在源码中是否被赋予小数字面量（`name [: T] = <digits>.<digits>`）。
+fn f32_assigned_decimal(chars: &[char], name: &str) -> bool {
+    let n = chars.len();
+    let nlen = name.chars().count();
+    let mut i = 0;
+    while i < n {
+        if starts_with_word(chars, i, name) {
+            let mut j = i + nlen;
+            while j < n && chars[j].is_whitespace() { j += 1; }
+            // 可选类型注解 `: f32`
+            if j < n && chars[j] == ':' {
+                j += 1;
+                while j < n && chars[j].is_whitespace() { j += 1; }
+                while j < n && (chars[j].is_alphanumeric() || chars[j] == '_') { j += 1; }
+                while j < n && chars[j].is_whitespace() { j += 1; }
+            }
+            // 期望赋值 '='（排除 '=='）
+            if j < n && chars[j] == '=' && !(j + 1 < n && chars[j + 1] == '=') {
+                j += 1;
+                while j < n && chars[j].is_whitespace() { j += 1; }
+                let ds = j;
+                while j < n && chars[j].is_ascii_digit() { j += 1; }
+                if j > ds && j < n && chars[j] == '.' && j + 1 < n && chars[j + 1].is_ascii_digit() {
+                    return true;
+                }
+            }
+            i += nlen;
+            continue;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// H1: 收集“普通（无扩展注解）声明”的变量名：let/const/var 声明与 function 形参。
+/// 仅当声明处未紧跟 `: ExtType` 时计入；带扩展注解的声明不计（避免误剔除合法宽度类型）。
+/// 注：箭头回调形参恒为 int32_t（不参与宽度发射），故不纳入，规避 `(expr)` 与 `(params)=>` 歧义。
+fn collect_plain_decl_names(chars: &[char]) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        // 跳过字符串
+        if chars[i] == '"' || chars[i] == '\'' || chars[i] == '`' {
+            let q = chars[i];
+            i += 1;
+            while i < n && chars[i] != q { if chars[i] == '\\' { i += 1; } i += 1; }
+            i += 1;
+            continue;
+        }
+        // 跳过注释
+        if i + 1 < n && chars[i] == '/' && chars[i + 1] == '/' {
+            while i < n && chars[i] != '\n' { i += 1; }
+            continue;
+        }
+        if i + 1 < n && chars[i] == '/' && chars[i + 1] == '*' {
+            i += 2;
+            while i + 1 < n && !(chars[i] == '*' && chars[i + 1] == '/') { i += 1; }
+            i = (i + 2).min(n);
+            continue;
+        }
+        // function NAME(params)
+        if starts_with_word(chars, i, "function") {
+            let mut j = i + 8;
+            while j < n && chars[j].is_whitespace() { j += 1; }
+            while j < n && (chars[j].is_alphanumeric() || chars[j] == '_') { j += 1; } // 函数名
+            while j < n && chars[j].is_whitespace() { j += 1; }
+            if j < n && chars[j] == '(' {
+                j += 1;
+                while j < n && chars[j] != ')' {
+                    while j < n && (chars[j].is_whitespace() || chars[j] == ',') { j += 1; }
+                    if j >= n || chars[j] == ')' { break; }
+                    let ps = j;
+                    while j < n && (chars[j].is_alphanumeric() || chars[j] == '_') { j += 1; }
+                    if j > ps {
+                        let pname: String = chars[ps..j].iter().collect();
+                        // 先判定是否 `: ExtType`，再跳过任意 `: type` 注解推进 j
+                        let ext_ann = annotated_at(chars, j);
+                        let mut k = j;
+                        while k < n && chars[k].is_whitespace() { k += 1; }
+                        if k < n && chars[k] == ':' {
+                            k += 1;
+                            while k < n && chars[k].is_whitespace() { k += 1; }
+                            while k < n && (chars[k].is_alphanumeric() || chars[k] == '_') { k += 1; }
+                        }
+                        j = k;
+                        if !ext_ann { set.insert(pname); }
+                    } else { j += 1; }
+                }
+            }
+            i = j.max(i + 1);
+            continue;
+        }
+        // let / const / var NAME
+        let kwlen = if starts_with_word(chars, i, "const") { 5 }
+            else if starts_with_word(chars, i, "let") { 3 }
+            else if starts_with_word(chars, i, "var") { 3 }
+            else { 0 };
+        if kwlen > 0 {
+            let mut j = i + kwlen;
+            while j < n && chars[j].is_whitespace() { j += 1; }
+            // 解构 let { .. } / let [ .. ] 不计
+            if j < n && (chars[j] == '{' || chars[j] == '[') { i = j; continue; }
+            let s = j;
+            while j < n && (chars[j].is_alphanumeric() || chars[j] == '_') { j += 1; }
+            if j > s {
+                let name: String = chars[s..j].iter().collect();
+                if !annotated_at(chars, j) { set.insert(name); }
+            }
+            i = j.max(i + 1);
+            continue;
+        }
+        i += 1;
+    }
+    set
+}
+
+/// 若 pos 处为 `: ExtType` 注解，返回注解之后的位置；否则原样返回 pos。
+fn skip_if_ext_annotated(chars: &[char], pos: usize) -> usize {
+    let n = chars.len();
+    let mut k = pos;
+    while k < n && chars[k].is_whitespace() { k += 1; }
+    if k < n && chars[k] == ':' {
+        k += 1;
+        while k < n && chars[k].is_whitespace() { k += 1; }
+        let ts = k;
+        while k < n && (chars[k].is_alphanumeric() || chars[k] == '_') { k += 1; }
+        let ty: String = chars[ts..k].iter().collect();
+        if is_ext_numeric_type(&ty) { return k; }
+    }
+    pos
+}
+
+/// 判断 pos（名字之后）是否紧跟 `: ExtType` 扩展注解。
+fn annotated_at(chars: &[char], pos: usize) -> bool {
+    skip_if_ext_annotated(chars, pos) != pos
 }
 
 /// 扩展 2: 寄存器位域定义（旁路，不进 AST）
@@ -209,7 +381,8 @@ fn parse_bit_range(chars: &[char], mut j: usize) -> Option<(u8, u8, usize)> {
     let lo: u8 = chars[s..j].iter().collect::<String>().parse().ok()?;
     while j < n && chars[j] != ']' { j += 1; }
     if j < n { j += 1; }
-    if hi < lo { return None; }
+    // L2: 位域索引须落在 32 位寄存器内；hi<lo 或 hi>31 均非法（防 >> 越位 UB）
+    if hi < lo || hi > 31 { return None; }
     Some((hi, lo, j))
 }
 
