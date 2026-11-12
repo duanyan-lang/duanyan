@@ -130,7 +130,7 @@ That's it. No C. No toolchain setup. No SDK.
 ## Features
 
 - **Zero learning curve** — Write standard JS/TS, no proprietary syntax
-- **AOT compilation** — No interpreter overhead, native performance
+- **Not a JS VM — true AOT to machine code** — Compiles JS/TS source directly to native hardware machine code at build time; no on-device interpreter, VM, or GC. Unlike Espruino / Moddable (XS), which interpret JS on-chip, DUANYAN ships deterministic native firmware (memory & timing known at compile time)
 - **Multi-platform** — One codebase, five hardware targets
 - **TypeScript support** — Full type annotation stripping
 - **async/await** — Event-driven embedded programming
