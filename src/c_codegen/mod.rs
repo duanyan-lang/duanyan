@@ -5,7 +5,7 @@
 
 use crate::parser::{
     Program, Statement, Expr, BinOp, MathOp,
-    Function, ArrowBody, TemplateExprPart,
+    Function, ArrowBody, TemplateExprPart, SourceStatement,
 };
 use crate::hardware_api::HardwareModule;
 use crate::scheduler::Scheduler;
@@ -83,8 +83,12 @@ struct CCodeGenerator {
     interrupt_fns: Vec<(String, String, u32)>,
     /// Phase 4: 芯片信息 API (duanyan:esp32 Chip)
     needs_chip_info: bool,
-    /// 扩展 1/3: 旁路宽度/定点类型表 (变量名 → u8/u16/u32/i8/i16/i32/q15/q16/f32)
-    width_types: HashMap<String, String>,
+    /// 扩展 1/3: 旁路宽度/定点类型候选表 ((变量名, 声明行号) → u8/u16/u32/i8/i16/i32/q15/q16/f32)
+    /// A3: 键含行号，声明点按 (name,line) 命中后绑定到 width_scope；查询走作用域链而非全局按名
+    width_types: HashMap<(String, usize), String>,
+    /// A3: 宽度作用域栈 (name → type)。栈底为顶层/模块作用域，函数作用域叠加其上；
+    /// 查询由栈顶向外逐层解析，实现同名变量跨作用域隔离（根治 H1）
+    width_scope: Vec<HashMap<String, String>>,
     /// 扩展 2: 旁路寄存器位域表 (变量名 → RegisterDef)
     registers: HashMap<String, RegisterDef>,
     /// 扩展 2: 是否需要寄存器访问宏
@@ -118,7 +122,7 @@ pub fn generate_c_source(program: &Program, target: &CTarget) -> Result<CGenerat
 pub fn generate_c_source_with_widths(
     program: &Program,
     target: &CTarget,
-    width_types: &HashMap<String, String>,
+    width_types: &HashMap<(String, usize), String>,
 ) -> Result<CGenerateResult, String> {
     generate_c_source_with_ext(program, target, width_types, &HashMap::new())
 }
@@ -127,7 +131,7 @@ pub fn generate_c_source_with_widths(
 pub fn generate_c_source_with_ext(
     program: &Program,
     target: &CTarget,
-    width_types: &HashMap<String, String>,
+    width_types: &HashMap<(String, usize), String>,
     registers: &HashMap<String, RegisterDef>,
 ) -> Result<CGenerateResult, String> {
     let mut gen = CCodeGenerator::new(target.clone());
@@ -172,10 +176,63 @@ impl CCodeGenerator {
             interrupt_fns: Vec::new(),
             needs_chip_info: false,
             width_types: HashMap::new(),
+            width_scope: Vec::new(),
             registers: HashMap::new(),
             needs_register: false,
             register_declared: HashSet::new(),
             dynamic_len_arrays: HashSet::new(),
+        }
+    }
+
+    /// A3: 作用域链查询宽度类型——从栈顶（最内层）向外层逐层解析，命中即返回。
+    /// 根治 H1：查询不再全局按名，跨函数/块的同名变量互不干扰。
+    fn lookup_width(&self, name: &str) -> Option<&str> {
+        self.width_scope.iter().rev().find_map(|scope| scope.get(name).map(|s| s.as_str()))
+    }
+
+    /// A4: 绑定函数形参宽度——形参无独立行号，统一以函数声明行（SourceFunction.line）为锚。
+    /// 多行签名的形参宽度绑定为已知边界（第一阶段不处理）。
+    fn bind_width_params(&mut self, params: &[String], line: usize) {
+        for pname in params {
+            let hit = self.width_types.get(&(pname.clone(), line)).cloned();
+            if let Some(ty) = hit {
+                if let Some(top) = self.width_scope.last_mut() {
+                    top.insert(pname.clone(), ty);
+                }
+            }
+        }
+    }
+
+    /// A4: 递归预扫描语句块，把命中候选表的 (name, line) 声明绑定到当前作用域栈顶。
+    /// 第一阶段为函数级/顶层作用域：嵌套块（If/While/For/Switch）的声明并入同一层，
+    /// 块级遮蔽留待后续增强；For.init 为无行号的 Box<Statement>，第一阶段不绑定。
+    fn bind_width_decls(&mut self, body: &[SourceStatement]) {
+        for ss in body {
+            let line = ss.line;
+            match &ss.stmt {
+                Statement::Let { name, .. } | Statement::Const { name, .. } => {
+                    let hit = self.width_types.get(&(name.clone(), line)).cloned();
+                    if let Some(ty) = hit {
+                        if let Some(top) = self.width_scope.last_mut() {
+                            top.insert(name.clone(), ty);
+                        }
+                    }
+                }
+                Statement::If { then_body, else_body, .. } => {
+                    self.bind_width_decls(then_body);
+                    if let Some(eb) = else_body {
+                        self.bind_width_decls(eb);
+                    }
+                }
+                Statement::While { body, .. } => self.bind_width_decls(body),
+                Statement::For { body, .. } => self.bind_width_decls(body),
+                Statement::Switch { cases, .. } => {
+                    for c in cases {
+                        self.bind_width_decls(&c.body);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -248,10 +305,19 @@ impl CCodeGenerator {
         let mut func_bodies = Vec::new();
         let mut top_level_stmts = Vec::new();
 
-        // 处理顶层函数
+        // A4: 顶层（模块）作用域——最先入栈、最后出栈；函数作用域叠加其上，
+        // 使函数体能查到顶层宽度声明（词法作用域：函数嵌套于模块作用域内）
+        self.width_scope.push(HashMap::new());
+        self.bind_width_decls(&program.statements);
+
+        // 处理顶层函数（每个函数叠加独立作用域，形参以 SourceFunction.line 绑定；出栈在 ? 前保证平衡）
         for sf in &program.functions {
-            let code = self.generate_function(&sf.func)?;
-            func_bodies.push(code);
+            self.width_scope.push(HashMap::new());
+            self.bind_width_params(&sf.func.params, sf.line);
+            self.bind_width_decls(&sf.func.body);
+            let result = self.generate_function(&sf.func);
+            self.width_scope.pop();
+            func_bodies.push(result?);
         }
 
         // 处理顶层语句（非 import 的收集到 main 中）
@@ -273,6 +339,8 @@ impl CCodeGenerator {
             main_body.push_str(&line);
         }
         self.indent = 0;
+        // A4: 顶层语句生成完毕，弹出顶层作用域（函数作用域已在各自循环内平衡出栈）
+        self.width_scope.pop();
 
         // 组装最终输出
         self.output = saved_output;

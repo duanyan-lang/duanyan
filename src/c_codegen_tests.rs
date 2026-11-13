@@ -171,13 +171,23 @@ use super::*;
         assert!(res.is_err(), "expected register name collision error");
     }
 
-    // H1: 同名变量一处带宽度注解、一处普通声明 → 保守回退 int32_t（不静默截断）
+    // H1（作用域符号表根治）: 跨函数同名变量各自独立——带注解作用域发射精确宽度，无注解作用域为 int32_t
     #[test]
-    fn test_h1_width_conflict_falls_back_to_int32() {
+    fn test_h1_width_scope_isolation() {
         let src = "function a() { let x: u8 = 1; }\nfunction b() { let x = 500; }";
         let c = compile_to_c_widths(src, CTarget::Esp32);
-        assert!(c.contains("int32_t x = 500;"), "got: {}", c);
-        assert!(!c.contains("uint8_t x"), "x 应回退 int32_t, got: {}", c);
+        // 函数 a 的 x 带 u8 注解 → uint8_t；函数 b 的 x 无注解 → int32_t（互不干扰）
+        assert!(c.contains("uint8_t x = (uint8_t)(1);"), "函数 a 应发射 uint8_t, got: {}", c);
+        assert!(c.contains("int32_t x = 500;"), "函数 b 应为 int32_t, got: {}", c);
+    }
+
+    // A 新增回归: 同名变量在两个函数取不同宽度 → 各自作用域独立发射（旧全局表按名覆盖做不到）
+    #[test]
+    fn test_scope_isolation_same_name_different_widths() {
+        let src = "function a() { let r: u8 = 200; }\nfunction b() { let r: u16 = 60000; }";
+        let c = compile_to_c_widths(src, CTarget::Esp32);
+        assert!(c.contains("uint8_t r = (uint8_t)(200);"), "函数 a 的 r 应为 u8, got: {}", c);
+        assert!(c.contains("uint16_t r = (uint16_t)(60000);"), "函数 b 的 r 应为 u16, got: {}", c);
     }
 
     // H2: f32 变量被赋小数字面量 → 显式报错（避免静默 ×100 错值）
@@ -303,14 +313,14 @@ use super::*;
     #[test]
     fn test_l4_block_comment_not_scanned() {
         let widths = crate::strip::extract_width_types("/* let y: u8 = 1; */ let x = 5;");
-        assert!(!widths.contains_key("y"), "块注释应被跳过: {:?}", widths);
+        assert!(!widths.keys().any(|(n, _)| n == "y"), "块注释应被跳过: {:?}", widths);
     }
 
     // L4: 三元 a?b:u8 中的 b:u8 非声明注解
     #[test]
     fn test_l4_ternary_not_type_annotation() {
         let widths = crate::strip::extract_width_types("let r = a?b:u8;");
-        assert!(!widths.contains_key("b"), "三元分支不应被当作类型注解: {:?}", widths);
+        assert!(!widths.keys().any(|(n, _)| n == "b"), "三元分支不应被当作类型注解: {:?}", widths);
     }
 
     // L5: 嵌套高阶方法（回调体内）→ 报错（不发射不存在的 C 函数）

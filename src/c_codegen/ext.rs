@@ -4,7 +4,7 @@ use super::*;
 impl CCodeGenerator {
     /// 扩展 1: 变量/参数的 C 类型（按旁路宽度表；缺省 int32_t）
     pub(super) fn c_width_type(&self, name: &str) -> &'static str {
-        match self.width_types.get(name).map(|s| s.as_str()) {
+        match self.lookup_width(name) {
             Some("u8") => "uint8_t",
             Some("u16") => "uint16_t",
             Some("u32") => "uint32_t",
@@ -19,7 +19,7 @@ impl CCodeGenerator {
 
     /// 扩展 1: 宽度变量的截断转换前缀（缺省 int32_t 无需截断 → None）
     pub(super) fn width_cast(&self, name: &str) -> Option<&'static str> {
-        match self.width_types.get(name).map(|s| s.as_str()) {
+        match self.lookup_width(name) {
             Some("u8") => Some("(uint8_t)"),
             Some("u16") => Some("(uint16_t)"),
             Some("u32") => Some("(uint32_t)"),
@@ -35,7 +35,7 @@ impl CCodeGenerator {
     /// 扩展 3: 若表达式为 q15/q16 定点标识符，返回其移位量 (15/16)
     pub(super) fn fixed_shift_of(&self, e: &Expr) -> Option<u32> {
         if let Expr::Ident(name) = e {
-            match self.width_types.get(name).map(|s| s.as_str()) {
+            match self.lookup_width(name) {
                 Some("q15") => return Some(15),
                 Some("q16") => return Some(16),
                 _ => {}
@@ -49,7 +49,7 @@ impl CCodeGenerator {
     /// 若该 f32 名在源码中曾被赋小数字面量（标记 F32_DECIMAL_SENTINEL），则显式报错，避免静默 ×100 错值。
     pub(super) fn check_f32_decimal(&self, name: &str, value: &Expr) -> Result<(), String> {
         if matches!(value, Expr::Number(_))
-            && self.width_types.get(name).map(|s| s.as_str()) == Some(F32_DECIMAL_SENTINEL)
+            && self.lookup_width(name) == Some(F32_DECIMAL_SENTINEL)
         {
             return Err(format!(
                 "f32 变量 '{}' 被赋予小数字面量：DUANYAN 词法层将小数统一 ×100 缩放为整数，无法忠实表示真浮点值。请改用 q15/q16 定点类型，或避免对 f32 直接使用小数字面量。", name));
@@ -210,7 +210,7 @@ impl CCodeGenerator {
 
     /// 扩展 1: 字面量越界编译期 lint（超宽度范围 → 编译错误）
     pub(super) fn lint_width_literal(&self, name: &str, n: i64) -> Result<(), String> {
-        let (lo, hi, tn) = match self.width_types.get(name).map(|s| s.as_str()) {
+        let (lo, hi, tn) = match self.lookup_width(name) {
             Some("u8") => (0i128, 255i128, "u8"),
             Some("u16") => (0, 65535, "u16"),
             Some("u32") => (0, 4294967295, "u32"),

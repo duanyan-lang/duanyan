@@ -287,7 +287,7 @@ fn cmd_build(args: &[String]) {
 }
 
 /// C 目标编译路径: JS → C → ESP-IDF / Arduino / STM32 HAL 项目
-fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file: &str, board: Option<&str>, width_types: &std::collections::HashMap<String, String>, registers: &std::collections::HashMap<String, strip::RegisterDef>) {
+fn cmd_build_c_target(source: &str, input_file: &str, target: &str, _output_file: &str, board: Option<&str>, width_types: &std::collections::HashMap<(String, usize), String>, registers: &std::collections::HashMap<String, strip::RegisterDef>) {
     let c_target = match c_codegen::CTarget::from_str(target) {
         Some(t) => t,
         None => {
