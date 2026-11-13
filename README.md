@@ -189,7 +189,7 @@ rustup toolchain install nightly
 # Build
 cargo build --release
 
-# Test (default: 500 lib + 485 bin + 30 exec · --features domains: 562 lib + 552 bin + 30 exec)
+# Test (default: 501 lib + 486 bin + 30 exec · --features domains: 563 lib + 553 bin + 30 exec)
 cargo test
 cargo test --features domains
 
