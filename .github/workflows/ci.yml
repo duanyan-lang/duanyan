@@ -1,0 +1,103 @@
+name: CI
+
+# 首次让 DUANYAN 的测试在 Linux / macOS 上真正跑起来（此前只在本机 Windows 验证过）。
+# runner 标签一律钉具体版本：macos-13 已退役、macos-14 已于 2026-11 移除、
+# ubuntu-22.04 自 2026-09 起弃用，而 -latest 会随镜像切换漂移。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-24.04
+            linux-deps: true
+          - platform: win32-x64
+            runner: windows-2025
+            linux-deps: false
+          - platform: darwin-arm64
+            runner: macos-15
+            linux-deps: false
+    steps:
+      - uses: actions/checkout@v4
+
+      # serialport 依赖 libudev-sys，Linux 不装 libudev-dev 必然构建失败
+      - name: Install Linux build deps
+        if: matrix.linux-deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 阻塞门禁：两档测试必须全绿
+      - name: Test (default)
+        run: cargo test --locked
+
+      - name: Test (domains)
+        run: cargo test --locked --features domains
+
+      # 咨询性检查：当前代码库有约 2639 处 rustfmt 差异、clippy 从未跑过，
+      # 若设为阻塞会让每个 PR 立刻全红。先以非阻塞方式暴露问题，
+      # 待专门的格式化/lint 清理提交落地后，再把 continue-on-error 去掉。
+      - name: Format check (advisory)
+        continue-on-error: true
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (advisory)
+        continue-on-error: true
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+  npm-packaging:
+    name: npm packaging
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 主包必须是纯白名单小包裹：不含 Rust 源码、不含任何二进制
+      - name: Verify main package contents
+        run: |
+          npm pack --dry-run 2>&1 | tee pack.log
+          if grep -E '^\s*npm notice.*\bsrc/' pack.log; then
+            echo "::error::main package must not ship Rust sources"
+            exit 1
+          fi
+          if grep -E '\.exe|npm/.*/bin/' pack.log; then
+            echo "::error::main package must not ship binaries"
+            exit 1
+          fi
+
+      - name: Verify platform matrix is in sync
+        run: node scripts/check-platform-sync.js
+
+      - name: Syntax check packaging scripts
+        run: |
+          node --check scripts/platforms.js
+          node --check scripts/install.js
+          node --check scripts/build-platform-package.js
+          node --check bin/duanyan.js
+          for f in npm/*/index.js; do node --check "$f"; done

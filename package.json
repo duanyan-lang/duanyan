@@ -1,6 +1,6 @@
 {
   "name": "@duanyan-lang/duanyan",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "DUANYAN: JavaScript/TypeScript → Native Code → ESP32 / Arduino / STM32 / Raspberry Pi unified hardware programming compiler",
   "keywords": [
     "compiler",
@@ -34,10 +34,26 @@
   "bin": {
     "duanyan": "./bin/duanyan.js"
   },
+  "files": [
+    "bin/duanyan.js",
+    "scripts/install.js",
+    "scripts/platforms.js",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "postinstall": "node scripts/install.js",
-    "build": "cargo build --release",
-    "test": "cargo test"
+    "build": "cargo build --release --locked",
+    "test": "cargo test --locked",
+    "build:platform": "node scripts/build-platform-package.js"
+  },
+  "optionalDependencies": {
+    "@duanyan-lang/duanyan-win32-x64": "1.7.0",
+    "@duanyan-lang/duanyan-win32-arm64": "1.7.0",
+    "@duanyan-lang/duanyan-linux-x64": "1.7.0",
+    "@duanyan-lang/duanyan-linux-arm64": "1.7.0",
+    "@duanyan-lang/duanyan-darwin-x64": "1.7.0",
+    "@duanyan-lang/duanyan-darwin-arm64": "1.7.0"
   },
   "engines": {
     "node": ">=16"

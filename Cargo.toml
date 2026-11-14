@@ -1,8 +1,8 @@
 [package]
 name = "duanyan"
-version = "1.6.0"
+version = "1.7.0"
 edition = "2021"
-authors = ["Zhujun"]
+authors = ["duanyan-lang"]
 description = "DUANYAN: JavaScript/TypeScript → COUNPRE64 / ESP32 / Arduino / STM32 / 树莓派 统一硬件编程编译器"
 
 [[bin]]

@@ -1,0 +1,129 @@
+name: Publish npm
+
+# 人工闸门：npm 发布不可逆（同版本号不能重发），因此不挂在 tag 上自动跑。
+# 顺序铁律：**先逐个发布 6 个平台子包，全部成功后才发主包**。
+# 顺序反了会让用户装主包时 optionalDependencies 404，直接退化到下载兜底。
+#
+# 前置条件（需仓库 admin 配置一次）：
+#   1. Settings → Secrets and variables → Actions 新增 NPM_TOKEN，
+#      值为 npm **Automation** token（免 OTP，CI 才能非交互发布）。
+#   2. 对应版本的 GitHub Release 已由 release.yml 产出（含 6 个二进制 + SHA256SUMS.txt）。
+#   3. scope @duanyan-lang 下 6 个子包首次发布由本工作流完成。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要发布的版本（不带 v 前缀，例如 1.7.0；必须已有同名 GitHub Release）'
+        required: true
+        type: string
+      dry-run:
+        description: '只组装并 npm publish --dry-run，不真正发布'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish ${{ inputs.version }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      # 输入的 version 必须与 tag 检出的 Cargo.toml 一致，且整个平台矩阵无漂移
+      - name: Verify version and platform matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="$(grep -m1 '^version = ' Cargo.toml | sed 's/^version = "\(.*\)"/\1/')"
+          if [ "$ver" != "${{ inputs.version }}" ]; then
+            echo "::error::input version '${{ inputs.version }}' != Cargo.toml '$ver' at tag v${{ inputs.version }}"
+            exit 1
+          fi
+          node scripts/check-platform-sync.js
+
+      - name: Download release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "v${{ inputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --dir dist
+          ls -l dist
+
+      # 先校验再组装：损坏/被替换的资产绝不能进 npm
+      - name: Verify checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -c SHA256SUMS.txt
+
+      # 复用与本地/release.yml 完全相同的组装脚本，从 dist/ 取已校验的二进制
+      - name: Assemble platform packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          keys="$(node -e 'const {KEYS}=require("./scripts/platforms.js");process.stdout.write(KEYS.join(" "))')"
+          for key in $keys; do
+            node scripts/build-platform-package.js --platform "$key" --from-dist --no-build
+          done
+
+      - name: Publish platform packages (all must succeed)
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN secret is not configured (need an npm Automation token)"
+            exit 1
+          fi
+          flag=""
+          if [ "${{ inputs.dry-run }}" = "true" ]; then flag="--dry-run"; fi
+          keys="$(node -e 'const {KEYS}=require("./scripts/platforms.js");process.stdout.write(KEYS.join(" "))')"
+          for key in $keys; do
+            echo "::group::npm publish ./npm/$key"
+            # leading ./ 必须保留：否则 npm 会把 owner/repo 形式当成 GitHub shorthand
+            npm publish "./npm/$key" --access public $flag
+            echo "::endgroup::"
+          done
+
+      # 只有上面 6 个子包全部发布成功，才会走到这一步（set -e + job 顺序保证）
+      - name: Publish main package
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          flag=""
+          if [ "${{ inputs.dry-run }}" = "true" ]; then flag="--dry-run"; fi
+          npm publish --access public $flag
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "### npm publish ${{ inputs.version }}"
+            echo ""
+            echo "- mode: ${{ inputs.dry-run == true && 'dry-run' || 'live' }}"
+            echo "- platform packages: 6 (published before the main package)"
+            echo "- main package: @duanyan-lang/duanyan"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -44,12 +44,27 @@ Write standard JavaScript/TypeScript. Compile to bare-metal firmware. Flash to r
 npm install -g @duanyan-lang/duanyan
 ```
 
-Or build from source (requires [Rust](https://rustup.rs)):
+**预编译二进制，装完即用，无需 Rust 工具链。** npm 按你的操作系统 / CPU 自动只装当前平台的子包：
+
+| Platform package | OS | CPU |
+|------------------|----|-----|
+| `@duanyan-lang/duanyan-win32-x64` | Windows | x64 |
+| `@duanyan-lang/duanyan-win32-arm64` | Windows | arm64 |
+| `@duanyan-lang/duanyan-linux-x64` | Linux | x64 |
+| `@duanyan-lang/duanyan-linux-arm64` | Linux | arm64 |
+| `@duanyan-lang/duanyan-darwin-x64` | macOS | Intel |
+| `@duanyan-lang/duanyan-darwin-arm64` | macOS | Apple Silicon |
+
+平台子包不可用时，`postinstall` 退回到从 [GitHub Releases](https://github.com/duanyan-lang/duanyan/releases) 下载对应二进制并校验 SHA-256；只有从源码 checkout 安装才会调用 `cargo build`。**任何一步失败都以非零码退出并打印已尝试的全部路径**，不会假装安装成功。
+
+> npm 11.19+ 对安装脚本默认设白名单，`postinstall` 可能被跳过（伴 `npm warn install-scripts`）。这不影响使用：`duanyan` 命令自身会解析平台子包，无需依赖 `postinstall`。确实需要下载兜底时，先 `npm install-scripts approve @duanyan-lang/duanyan` 再重装。
+
+Or build from source (requires [Rust](https://rustup.rs) **stable**):
 
 ```bash
 git clone https://github.com/duanyan-lang/duanyan.git
-cd DUANYAN
-cargo install --path .
+cd duanyan
+cargo install --path . --locked
 ```
 
 ### Usage
@@ -183,19 +198,33 @@ JavaScript / TypeScript
 ## Building from Source
 
 ```bash
-# Prerequisites: Rust nightly
-rustup toolchain install nightly
+# Prerequisites: Rust stable (pinned by rust-toolchain.toml)
+rustup toolchain install stable
+
+# Linux only: serialport depends on libudev
+sudo apt-get install -y libudev-dev pkg-config
 
 # Build
-cargo build --release
+cargo build --release --locked
 
 # Test (default: 501 lib + 486 bin + 30 exec · --features domains: 563 lib + 553 bin + 30 exec)
-cargo test
-cargo test --features domains
+cargo test --locked
+cargo test --locked --features domains
 
 # Install locally
-cargo install --path .
+cargo install --path . --locked
 ```
+
+### CI / Release pipelines
+
+| Workflow | Trigger | What it does |
+|----------|---------|--------------|
+| `ci.yml` | PR / push to `main` | 两档 `cargo test --locked` 在 Linux / Windows / macOS 上跑；校验 npm 主包白名单与平台矩阵一致性 |
+| `release.yml` | push tag `v*` | 6 平台矩阵构建预编译二进制 → 生成 `SHA256SUMS.txt` → 创建 GitHub Release（**不发 npm**） |
+| `publish-npm.yml` | 手动 `workflow_dispatch` | 下载并校验 Release 资产 → 组装 6 个平台子包 → **先逐个发子包、全部成功后才发主包** |
+
+本地组装当前平台子包：`node scripts/build-platform-package.js`（产出 `npm/<platform>/` 与 `dist/`）。
+平台矩阵的单一真值是 `scripts/platforms.js`，`node scripts/check-platform-sync.js` 逐项核对防漂移。
 
 ## Tech Stack
 

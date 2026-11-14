@@ -154,3 +154,16 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# ---- npm 预编译分发（平台子包）----
+# bin/duanyan.exe 是本机 PATH 上 `duanyan` 命令的实体（用 scripts/sync-bin.ps1 保持新鲜），
+# 属构建产物：不入库、也不随 npm 分发。npm 用户由平台子包提供预编译二进制。
+bin/duanyan.exe
+# postinstall 从 GitHub Releases 下载的兜底二进制
+vendor/
+# 平台子包内的产物（模板 package.json / index.js 入库，其余由 build-platform-package.js 生成）
+npm/*/bin/
+npm/*/README.md
+npm/*/LICENSE
+# Release 资产与校验和（dist 亦被上方 Node 段覆盖，此处显式声明意图）
+dist/

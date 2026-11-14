@@ -1,0 +1,7 @@
+# DUANYAN 编译器工具链钉住
+# src/ 不使用任何 #![feature(...)]，stable 即可构建（旧 README 的「需要 nightly」是过时说法）。
+# CI 与本地共用此文件，保证发布二进制与本地构建出自同一工具链通道。
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

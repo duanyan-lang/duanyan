@@ -1,0 +1,173 @@
+name: Release
+
+# push tag v* 触发：6 平台矩阵构建预编译二进制 → 汇总校验和 → 创建 GitHub Release。
+# 本工作流**不发布 npm**：npm 发布不可逆，且必须「先 6 个平台子包、后主包」，
+# 因此单独放在 publish-npm.yml 里由人工 workflow_dispatch 触发。
+#
+# runner 标签一律钉具体版本：浮动标签会随镜像切换漂移，已退役的旧镜像标签
+# 会让 job 无限排队而不是报错。矩阵的单一真值是 scripts/platforms.js，
+# 由 scripts/check-platform-sync.js 在 CI 里逐项核对。
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win32-x64
+            target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            linux-deps: false
+          # 同 runner 上 MSVC 交叉编译，无需 arm64 Windows 机器
+          - platform: win32-arm64
+            target: aarch64-pc-windows-msvc
+            runner: windows-2025
+            linux-deps: false
+          - platform: linux-x64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            linux-deps: true
+          # 原生 arm64 runner，公开仓免费
+          - platform: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            linux-deps: true
+          - platform: darwin-x64
+            target: x86_64-apple-darwin
+            runner: macos-15-intel
+            linux-deps: false
+          - platform: darwin-arm64
+            target: aarch64-apple-darwin
+            runner: macos-15
+            linux-deps: false
+    steps:
+      - uses: actions/checkout@v4
+
+      # serialport → libudev-sys 是硬依赖，Linux 不装必然构建失败
+      - name: Install Linux build deps
+        if: matrix.linux-deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # [profile.release] 是 lto=true + codegen-units=1，构建慢，缓存必开
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # 版本单一真值是 Cargo.toml（main.rs 用 env!("CARGO_PKG_VERSION")），
+      # tag 与它不一致就说明忘了 bump，直接失败而不是发出错版本。
+      - name: Verify tag matches Cargo.toml version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(grep -m1 '^version = ' Cargo.toml | sed 's/^version = "\(.*\)"/\1/')"
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::tag $GITHUB_REF_NAME implies version $tag but Cargo.toml says $ver"
+            exit 1
+          fi
+          echo "OK: $GITHUB_REF_NAME == Cargo.toml $ver"
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 与本地完全同一条组装口径：写子包 package.json/index.js/bin + dist 资产副本
+      - name: Assemble platform npm package
+        run: >
+          node scripts/build-platform-package.js
+          --platform ${{ matrix.platform }}
+          --target ${{ matrix.target }}
+          --no-build
+
+      - name: Upload npm package
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.platform }}
+          path: npm/${{ matrix.platform }}/
+          if-no-files-found: error
+          retention-days: 7
+
+      # 只传二进制：SHA256SUMS.txt 由汇总 job 统一生成，
+      # 否则 6 份同名文件在 merge-multiple 时会互相覆盖。
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: asset-${{ matrix.platform }}
+          path: dist/duanyan-${{ matrix.platform }}*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: create GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: asset-*
+          path: dist
+          merge-multiple: true
+
+      # 资产清单取自 scripts/platforms.js，避免与矩阵漂移
+      - name: Verify assets and generate SHA256SUMS.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(node -e 'const {KEYS,assetName}=require("./scripts/platforms.js");process.stdout.write(KEYS.map(assetName).join(" "))')"
+          cd dist
+          for f in $expected; do
+            if [ ! -f "$f" ]; then
+              echo "::error::missing release asset: $f"
+              exit 1
+            fi
+          done
+          sha256sum $expected > SHA256SUMS.txt
+          want="$(printf '%s\n' $expected | wc -l | tr -d ' ')"
+          got="$(wc -l < SHA256SUMS.txt | tr -d ' ')"
+          if [ "$want" != "$got" ]; then
+            echo "::error::expected $want checksums, got $got"
+            exit 1
+          fi
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
