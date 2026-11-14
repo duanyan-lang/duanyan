@@ -1,8 +1,8 @@
-//! .hardyrc 配置文件解析
+//! .duanyanrc 配置文件解析
 //!
 //! 支持项目级别的 Registry 配置:
 //! ```ini
-//! registry=https://packages.hardy.dev
+//! registry=https://packages.duanyan.dev
 //! token=duanyan_xxxxxxxxxxxx
 //! scope=@my-team
 //! ```
@@ -11,16 +11,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-/// .hardyrc 配置
+/// .duanyanrc 配置
 #[derive(Debug, Clone)]
-pub struct HardyRc {
+pub struct DuanyanRc {
     pub registry: String,
     pub token: Option<String>,
     pub scope: Option<String>,
     pub extra: HashMap<String, String>,
 }
 
-impl Default for HardyRc {
+impl Default for DuanyanRc {
     fn default() -> Self {
         Self {
             registry: "http://localhost:7890".to_string(),
@@ -31,19 +31,19 @@ impl Default for HardyRc {
     }
 }
 
-impl HardyRc {
-    /// 从目录加载 .hardyrc (查找当前目录 -> 父目录 -> 用户目录)
+impl DuanyanRc {
+    /// 从目录加载 .duanyanrc (查找当前目录 -> 父目录 -> 用户目录)
     pub fn load(dir: &Path) -> Self {
         // 查找顺序: 当前目录 -> 父目录 -> HOME
         let candidates = vec![
-            dir.join(".hardyrc"),
-            dir.join("_hardyrc"),
+            dir.join(".duanyanrc"),
+            dir.join("_duanyanrc"),
         ];
 
         // 向上查找
         let mut current = dir.to_path_buf();
         loop {
-            let rc_path = current.join(".hardyrc");
+            let rc_path = current.join(".duanyanrc");
             if rc_path.exists() {
                 if let Ok(content) = fs::read_to_string(&rc_path) {
                     return Self::parse(&content);
@@ -54,7 +54,7 @@ impl HardyRc {
 
         // 检查 HOME 目录
         if let Some(home) = std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()) {
-            let home_rc = Path::new(&home).join(".hardyrc");
+            let home_rc = Path::new(&home).join(".duanyanrc");
             if home_rc.exists() {
                 if let Ok(content) = fs::read_to_string(&home_rc) {
                     return Self::parse(&content);
@@ -65,7 +65,7 @@ impl HardyRc {
         Self::default()
     }
 
-    /// 解析 .hardyrc 内容 (INI 格式)
+    /// 解析 .duanyanrc 内容 (INI 格式)
     pub fn parse(content: &str) -> Self {
         let mut rc = Self::default();
         let mut extra = HashMap::new();
@@ -93,7 +93,7 @@ impl HardyRc {
         rc
     }
 
-    /// 序列化为 .hardyrc 格式
+    /// 序列化为 .duanyanrc 格式
     pub fn to_string_repr(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("registry={}\n", self.registry));
@@ -111,19 +111,19 @@ impl HardyRc {
 
     /// 保存到目录
     pub fn save(&self, dir: &Path) -> Result<(), String> {
-        let path = dir.join(".hardyrc");
+        let path = dir.join(".duanyanrc");
         fs::write(&path, self.to_string_repr())
-            .map_err(|e| format!("写入 .hardyrc 失败: {}", e))
+            .map_err(|e| format!("写入 .duanyanrc 失败: {}", e))
     }
 }
 
-/// 获取有效的 registry URL (合并 .hardyrc 和环境变量)
+/// 获取有效的 registry URL (合并 .duanyanrc 和环境变量)
 pub fn get_effective_registry_url(dir: &Path) -> String {
-    // 优先级: 环境变量 > .hardyrc > 默认值
+    // 优先级: 环境变量 > .duanyanrc > 默认值
     if let Ok(url) = std::env::var("DUANYAN_REGISTRY") {
         return url;
     }
-    let rc = HardyRc::load(dir);
+    let rc = DuanyanRc::load(dir);
     rc.registry
 }
 
@@ -132,33 +132,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_hardyrc() {
+    fn test_parse_duanyanrc() {
         let content = r#"
 # DUANYAN-Registry 配置
-registry=https://packages.hardy.dev
+registry=https://packages.duanyan.dev
 token=duanyan_abc123
 scope=@my-team
 "#;
-        let rc = HardyRc::parse(content);
-        assert_eq!(rc.registry, "https://packages.hardy.dev");
+        let rc = DuanyanRc::parse(content);
+        assert_eq!(rc.registry, "https://packages.duanyan.dev");
         assert_eq!(rc.token, Some("duanyan_abc123".to_string()));
         assert_eq!(rc.scope, Some("@my-team".to_string()));
     }
 
     #[test]
-    fn test_default_hardyrc() {
-        let rc = HardyRc::default();
+    fn test_default_duanyanrc() {
+        let rc = DuanyanRc::default();
         assert_eq!(rc.registry, "http://localhost:7890");
         assert!(rc.token.is_none());
     }
 
     #[test]
     fn test_roundtrip() {
-        let mut rc = HardyRc::default();
+        let mut rc = DuanyanRc::default();
         rc.registry = "https://my-registry.dev".to_string();
         rc.token = Some("tok123".to_string());
         let serialized = rc.to_string_repr();
-        let rc2 = HardyRc::parse(&serialized);
+        let rc2 = DuanyanRc::parse(&serialized);
         assert_eq!(rc2.registry, "https://my-registry.dev");
         assert_eq!(rc2.token, Some("tok123".to_string()));
     }

@@ -1,4 +1,4 @@
-/* STM32F103C8T6 Linker Script (SNARjs auto-generated) */
+/* STM32F103C8T6 Linker Script (DUANYAN auto-generated) */
 MEMORY
 {
     FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 64K

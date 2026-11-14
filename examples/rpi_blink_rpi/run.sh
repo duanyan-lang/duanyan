@@ -1,5 +1,5 @@
 #!/bin/bash
-# SNARjs Raspberry Pi 部署脚本 (auto-generated)
+# DUANYAN Raspberry Pi 部署脚本 (auto-generated)
 # 用法: ./run.sh [pi_host] [pi_user]
 #
 # 示例: ./run.sh 192.168.1.100 pi

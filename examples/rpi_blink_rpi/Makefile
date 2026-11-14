@@ -1,4 +1,4 @@
-# SNARjs Raspberry Pi Makefile (auto-generated)
+# DUANYAN Raspberry Pi Makefile (auto-generated)
 CC      = gcc
 TARGET  = rpi_blink
 

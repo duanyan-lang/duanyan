@@ -860,7 +860,7 @@ pub const PREBUILT_MODELS: &[PrebuiltModel] = &[
         name: "keyword-8m-int4",
         desc: "关键词唤醒",
         params: "8M / INT4",
-        use_case: "I2S麦克风 → 唤醒词检测 (Hey Snar)",
+        use_case: "I2S麦克风 → 唤醒词检测 (Hey Duanyan)",
     },
     PrebuiltModel {
         name: "pose-12m-int4",

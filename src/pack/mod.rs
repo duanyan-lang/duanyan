@@ -16,7 +16,7 @@ pub mod lockfile;
 pub mod archive;
 pub mod registry;
 pub mod resolver;
-pub mod hardyrc;
+pub mod duanyanrc;
 
 use std::path::Path;
 use std::fs;
@@ -272,7 +272,7 @@ fn cmd_publish() {
     println!("  包大小: {} bytes", data.len());
 
     // 上传 - 支持自定义 registry
-    let url = hardyrc::get_effective_registry_url(&cwd);
+    let url = duanyanrc::get_effective_registry_url(&cwd);
     let client = RegistryClient::new(&url);
     let metadata = manifest.to_json();
 
@@ -550,7 +550,7 @@ fn cmd_lock() {
 
     println!("生成依赖锁定文件...");
 
-    let client = RegistryClient::new(&hardyrc::get_effective_registry_url(&cwd));
+    let client = RegistryClient::new(&duanyanrc::get_effective_registry_url(&cwd));
     let mut lockfile = Lockfile { packages: Vec::new() };
 
     for (name, constraint_str) in &manifest.dependencies {

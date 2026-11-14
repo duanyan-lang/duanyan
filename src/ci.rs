@@ -329,9 +329,8 @@ jobs:
       - name: Install DUANYAN
         run: |
           cargo install --path .
-          # 或从 release 下载:
-          # curl -L https://github.com/openhardy/hardyscript/releases/latest/download/hardy-linux -o /usr/local/bin/duanyan
-          # chmod +x /usr/local/bin/duanyan
+          # 或从 npm 安装:
+          # npm install -g @duanyan-lang/duanyan
 
       - name: Lint
         run: duanyan lint

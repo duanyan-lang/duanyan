@@ -1,4 +1,4 @@
-# SNARjs STM32 Makefile (auto-generated)
+# DUANYAN STM32 Makefile (auto-generated)
 # 需要设置环境变量: STM32_HAL_PATH 指向 STM32 HAL 库根目录
 
 PREFIX  = arm-none-eabi-
